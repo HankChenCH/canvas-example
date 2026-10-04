@@ -187,3 +187,123 @@ func TestGetTemplate_NotFound(t *testing.T) {
 		t.Fatalf("期望 ErrNotFound, 实得 %v", err)
 	}
 }
+
+func TestCreateTemplate_AutoIncrementAndTimestamps(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	// POST 载荷不含 dataset(spec §2.4 #3)——创建内容两数据列留空
+	content := seedContent()
+	content.Dataset = nil
+	content.DatasetSchema = nil
+	id1, err := st.CreateTemplate(ctx, content)
+	if err != nil {
+		t.Fatalf("创建模板 1: %v", err)
+	}
+	id2, err := st.CreateTemplate(ctx, content)
+	if err != nil {
+		t.Fatalf("创建模板 2: %v", err)
+	}
+	if id1 != 1 || id2 != id1+1 {
+		t.Fatalf("id 应自增分配: 实得 %d → %d", id1, id2)
+	}
+
+	rec, err := st.GetTemplate(ctx, id1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	// POST 载荷不含 dataset(spec §2.4 #3):落库即 null,createdAt = updatedAt
+	if rec.Dataset != nil || rec.DatasetSchema != nil {
+		t.Fatalf("未带数据源的创建应落 NULL: %v / %v", rec.Dataset, rec.DatasetSchema)
+	}
+	if rec.CreatedAt == "" || rec.CreatedAt != rec.UpdatedAt {
+		t.Fatalf("createdAt 应等于 updatedAt,实得 %q / %q", rec.CreatedAt, rec.UpdatedAt)
+	}
+	if !strings.HasSuffix(rec.UpdatedAt, "Z") {
+		t.Fatalf("时间戳应为 RFC3339 UTC: %q", rec.UpdatedAt)
+	}
+}
+
+// TestUpdateTemplateContent_PreservesDataset 整存替换只动 name/canvases/flowChain,
+// 不触碰 dataset/datasetSchema(spec §2.4 #5——12 票票面「先 PUT dataset 再 PUT
+// 模板验证仍在」的存储层口径)
+func TestUpdateTemplateContent_PreservesDataset(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
+		t.Fatalf("播种: %v", err)
+	}
+
+	if err := st.UpdateDataset(ctx, 1,
+		json.RawMessage(`{"type":"object"}`), json.RawMessage(`{"kept":true}`)); err != nil {
+		t.Fatalf("先 PUT dataset: %v", err)
+	}
+
+	updated := TemplateContent{
+		Name: "改名后的模板",
+		Canvases: []CanvasEntry{
+			{Name: "新帧", Graph: json.RawMessage(`{"canvas":{"width":100,"height":100},"layers":[]}`)},
+		},
+		FlowChain: nil, // 缺省 = null = 空链
+	}
+	if err := st.UpdateTemplateContent(ctx, 1, updated); err != nil {
+		t.Fatalf("更新模板: %v", err)
+	}
+
+	rec, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if rec.Name != "改名后的模板" || len(rec.Canvases) != 1 || rec.Canvases[0].Name != "新帧" {
+		t.Fatalf("name/canvases 应整存替换: %+v", rec)
+	}
+	if rec.FlowChain != nil {
+		t.Fatalf("flowChain 应替换为 NULL: %s", rec.FlowChain)
+	}
+	if rec.DatasetSchema == nil || string(rec.DatasetSchema) != `{"type":"object"}` {
+		t.Fatalf("datasetSchema 不得被触碰: %v", rec.DatasetSchema)
+	}
+	if rec.Dataset == nil || string(rec.Dataset) != `{"kept":true}` {
+		t.Fatalf("dataset 不得被触碰: %v", rec.Dataset)
+	}
+}
+
+func TestUpdateTemplateContent_NotFound(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.UpdateTemplateContent(context.Background(), 999, seedContent()); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("期望 ErrNotFound, 实得 %v", err)
+	}
+}
+
+func TestUpdateDataset_ReplacesBothColumns(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
+		t.Fatalf("播种: %v", err)
+	}
+
+	if err := st.UpdateDataset(ctx, 1,
+		json.RawMessage(`{"type":"array"}`), json.RawMessage(`[1,2]`)); err != nil {
+		t.Fatalf("更新数据源: %v", err)
+	}
+
+	rec, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if string(rec.DatasetSchema) != `{"type":"array"}` || string(rec.Dataset) != `[1,2]` {
+		t.Fatalf("两列应整存替换: %s / %s", rec.DatasetSchema, rec.Dataset)
+	}
+	// 未触碰面:模板内容原样
+	if rec.Name != seedContent().Name || len(rec.Canvases) != 2 {
+		t.Fatalf("模板内容不得被触碰: %+v", rec)
+	}
+}
+
+func TestUpdateDataset_NotFound(t *testing.T) {
+	st := openTestStore(t)
+	err := st.UpdateDataset(context.Background(), 999, json.RawMessage(`{}`), json.RawMessage(`{}`))
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("期望 ErrNotFound, 实得 %v", err)
+	}
+}

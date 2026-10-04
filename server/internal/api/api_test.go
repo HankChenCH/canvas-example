@@ -14,6 +14,16 @@ import (
 	"example/server/internal/store"
 )
 
+// seedDir seed 目录绝对路径:部分用例(assets 上传)会在测试中途 Chdir,
+// 相对路径随之失效——包初始化时(尚在包目录)解析一次
+var seedDir = func() string {
+	abs, err := filepath.Abs(filepath.Join("..", "..", "seed"))
+	if err != nil {
+		panic(err)
+	}
+	return abs
+}()
+
 // newTestServer 真实 seed 装载(05 票 fixture)→ 播种 → api handler;
 // 返回 handler 与种子模板 id(列表首项)
 func newTestServer(t *testing.T) (http.Handler, int64) {
@@ -23,7 +33,7 @@ func newTestServer(t *testing.T) (http.Handler, int64) {
 		t.Fatalf("开测试库: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	content, err := seed.Load("../../seed")
+	content, err := seed.Load(seedDir)
 	if err != nil {
 		t.Fatalf("装载 seed: %v", err)
 	}

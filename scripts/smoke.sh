@@ -1,11 +1,13 @@
 #!/bin/sh
 # spec §6.2 curl 冒烟(契约面):前置 dev server 跑起(cd example/server && go run .)。
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080。
-# 本票(11)交付骨架 + 断言 1–3;断言 4–11 随 12/13 票追加。
+# 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;
+# 8–9(渲染管线)随 13 票追加。
 # 任一断言失败非零退出(spec §6.2)。
 set -eu
 
 BASE="${1:-http://localhost:8080}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 command -v curl >/dev/null || die "需要 curl"
@@ -22,11 +24,25 @@ get() {
 # assert_json <file> <python 表达式>:对解析后的 JSON(变量 d)断言,失败即中止
 assert_json() {
 	python3 - "$1" "$2" <<'PYEOF'
-import json, sys
+import json, re, sys
 with open(sys.argv[1], encoding="utf-8") as f:
     d = json.load(f)
-assert eval(sys.argv[2], {"d": d}), "断言失败: %s\n实际值: %s" % (sys.argv[2], json.dumps(d, ensure_ascii=False)[:600])
+assert eval(sys.argv[2], {"d": d, "re": re}), "断言失败: %s\n实际值: %s" % (sys.argv[2], json.dumps(d, ensure_ascii=False)[:600])
 PYEOF
+}
+
+# request <method> <path> <ctype> <datafile> <outfile>:返回 http 状态码
+# (不用 -f:错误路径断言需要拿到状态码与错误信封)
+request() {
+	curl -sS -o "$5" -w '%{http_code}' -X "$1" -H "Content-Type: $3" --data-binary @"$4" "$BASE$2"
+}
+
+# expect_error <method> <path> <ctype> <datafile> <want-status> <want-code>:
+# 状态码与错误信封 code 双断言
+expect_error() {
+	_status=$(request "$1" "$2" "$3" "$4" "$TMP/err.json")
+	[ "$_status" = "$5" ] || die "$1 $2 期望 $5,实得 $_status"
+	assert_json "$TMP/err.json" "d['error']['code'] == '$6'"
 }
 
 echo "== 1/11 GET /api/health =="
@@ -38,7 +54,15 @@ get /api/templates "$TMP/templates.json"
 assert_json "$TMP/templates.json" 'isinstance(d, list) and len(d) >= 1'
 assert_json "$TMP/templates.json" '[t["updatedAt"] for t in d] == sorted((t["updatedAt"] for t in d), reverse=True)'
 assert_json "$TMP/templates.json" 'all(set(t.keys()) == {"id", "name", "updatedAt"} for t in d)'
-SEED_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[0]["id"])' "$TMP/templates.json")"
+# SEED_ID 取种子模板:spec §6.2 读「首项」,但写端点在场后列表首项可能已是
+# 冒烟产物(updatedAt 更新)——按 spec §5.2 钉名取回种子,保证 1–3 断言可复跑
+SEED_ID="$(python3 -c '
+import json, sys
+items = json.load(open(sys.argv[1], encoding="utf-8"))
+seeds = [t for t in items if t["name"] == "结业证书 · 批量打印页"]
+assert seeds, "列表中找不到种子模板「结业证书 · 批量打印页」(可能已被改名)"
+print(seeds[0]["id"])
+' "$TMP/templates.json")"
 echo "   SEED_ID=$SEED_ID"
 
 echo "== 3/11 GET /api/templates/{SEED_ID} =="
@@ -47,6 +71,83 @@ assert_json "$TMP/template.json" 'len(d["canvases"]) == 2 and [c["name"] for c i
 assert_json "$TMP/template.json" 'isinstance(d["flowChain"], list) and len(d["flowChain"]) == 2'
 assert_json "$TMP/template.json" 'd["datasetSchema"] is not None and d["dataset"] is not None'
 
-# ---- 断言 4–11(12/13 票追加):写端点 / 渲染管线 / 上传 / 413 与坏 body ----
+echo "== 4/11 POST /api/templates(最小模板 → 201 自增 id) =="
+cat > "$TMP/min-template.json" <<'EOF'
+{"name":"冒烟最小模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
+EOF
+_status=$(request POST /api/templates application/json "$TMP/min-template.json" "$TMP/t1.json")
+[ "$_status" = "201" ] || die "POST /api/templates 期望 201,实得 $_status"
+assert_json "$TMP/t1.json" "isinstance(d['id'], int) and d['id'] > $SEED_ID"
+assert_json "$TMP/t1.json" "d['createdAt'] == d['updatedAt']"
+assert_json "$TMP/t1.json" "d['dataset'] is None and d['datasetSchema'] is None and d['flowChain'] is None"
+T1="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/t1.json")"
+echo "   T1=$T1"
 
-echo "smoke: 断言 1–3 全绿 (BASE=$BASE)"
+echo "== 5/11 PUT /api/templates/{T1}(改 name;dataset 仍为 null) =="
+cat > "$TMP/put-t1.json" <<'EOF'
+{"name":"冒烟改名模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
+EOF
+_status=$(request PUT "/api/templates/$T1" application/json "$TMP/put-t1.json" "$TMP/t1-put.json")
+[ "$_status" = "200" ] || die "PUT /api/templates/$T1 期望 200,实得 $_status"
+assert_json "$TMP/t1-put.json" "d['name'] == '冒烟改名模板'"
+assert_json "$TMP/t1-put.json" "d['dataset'] is None and d['datasetSchema'] is None"
+assert_json "$TMP/t1-put.json" "d['flowChain'] is None"
+
+echo "== 6/11 PUT /api/templates/{T1}/dataset(合法 200 / 坏 schema 400 / 不过 schema 400) =="
+cat > "$TMP/ds-ok.json" <<'EOF'
+{"schema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"student":{"type":"string"}},"required":["student"]},"data":{"student":"林晚晴"}}
+EOF
+_status=$(request PUT "/api/templates/$T1/dataset" application/json "$TMP/ds-ok.json" "$TMP/ds-ok-resp.json")
+[ "$_status" = "200" ] || die "PUT dataset(合法)期望 200,实得 $_status"
+assert_json "$TMP/ds-ok-resp.json" "d['dataset'] == {'student': '林晚晴'}"
+
+cat > "$TMP/ds-bad-schema.json" <<'EOF'
+{"schema":{"type":42},"data":{}}
+EOF
+expect_error PUT "/api/templates/$T1/dataset" application/json "$TMP/ds-bad-schema.json" 400 schema_invalid
+
+cat > "$TMP/ds-mismatch.json" <<'EOF'
+{"schema":{"type":"object"},"data":[1,2]}
+EOF
+expect_error PUT "/api/templates/$T1/dataset" application/json "$TMP/ds-mismatch.json" 400 dataset_schema_mismatch
+
+# 票面第三条:数据源就位后 PUT 模板,验证 dataset/datasetSchema 仍在(spec §2.4 #5)
+_status=$(request PUT "/api/templates/$T1" application/json "$TMP/put-t1.json" "$TMP/t1-put2.json")
+[ "$_status" = "200" ] || die "数据源就位后 PUT 模板期望 200,实得 $_status"
+assert_json "$TMP/t1-put2.json" "d['dataset'] == {'student': '林晚晴'}"
+assert_json "$TMP/t1-put2.json" "d['datasetSchema'] is not None"
+
+echo "== 7/11 POST /api/templates 保存预检打回(未知图层类型 / 双 paged 链) =="
+cat > "$TMP/bad-layer.json" <<'EOF'
+{"name":"坏图层模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}}]}
+EOF
+expect_error POST /api/templates application/json "$TMP/bad-layer.json" 400 unknown_layer_type
+
+cat > "$TMP/double-paged.json" <<'EOF'
+{"name":"双paged模板","canvases":[
+  {"name":"帧一","graph":{"canvas":{"width":794,"height":1123},"layers":[]}},
+  {"name":"帧二","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}],
+ "flowChain":[{"frame":0,"mode":"paged"},{"frame":1,"mode":"paged"}]}
+EOF
+expect_error POST /api/templates application/json "$TMP/double-paged.json" 400 flow_chain_invalid
+
+echo "== 10/11 POST /api/assets(multipart 上传 → url 形态 + 可 GET) =="
+PNG="$ROOT/server/seed/assets/u/student-1.png"
+[ -f "$PNG" ] || die "上传样张缺失: $PNG"
+_status=$(curl -sS -o "$TMP/upload.json" -w '%{http_code}' -F "file=@$PNG;type=image/png" "$BASE/api/assets")
+[ "$_status" = "201" ] || die "POST /api/assets 期望 201,实得 $_status"
+assert_json "$TMP/upload.json" "re.match(r'^/assets/u/[0-9a-f]{16}\.[A-Za-z0-9]{1,8}$', d['url']) is not None"
+UPLOAD_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["url"])' "$TMP/upload.json")"
+curl -fsS -o "$TMP/upload-roundtrip.png" "$BASE$UPLOAD_URL" || die "GET $UPLOAD_URL 失败"
+cmp -s "$TMP/upload-roundtrip.png" "$PNG" || die "上传回读字节与原文件不一致"
+
+echo "== 11/11 请求体上限与坏 body(413 / 400) =="
+python3 -c 'import json,sys; sys.stdout.write(json.dumps({"name":"a" * (10 * 1024 * 1024)}))' > "$TMP/big.json"
+expect_error POST /api/templates application/json "$TMP/big.json" 413 request_too_large
+
+printf 'not json' > "$TMP/not-json.json"
+expect_error POST /api/templates application/json "$TMP/not-json.json" 400 invalid_json
+
+# ---- 断言 8–9(13 票):渲染管线 → RenderRecord + PNG 直链 ----
+
+echo "smoke: 断言 1–7、10、11 全绿 (BASE=$BASE)"

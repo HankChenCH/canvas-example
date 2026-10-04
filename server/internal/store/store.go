@@ -99,6 +99,11 @@ type TemplateSummary struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
+// nowRFC3339 当前时刻的 RFC3339 UTC 字符串(spec §2.1 时间戳口径)
+func nowRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
 // SeedTemplateIfEmpty 播种:templates 表空则插入默认模板(幂等——重启不重复插,spec §5.2)
 func (s *Store) SeedTemplateIfEmpty(ctx context.Context, content TemplateContent) error {
 	var n int
@@ -108,7 +113,7 @@ func (s *Store) SeedTemplateIfEmpty(ctx context.Context, content TemplateContent
 	if n > 0 {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := nowRFC3339()
 	_, err := s.insertTemplate(ctx, content, now, now)
 	return err
 }
@@ -134,6 +139,56 @@ func (s *Store) insertTemplate(ctx context.Context, content TemplateContent, cre
 		return 0, fmt.Errorf("取自增 id: %w", err)
 	}
 	return id, nil
+}
+
+// CreateTemplate 写入新模板并返回自增 id,createdAt = updatedAt(spec §2.4 #3:
+// POST /api/templates,id 自增分配)
+func (s *Store) CreateTemplate(ctx context.Context, content TemplateContent) (int64, error) {
+	now := nowRFC3339()
+	return s.insertTemplate(ctx, content, now, now)
+}
+
+// UpdateTemplateContent 整存替换 name/canvases/flowChain 三列并刷新 updatedAt,
+// 不触碰 dataset/datasetSchema(spec §2.4 #5 整存替换语义)。id 不存在 → ErrNotFound
+func (s *Store) UpdateTemplateContent(ctx context.Context, id int64, content TemplateContent) error {
+	canvases, err := json.Marshal(content.Canvases)
+	if err != nil {
+		return fmt.Errorf("序列化 canvases: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE templates SET name = ?, canvases = ?, flow_chain = ?, updated_at = ? WHERE id = ?`,
+		content.Name, string(canvases), nullableText(content.FlowChain),
+		nowRFC3339(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("更新模板 %d: %w", id, err)
+	}
+	return requireRow(res, "更新模板", id)
+}
+
+// UpdateDataset 整存替换 dataset_schema/dataset 两列并刷新 updatedAt
+// (spec §2.4 #6,通过 draft-07 校验后由 handler 调用)。id 不存在 → ErrNotFound
+func (s *Store) UpdateDataset(ctx context.Context, id int64, schema, data json.RawMessage) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE templates SET dataset_schema = ?, dataset = ?, updated_at = ? WHERE id = ?`,
+		nullableText(schema), nullableText(data), nowRFC3339(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("更新数据源 %d: %w", id, err)
+	}
+	return requireRow(res, "更新数据源", id)
+}
+
+// requireRow UPDATE 影响行数为 0 即寻址失败(handler 映射 404 template_not_found)
+func requireRow(res sql.Result, op string, id int64) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s %d: 取影响行数: %w", op, id, err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // nullableText nil RawMessage → SQL NULL,否则原文字节入库

@@ -62,10 +62,10 @@ func TestDecode_ExactlyLimitOK(t *testing.T) {
 func TestDecode_InvalidJSON400(t *testing.T) {
 	h := decodeRoute()
 	for name, body := range map[string]string{
-		"语法错误":   `{"name":`,
-		"纯文本":    "not json",
+		"语法错误":    `{"name":`,
+		"纯文本":     "not json",
 		"空 body":  "",
-		"尾随垃圾":   `{} trailing`,
+		"尾随垃圾":    `{} trailing`,
 		"两个 JSON": `{}{}`,
 	} {
 		code, env := postBody(t, h, []byte(body))

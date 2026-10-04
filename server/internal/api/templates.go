@@ -1,12 +1,9 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
-
-	"example/server/internal/store"
 )
 
 // handleHealth GET /api/health → 200 {"status":"ok"}(spec §2.4 #1)
@@ -35,12 +32,8 @@ func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, err := s.store.GetTemplate(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, codeTemplateNotFound, "模板不存在")
-		return
-	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, codeInternalError, "读取模板失败")
+		writeStoreError(w, err, "读取模板失败")
 		return
 	}
 	writeJSON(w, http.StatusOK, rec)

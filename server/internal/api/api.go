@@ -1,6 +1,7 @@
 // Package api:HTTP 契约面(spec §2)。总则:JSON 前缀 /api、错误信封统一
 // {"error":{code,message}}、请求体上限 10MB、静态前缀 FileServer 直服。
-// 本票(11)落地读路径骨架,写端点与渲染管线随 12/13 票接入同一套出口。
+// 读路径(11 票)与模板/数据源/上传写路径(12 票)同构;渲染管线(13 票)后续
+// 接入同一套出口。
 package api
 
 import (
@@ -13,7 +14,8 @@ import (
 // maxBodyBytes 请求体上限 10MB,全部 API 一体适用含 multipart(spec §2.1)
 const maxBodyBytes = 10 << 20
 
-// 稳定错误码(spec §2.5)——本票先落骨架四码,解码/编译/物化码随 12/13 票接线
+// 稳定错误码(spec §2.5)——骨架四码;解码/编译码由 preflight 包对 go-canvas
+// sentinel 映射,数据源两码由 dataset 包映射,写端点透传
 const (
 	codeInvalidJSON      = "invalid_json"
 	codeRequestTooLarge  = "request_too_large"
@@ -44,6 +46,10 @@ func New(st *store.Store) http.Handler {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /api/templates", s.handleListTemplates)
 	mux.HandleFunc("GET /api/templates/{id}", s.handleGetTemplate)
+	mux.HandleFunc("POST /api/templates", s.handleCreateTemplate)
+	mux.HandleFunc("PUT /api/templates/{id}", s.handleUpdateTemplate)
+	mux.HandleFunc("PUT /api/templates/{id}/dataset", s.handleUpdateDataset)
+	mux.HandleFunc("POST /api/assets", s.handleUploadAsset)
 	// 静态前缀(spec §2.1):URL /assets/u/x.png ↔ 磁盘 assets/u/x.png(剥前缀即三合一的相对形态)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
 	mux.Handle("/renders/", http.StripPrefix("/renders/", http.FileServer(http.Dir("renders"))))
