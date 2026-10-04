@@ -1,0 +1,4 @@
+[
+  { "frame": 0, "mode": "fixed" },
+  { "frame": 1, "mode": "paged", "omitIfEmpty": true }
+]

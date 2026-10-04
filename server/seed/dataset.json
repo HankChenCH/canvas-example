@@ -1,0 +1,55 @@
+{
+  "org": {
+    "name": "瀚辰培训中心",
+    "logo": "https://picsum.photos/seed/hankchen-org/240/240"
+  },
+  "doc": {
+    "title": "结业证书 · 批量打印页"
+  },
+  "batch": {
+    "no": "B-2026-1017",
+    "total": 5
+  },
+  "certificates": [
+    {
+      "name": "林晚晴",
+      "course": "云计算架构实战",
+      "certNo": "HC-2026-0817",
+      "issuedAt": "2026-08-17",
+      "photo": "assets/u/student-1.png",
+      "verifyUrl": "https://verify.hankchen.example/c/HC-2026-0817"
+    },
+    {
+      "name": "沈亦舟",
+      "course": "大模型应用开发训练营",
+      "certNo": "HC-2026-0818",
+      "issuedAt": "2026-08-17",
+      "photo": "assets/u/student-2.png",
+      "verifyUrl": "https://verify.hankchen.example/c/HC-2026-0818"
+    },
+    {
+      "name": "顾清晏",
+      "course": "数据工程与实时计算",
+      "certNo": "HC-2026-0819",
+      "issuedAt": "2026-08-17",
+      "photo": "assets/u/student-3.png",
+      "verifyUrl": "https://verify.hankchen.example/c/HC-2026-0819"
+    },
+    {
+      "name": "苏念安",
+      "course": "云原生安全运营",
+      "certNo": "HC-2026-0820",
+      "issuedAt": "2026-08-17",
+      "photo": "assets/u/student-4.png",
+      "verifyUrl": "https://verify.hankchen.example/c/HC-2026-0820"
+    },
+    {
+      "name": "陆知行",
+      "course": "前端工程化与性能优化",
+      "certNo": "HC-2026-0821",
+      "issuedAt": "2026-08-17",
+      "photo": "assets/u/student-5.png",
+      "verifyUrl": "https://verify.hankchen.example/c/HC-2026-0821"
+    }
+  ]
+}

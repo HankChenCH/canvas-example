@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "结业证书批量打印数据源",
+  "description": "与两帧模板表达式字段对齐：根级标量（org/doc/batch）供装饰层表达式，certificates 数组为流链 rowsPath 目标",
+  "definitions": {
+    "imageUrl": {
+      "type": "string",
+      "description": "图片资源引用：远程 URL 或本地相对路径（03 票三合一约定）"
+    },
+    "certificate": {
+      "type": "object",
+      "title": "证书记录",
+      "properties": {
+        "name": { "type": "string", "description": "学员姓名" },
+        "course": { "type": "string", "description": "课程名称" },
+        "certNo": { "type": "string", "description": "证书编号" },
+        "issuedAt": { "type": "string", "description": "颁发日期（YYYY-MM-DD）" },
+        "photo": { "$ref": "#/definitions/imageUrl", "description": "学员照片（本地 assets/u/ 相对路径）" },
+        "verifyUrl": { "type": "string", "description": "验证二维码内容 URL" }
+      },
+      "required": ["name", "course", "certNo", "issuedAt", "photo", "verifyUrl"]
+    }
+  },
+  "properties": {
+    "org": {
+      "type": "object",
+      "title": "机构信息",
+      "properties": {
+        "name": { "type": "string", "description": "机构名称" },
+        "logo": { "$ref": "#/definitions/imageUrl", "description": "机构徽标（远程 URL，演示远程图片物化）" }
+      },
+      "required": ["name", "logo"]
+    },
+    "doc": {
+      "type": "object",
+      "title": "文档信息",
+      "properties": {
+        "title": { "type": "string", "description": "文档标题" }
+      },
+      "required": ["title"]
+    },
+    "batch": {
+      "type": "object",
+      "title": "批次信息",
+      "properties": {
+        "no": { "type": "string", "description": "批次号" },
+        "total": { "type": "integer", "description": "证书总数" }
+      },
+      "required": ["no", "total"]
+    },
+    "certificates": {
+      "type": "array",
+      "title": "证书列表（流链 rowsPath）",
+      "items": { "$ref": "#/definitions/certificate" }
+    }
+  },
+  "required": ["org", "doc", "batch", "certificates"]
+}

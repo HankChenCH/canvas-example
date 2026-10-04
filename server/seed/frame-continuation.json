@@ -1,0 +1,239 @@
+{
+  "canvas": { "width": 794, "height": 1123 },
+  "layers": [
+    {
+      "type": "ImageLayer",
+      "name": "页面底色",
+      "priority": 100,
+      "spec": {
+        "shape": {
+          "width": 794, "height": 1123, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": "#ffffff"
+        },
+        "align": { "horizontal": "left", "vertical": "top" },
+        "position": { "x": 0, "y": 0, "position": "top-left" }
+      },
+      "data": { "valueType": "StaticValue", "value": null }
+    },
+    {
+      "type": "ImageLayer",
+      "name": "续页色带",
+      "priority": 90,
+      "spec": {
+        "shape": {
+          "width": 794, "height": 64, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": "#eef2f7"
+        },
+        "align": { "horizontal": "left", "vertical": "top" },
+        "position": { "x": 0, "y": 0, "position": "top-left" }
+      },
+      "data": { "valueType": "StaticValue", "value": null }
+    },
+    {
+      "type": "TextLayer",
+      "name": "续页标题",
+      "priority": 80,
+      "spec": {
+        "shape": {
+          "width": 700, "height": 32, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": null
+        },
+        "align": { "horizontal": "left", "vertical": "center" },
+        "position": { "x": 40, "y": 16, "position": "top-left" },
+        "fontFamily": {
+          "font": "assets/fonts/NotoSansSC-Regular.otf",
+          "fontSize": 17, "fontColor": "#33475b", "angle": 0, "autowrap": false
+        }
+      },
+      "data": {
+        "valueType": "ExpressionValue",
+        "expression": "（续页）{{org.name}} · {{doc.title}}",
+        "value": "（续页）{{org.name}} · {{doc.title}}"
+      }
+    },
+    {
+      "type": "TextLayer",
+      "name": "页脚",
+      "priority": 80,
+      "spec": {
+        "shape": {
+          "width": 794, "height": 26, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": null
+        },
+        "align": { "horizontal": "center", "vertical": "center" },
+        "position": { "x": 0, "y": 1088, "position": "top-left" },
+        "fontFamily": {
+          "font": "assets/fonts/NotoSansSC-Regular.otf",
+          "fontSize": 11, "fontColor": "#9aa5b1", "angle": 0, "autowrap": false
+        }
+      },
+      "data": {
+        "valueType": "ExpressionValue",
+        "expression": "批次 {{batch.no}} · 本页由 go-canvas 文档管线生成 · 演示样张",
+        "value": "批次 {{batch.no}} · 本页由 go-canvas 文档管线生成 · 演示样张"
+      }
+    },
+    {
+      "type": "TableLayer",
+      "name": "证书卡片区",
+      "priority": 50,
+      "spec": {
+        "shape": {
+          "width": 714, "height": 800, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": "#ffffff"
+        },
+        "align": { "horizontal": "left", "vertical": "top" },
+        "position": { "x": 40, "y": 96, "position": "top-left" }
+      },
+      "data": { "rowsPath": "certificates" },
+      "template": {
+        "type": "TableRowTemplate",
+        "priority": 0,
+        "spec": {
+          "shape": {
+            "width": 714, "height": 400, "autoWidth": false, "autoHeight": false,
+            "lineHeight": 1,
+            "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+            "border": { "top": null, "bottom": null, "left": null, "right": null },
+            "backgroundColor": null
+          },
+          "align": { "horizontal": "left", "vertical": "top" },
+          "position": { "x": 0, "y": 0, "position": "top-left" }
+        },
+        "cells": [
+          {
+            "type": "TableCellLayer",
+            "priority": 0,
+            "spec": {
+              "shape": {
+                "width": 160, "height": 400, "autoWidth": false, "autoHeight": false,
+                "lineHeight": 1,
+                "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+                "border": {
+                  "top": { "width": 1, "color": "#d9dde3" },
+                  "bottom": { "width": 1, "color": "#d9dde3" },
+                  "left": { "width": 1, "color": "#d9dde3" },
+                  "right": { "width": 1, "color": "#d9dde3" }
+                },
+                "backgroundColor": "#f3f5f7"
+              },
+              "align": { "horizontal": "left", "vertical": "top" },
+              "position": { "x": 0, "y": 0, "position": "top-left" }
+            },
+            "content": {
+              "type": "ImageLayer",
+              "priority": 0,
+              "spec": {
+                "shape": {
+                  "width": 160, "height": 400, "autoWidth": false, "autoHeight": false,
+                  "lineHeight": 1,
+                  "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+                  "border": { "top": null, "bottom": null, "left": null, "right": null },
+                  "backgroundColor": "#e8ecef"
+                },
+                "align": { "horizontal": "center", "vertical": "center" },
+                "position": { "x": 0, "y": 0, "position": "top-left" }
+              },
+              "data": { "valueType": "ExpressionValue", "expression": "{{row.photo}}", "value": "{{row.photo}}" }
+            }
+          },
+          {
+            "type": "TableCellLayer",
+            "priority": 0,
+            "spec": {
+              "shape": {
+                "width": 458, "height": 400, "autoWidth": false, "autoHeight": false,
+                "lineHeight": 1,
+                "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+                "border": {
+                  "top": { "width": 1, "color": "#d9dde3" },
+                  "bottom": { "width": 1, "color": "#d9dde3" },
+                  "left": { "width": 1, "color": "#d9dde3" },
+                  "right": { "width": 1, "color": "#d9dde3" }
+                },
+                "backgroundColor": "#ffffff"
+              },
+              "align": { "horizontal": "left", "vertical": "top" },
+              "position": { "x": 0, "y": 0, "position": "top-left" }
+            },
+            "content": {
+              "type": "TextLayer",
+              "priority": 0,
+              "spec": {
+                "shape": {
+                  "width": 458, "height": 400, "autoWidth": false, "autoHeight": false,
+                  "lineHeight": 1.6,
+                  "padding": { "top": 24, "bottom": 24, "left": 28, "right": 20 },
+                  "border": { "top": null, "bottom": null, "left": null, "right": null },
+                  "backgroundColor": null
+                },
+                "align": { "horizontal": "left", "vertical": "center" },
+                "position": { "x": 0, "y": 0, "position": "top-left" },
+                "fontFamily": {
+                  "font": "assets/fonts/NotoSansSC-Regular.otf",
+                  "fontSize": 21, "fontColor": "#24313f", "angle": 0, "autowrap": true
+                }
+              },
+              "data": {
+                "valueType": "ExpressionValue",
+                "expression": "姓　名：{{row.name}}\n课　程：{{row.course}}\n编　号：{{row.certNo}}\n颁发日期：{{row.issuedAt}}\n第 {{$index}} 份 · 共 {{batch.total}} 份",
+                "value": "姓　名：{{row.name}}\n课　程：{{row.course}}\n编　号：{{row.certNo}}\n颁发日期：{{row.issuedAt}}\n第 {{$index}} 份 · 共 {{batch.total}} 份"
+              }
+            }
+          },
+          {
+            "type": "TableCellLayer",
+            "priority": 0,
+            "spec": {
+              "shape": {
+                "width": 96, "height": 0, "autoWidth": false, "autoHeight": true,
+                "lineHeight": 1,
+                "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+                "border": {
+                  "top": { "width": 1, "color": "#d9dde3" },
+                  "bottom": { "width": 1, "color": "#d9dde3" },
+                  "left": { "width": 1, "color": "#d9dde3" },
+                  "right": { "width": 1, "color": "#d9dde3" }
+                },
+                "backgroundColor": "#ffffff"
+              },
+              "align": { "horizontal": "left", "vertical": "top" },
+              "position": { "x": 0, "y": 152, "position": "top-left" }
+            },
+            "content": {
+              "type": "QrCodeLayer",
+              "priority": 0,
+              "spec": {
+                "shape": {
+                  "width": 96, "height": 96, "autoWidth": false, "autoHeight": false,
+                  "lineHeight": 1,
+                  "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+                  "border": { "top": null, "bottom": null, "left": null, "right": null },
+                  "backgroundColor": null
+                },
+                "align": { "horizontal": "left", "vertical": "top" },
+                "position": { "x": 0, "y": 0, "position": "top-left" }
+              },
+              "data": { "valueType": "ExpressionValue", "expression": "{{row.verifyUrl}}", "value": "{{row.verifyUrl}}" }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# server 运行时产物:SQLite / 渲染产物 / 物化缓存 / 运行时 assets(字体由 seed 启动补齐、
+# assets/u 为上传落点——唯一真源在 server/seed/,运行时目录一律不入库)
+server/data/
+server/renders/
+server/.cache/
+server/assets/
+
+# web(14 票起)
+web/node_modules/
+web/dist/
