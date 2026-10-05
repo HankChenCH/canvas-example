@@ -29,7 +29,7 @@ export class ApiError extends Error {
     }
 }
 
-async function request<T>(url: string, init?: { method?: string; headers?: HeadersInit; body?: BodyInit }): Promise<T> {
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const res = await fetch(url, init)
     const body: unknown = await res.json().catch(() => null)
     if (!res.ok) {

@@ -387,6 +387,9 @@ watch(templateName, () => syncDirty())
 
 const saving = ref(false)
 
+/** 保存按钮共享 title（顶栏/工具栏两处同文案，单点维护） */
+const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 当前帧 + flowChain）'
+
 /** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义）：name + 当前帧 encodeGraph 替换
  *  第 0 帧 + 未载入帧原样透传 + flowChain 原样透传。未载入帧必须透传——flowChain
  *  仍引用帧下标（seed 续页 frame:1），只发单帧会被预检 flow_chain_invalid 打回；
@@ -470,7 +473,7 @@ async function onImageFile(event: Event): Promise<void> {
             ? `已上传并新建图片图层：${formatLayerPath(path)} · ${file.name}`
             : '上传完成但文档未打开'
     } catch (error) {
-        docNote.value = `上传失败：${error instanceof Error ? error.message : String(error)}`
+        docNote.value = `上传失败：${formatApiError(error)}`
     }
 }
 
@@ -511,7 +514,7 @@ async function exportPreview(): Promise<void> {
                 ? `已导出预览 PNG（预览图，非终图；${failed} 项资源失败以占位出图）· ${result.width}×${result.height}`
                 : `已导出预览 PNG（预览图，非终图）· ${result.width}×${result.height}`
     } catch (error) {
-        docNote.value = `导出失败：${error instanceof Error ? error.message : String(error)}`
+        docNote.value = `导出失败：${formatApiError(error)}`
     } finally {
         exporting.value = false
     }
@@ -574,7 +577,7 @@ onBeforeUnmount(() => {
                     type="button"
                     class="primary"
                     data-save-template
-                    title="保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 当前帧 + flowChain）"
+                    :title="SAVE_TITLE"
                     :disabled="saving"
                     @click="saveTemplate"
                 >
@@ -603,7 +606,7 @@ onBeforeUnmount(() => {
             <button
                 type="button"
                 data-save
-                title="保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 当前帧 + flowChain）"
+                :title="SAVE_TITLE"
                 :disabled="saving"
                 @click="saveTemplate"
             >
