@@ -23,10 +23,16 @@
 // （flowChain 文本域 +「保存流链」→ 文档级 PUT，canvases 一并整存，flow_chain_invalid
 // 等编译码段内回显）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混全局指示灯；
 // dataset 不进全局 dirty 口径，flowChain 草稿进（spec §4.4）。
+// 另存为（spec §4.5 两连调用精度锚点③，18 票）：弹名字输入 → saveAsCopy 两连
+// 调用（POST /templates 不带 dataset + PUT /templates/{newId}/dataset 复制数据
+// 源）→ 成功后会话延续式重绑（dirty 基线重置为新模板、抽屉基线同步）+ router.
+// replace('/editor/<newId>') 不重走载入——App.vue 去 :key 后 editor→editor 参数
+// 级导航复用本页实例，路由 id 与会话脱钩的导航走防御性重载兜底；中途失败阶段
+// 归因回显弹窗内，客户端不进入半副本（不重绑不导航），重试为全新两连调用。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import {
     Canvas2DBackend,
@@ -82,7 +88,6 @@ import { api, ApiError, formatApiError, type TemplateRecord } from '../api'
 import {
     baselineFromSlots,
     buildSavePayload,
-    canonicalFlowChain,
     decodeGraphJson,
     encodeGraphJson,
     isDocDirty,
@@ -95,21 +100,33 @@ import {
     drawerBaselineFromRecord,
     isSegmentDirty,
     parseJsonDraft,
+    prettyJsonText,
     type DrawerDraftBaseline,
 } from '../editor/datasource'
+import { datasetCopyPayload, saveAsCopy } from '../editor/saveas'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
+import SaveAsDialog from '../components/SaveAsDialog.vue'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
-// 提示 + 返回列表链接（按 code 判定，不按 HTTP status） ----
+// 提示 + 返回列表链接（按 code 判定，不按 HTTP status）。onMounted 首载与路由 id
+// 变化的防御性重载共用（18 票：App.vue 去 :key 后 editor→editor 参数级导航复用
+// 本页实例——另存为 replace 前已重绑 template.id，watcher 判同不重载即会话延续；
+// 其余脱钩导航走整段重载，补齐 :key 时代的会话-id 绑定保证）。 ----
 
 const route = useRoute()
+const router = useRouter()
 const template = ref<TemplateRecord | null>(null)
 const notFound = ref(false)
 const errorText = ref<string | null>(null)
 
-onMounted(async () => {
+/** 载入序号：异步载入期间路由再变（连续导航）时丢弃过期结果 */
+let loadSeq = 0
+
+async function loadTemplate(id: string): Promise<void> {
+    const seq = ++loadSeq
     try {
-        const record = await api.getTemplate(String(route.params.id))
+        const record = await api.getTemplate(id)
+        if (seq !== loadSeq) return
         if (record.canvases.length === 0) {
             errorText.value = '模板不含任何帧，无法编辑'
             return
@@ -137,14 +154,37 @@ onMounted(async () => {
         schemaText.value = drawerBaseline.value.schemaText
         dataText.value = drawerBaseline.value.dataText
         flowChainText.value = drawerBaseline.value.flowChainText
+        // 重载路径（画布已就绪，onReady 不会再来）：换文档重开当前帧；首载路径由
+        // onReady 收口（CanvasSurface 在 template 置位后才挂载）
+        if (contentBackend !== null) openFrameDocument()
     } catch (e) {
+        if (seq !== loadSeq) return
         if (e instanceof ApiError && e.code === 'template_not_found') {
             notFound.value = true
         } else {
             errorText.value = formatApiError(e)
         }
     }
+}
+
+onMounted(() => {
+    void loadTemplate(String(route.params.id))
 })
+
+// 路由 id 防御性重载（18 票，App.vue 去 :key 的绑定保证承接）：另存为 replace 已
+// 先重绑 template.id → 判同不重载（会话延续）；其余 id 脱钩的参数变化重置页面态
+// 后整段重载。离开编辑器路由（返回列表）不触发。
+watch(
+    () => route.params.id,
+    (id) => {
+        if (route.name !== 'editor') return
+        if (template.value !== null && String(template.value.id) === String(id)) return
+        notFound.value = false
+        errorText.value = null
+        template.value = null
+        void loadTemplate(String(id))
+    },
+)
 
 // ---- 多帧帧缓冲（spec §4.2，16 票）：宿主内存帧缓冲 = canvases 的宿主镜像，
 // graphJson 以 canonical encode 字符串持有（dirty 比较/保存载荷直接消费字符串）；
@@ -484,14 +524,21 @@ function onReady({ contentCanvas, overlayCanvas }: CanvasSurfaceReady) {
         syncDirty()
     })
 
-    // 载入第 0 帧（spec §4.2）：帧缓冲 graphJson → decodeGraph → openDocument → fit
+    // 载入当前帧（spec §4.2 接线序收口）：帧缓冲 graphJson → decodeGraph →
+    // openDocument → fit；首载（第 0 帧）与另存为/防御性重载后的换文档共用
+    openFrameDocument()
+}
+
+/** 打开当前帧文档（spec §4.2）：帧缓冲 graphJson → decodeGraph → openDocument →
+ *  计一次 dirty 让守卫立即可用 → 物化 → 整页 fit（初始进入与重载同语义）。 */
+function openFrameDocument(): void {
     if (!template.value || frameSlots.value.length === 0) return
-    const doc = decodeGraphJson(frameSlots.value[0]!.graphJson)
+    const doc = decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson)
     editor.openDocument(doc)
     // dirty 基线已在载入时打快照（各帧 canonical 串）；此处即算一次让守卫立即可用
     computeDirty()
-    materializer.materialize(doc)
-    editor.fitToSurface() // 初始进入：整页 fit 语义
+    materializer?.materialize(doc)
+    editor.fitToSurface()
 }
 
 // ---- 保存面（spec §4.4，16 票文档级口径）：纯手动 + dirty 双守卫 ----
@@ -566,7 +613,6 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
     const sentName = templateName.value
     const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
     const sentFlowChainText = flowChainText.value
-    const sentFlowChainCanonical = canonicalFlowChain(flowDraft.value)
     const payload = buildSavePayload({
         slots: sentSlots,
         templateName: sentName,
@@ -579,12 +625,7 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
         template.value = updated
         // 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），保存期间的
         // 继续编辑保持 dirty
-        savedBaseline = {
-            name: sentName,
-            names: sentSlots.map((slot) => slot.name),
-            frames: sentSlots.map((slot) => slot.graphJson),
-            flowChain: sentFlowChainCanonical,
-        }
+        savedBaseline = baselineFromSlots(sentName, sentSlots, flowDraft.value)
         // 流链草稿已随本次文档级 PUT 落库：段基线同步发送文本，段内标记归灭
         drawerBaseline.value = { ...drawerBaseline.value, flowChainText: sentFlowChainText }
         flowChainError.value = null
@@ -608,6 +649,107 @@ function saveTemplate(): void {
 /** 抽屉流链段「保存流链」入口：同一文档级通道，错误段内回显（spec §4.3） */
 function saveFlowChain(): void {
     void runDocumentSave('flowchain')
+}
+
+// ---- 另存为（spec §4.5 两连调用精度锚点③，18 票）：弹名字输入 → saveAsCopy
+// 两连调用（POST /templates 不带 dataset + PUT /templates/{newId}/dataset 连带
+// 复制数据源）。成功 = 会话延续式重绑：template / dirty 基线 / 抽屉基线整体切到
+// 副本后 router.replace——App.vue 去 :key，本页实例承接参数级导航，不重走载入；
+// 「帧缓冲重挂」以基线重绑承载（帧缓冲字节 = 发送字节 = 服务端存储字节，重建是
+// 恒等操作）；dirty 基线 = 本次发送字节（与保存同缝），另存后不改任何东西
+// saveState 即 clean。中途失败回显弹窗内：create 阶段失败无副本落地；dataset
+// 阶段失败不导航不重绑（客户端不进入半副本），重试为全新两连调用。未保存的
+// 数据源草稿不随两连调用（复制的是存储态），草稿保留、段内标记如实延续到副本上。 ----
+
+const saveAsOpen = ref(false)
+const saveAsName = ref('')
+const saveAsError = ref<string | null>(null)
+const saveAsSaving = ref(false)
+
+function openSaveAs(): void {
+    saveAsName.value = templateName.value
+    saveAsError.value = null
+    saveAsOpen.value = true
+}
+
+function closeSaveAs(): void {
+    saveAsOpen.value = false
+    saveAsError.value = null
+}
+
+// 错误随再编辑清空（陈旧错误误导）
+watch(saveAsName, () => {
+    saveAsError.value = null
+})
+
+async function runSaveAs(): Promise<void> {
+    const record = template.value
+    if (!record || !editor.store.doc || saveAsSaving.value) return
+    const name = saveAsName.value.trim()
+    if (!name) {
+        saveAsError.value = '副本名不能为空'
+        return
+    }
+    const flowDraft = parseJsonDraft(flowChainText.value)
+    if (!flowDraft.ok) {
+        saveAsError.value = `flowChain JSON 解析失败：${flowDraft.message}（在数据源抽屉内修复或还原后再另存）`
+        return
+    }
+    saveAsSaving.value = true
+    docNote.value = '另存为中…'
+    let savedAsId: number | null = null
+    try {
+        // 与保存同一条缝：当前帧快照并入帧缓冲，载荷只消费已快照槽位
+        snapshotActiveFrame()
+        const sentName = name
+        const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
+        const sentFlowChainText = flowChainText.value
+        const result = await saveAsCopy({
+            payload: buildSavePayload({ slots: sentSlots, templateName: sentName, flowChain: flowDraft.value }),
+            dataset: datasetCopyPayload(record),
+            createTemplate: api.createTemplate,
+            putDataset: api.putDataset,
+        })
+        if (!result.ok) {
+            const prefix =
+                result.failure.stage === 'dataset'
+                    ? '副本已创建但数据源复制失败，重试将另建新副本：'
+                    : '副本创建失败：'
+            saveAsError.value = prefix + result.failure.message
+            docNote.value = `另存为失败：${result.failure.message}`
+            return
+        }
+        // ---- 成功：会话延续式重绑（spec §4.5）----
+        const newRecord = result.record
+        template.value = newRecord
+        // dirty 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），与保存
+        // 同缝；另存期间的继续编辑保持 dirty
+        savedBaseline = baselineFromSlots(sentName, sentSlots, flowDraft.value)
+        templateName.value = sentName
+        // 抽屉基线：流链已随 POST 落库 → 基线同步发送文本（段内标记归灭）；schema/
+        // data 基线 = 副本存储态，草稿文本不动（未保存标记如实延续）
+        drawerBaseline.value = {
+            schemaText: prettyJsonText(newRecord.datasetSchema),
+            dataText: prettyJsonText(newRecord.dataset),
+            flowChainText: sentFlowChainText,
+        }
+        flowChainError.value = null
+        computeDirty()
+        saveAsOpen.value = false
+        docNote.value = `已另存为「${sentName}」，数据源随行（副本即刻可渲染）`
+        savedAsId = newRecord.id
+    } catch (e) {
+        saveAsError.value = formatApiError(e)
+        docNote.value = `另存为失败：${formatApiError(e)}`
+    } finally {
+        saveAsSaving.value = false
+    }
+    // 路由 replace 在主 try 之外：副本已建、状态已重绑后，导航异常不得反咬
+    // 「另存为失败」；失败时路由停在原 id，会话仍指向副本（防御 watcher 以
+    // template.id 为准，不受影响）
+    if (savedAsId !== null) {
+        await router.replace(`/editor/${savedAsId}`).catch(() => {})
+    }
 }
 
 // ---- 数据源段保存通道（spec §2.4 #6 / §4.3）：显式「保存数据源」→
@@ -655,6 +797,7 @@ function isImeComposing(event: KeyboardEvent): boolean {
 /** 键盘：仅 Ctrl/Cmd+S（保存是宿主职责，不入内核注册表）。文本编辑中键盘路由
  *  进 textarea，保存不抢；其余快捷键已由 useShortcuts 统一处理。 */
 function onKeydown(event: KeyboardEvent): void {
+    if (saveAsOpen.value) return // 另存为弹窗模态持有键盘（Enter/Esc 由弹窗自理）
     if (editor.store.ui.editing !== null) return
     const mod = event.ctrlKey || event.metaKey
     if (mod && !event.shiftKey && event.key.toLowerCase() === 's') {
@@ -783,7 +926,7 @@ onBeforeUnmount(() => {
          工作台 / 状态栏），页面零滚动 -->
     <main v-else class="stage">
         <!-- 顶栏（spec §4.1）：← 返回列表｜模板名可编辑（内容进 dirty 口径）｜
-             保存态｜保存 / 导出预览图（另存为 18 票、渲染终图 19 票） -->
+             保存态｜保存 / 另存为（18 票）/ 导出预览图（渲染终图 19 票） -->
         <header class="topbar" aria-label="编辑器顶栏">
             <div class="topbar-doc">
                 <RouterLink to="/" class="back-link" data-back-link>← 返回列表</RouterLink>
@@ -818,6 +961,16 @@ onBeforeUnmount(() => {
                     @click="saveTemplate"
                 >
                     {{ saving ? '保存中…' : '保存' }}
+                </button>
+                <button
+                    type="button"
+                    class="ghost"
+                    data-save-as-template
+                    title="另存为：以当前内容创建副本模板（各帧 + 流链 + 数据源随行），成功后跳转到副本继续编辑"
+                    :disabled="saveAsSaving"
+                    @click="openSaveAs"
+                >
+                    另存为
                 </button>
                 <!-- editor.store.doc 是非响应式读数，按钮可用态不做文档门（处理器自守卫），
                      导出中状态走响应式 exporting -->
@@ -993,6 +1146,17 @@ onBeforeUnmount(() => {
             @close="drawerOpen = false"
             @save-dataset="saveDataset"
             @save-flowchain="saveFlowChain"
+        />
+
+        <!-- 另存为弹窗（spec §4.5 两连调用，18 票）：名字草稿与错误/在途态全由宿主
+             持有，组件纯呈现；确认 → 两连调用 + 会话延续式重绑 + router.replace -->
+        <SaveAsDialog
+            v-model:name="saveAsName"
+            :open="saveAsOpen"
+            :saving="saveAsSaving"
+            :error="saveAsError"
+            @confirm="runSaveAs"
+            @cancel="closeSaveAs"
         />
     </main>
 </template>

@@ -57,6 +57,14 @@ export interface DatasetWritePayload {
 export const api = {
     listTemplates: () => request<TemplateSummary[]>('/api/templates'),
     getTemplate: (id: string | number) => request<TemplateRecord>(`/api/templates/${id}`),
+    // POST /api/templates（spec §2.4 #3）：载荷不含 dataset（04 票锚点③前提，
+    // 另存为两连调用补足）；保存即预检，不过 400 打回不落库；201 全量记录
+    createTemplate: (payload: TemplateWritePayload) =>
+        request<TemplateRecord>('/api/templates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        }),
     updateTemplate: (id: string | number, payload: TemplateWritePayload) =>
         request<TemplateRecord>(`/api/templates/${id}`, {
             method: 'PUT',
