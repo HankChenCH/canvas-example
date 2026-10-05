@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 
+	"example/server/internal/codes"
 	"example/server/internal/preflight"
 	"example/server/internal/store"
 )
@@ -34,7 +35,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 		FlowChain: normalizeNullJSON(payload.FlowChain),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, codeInternalError, "写入模板失败")
+		writeError(w, http.StatusInternalServerError, codes.InternalError, "写入模板失败")
 		return
 	}
 	s.respondTemplate(w, r, http.StatusCreated, id)
@@ -46,7 +47,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, codeTemplateNotFound, "模板不存在")
+		writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
 		return
 	}
 	payload, ok := decodeTemplatePayload(w, r)
@@ -96,10 +97,10 @@ func (s *Server) respondTemplate(w http.ResponseWriter, r *http.Request, status 
 // writeStoreError 存储寻址失败 → 404,其余归 internal_error(spec §2.4 通用寻址)
 func writeStoreError(w http.ResponseWriter, err error, fallback string) {
 	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, codeTemplateNotFound, "模板不存在")
+		writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
 		return
 	}
-	writeError(w, http.StatusInternalServerError, codeInternalError, fallback)
+	writeError(w, http.StatusInternalServerError, codes.InternalError, fallback)
 }
 
 // normalizeNullJSON null 字面量与空载荷归 nil——存储 SQL NULL 而非字面 "null"

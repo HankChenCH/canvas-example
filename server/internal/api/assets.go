@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"example/server/internal/codes"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -26,13 +27,13 @@ func (s *Server) handleUploadAsset(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader 施加,读超限在 NextPart/io.Copy 处浮出(spec §2.1 含 multipart)
 	mr, err := r.MultipartReader()
 	if err != nil {
-		writeError(w, http.StatusBadRequest, codeInvalidJSON, "请求须为 multipart/form-data(字段 file)")
+		writeError(w, http.StatusBadRequest, codes.InvalidJSON, "请求须为 multipart/form-data(字段 file)")
 		return
 	}
 	for {
 		part, err := mr.NextPart()
 		if errors.Is(err, io.EOF) {
-			writeError(w, http.StatusBadRequest, codeInvalidJSON, "multipart 请求缺少 file 字段")
+			writeError(w, http.StatusBadRequest, codes.InvalidJSON, "multipart 请求缺少 file 字段")
 			return
 		}
 		if err != nil {
@@ -59,10 +60,10 @@ func (s *Server) handleUploadAsset(w http.ResponseWriter, r *http.Request) {
 func writeMultipartError(w http.ResponseWriter, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		writeError(w, http.StatusRequestEntityTooLarge, codeRequestTooLarge, "请求体超过 10MB 上限")
+		writeError(w, http.StatusRequestEntityTooLarge, codes.RequestTooLarge, "请求体超过 10MB 上限")
 		return
 	}
-	writeError(w, http.StatusBadRequest, codeInvalidJSON, "multipart 请求解析失败: "+err.Error())
+	writeError(w, http.StatusBadRequest, codes.InvalidJSON, "multipart 请求解析失败: "+err.Error())
 }
 
 // saveAssetFile 流式落盘 assets/u/<16位随机hex>.<原扩展名>;写失败清理半成品。

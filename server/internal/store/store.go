@@ -248,3 +248,63 @@ func rawOrNull(ns sql.NullString) json.RawMessage {
 	}
 	return json.RawMessage(ns.String)
 }
+
+// --- 渲染记录(13 票,spec §2.4 #7)---
+
+// RenderImage 渲染产物条目:Path 为磁盘相对形态 "renders/<id>/<n>.png"
+// (DB 存储与落盘形态,spec §2.2;响应侧转前导斜杠 url)
+type RenderImage struct {
+	Frame int    `json:"frame"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+}
+
+// RenderRecord 渲染记录(spec §2.3):images = 帧序×页序扁平页序列
+type RenderRecord struct {
+	ID         int64         `json:"id"`
+	TemplateID int64         `json:"templateId"`
+	CreatedAt  string        `json:"createdAt"`
+	Images     []RenderImage `json:"images"`
+}
+
+// CreateRenderRecord 先落一条 stub 记录(images 空数组)取自增 id——产物文件名
+// renders/<id>/<seq>.png 依赖 id 先行;落盘成功后经 UpdateRenderImages 回填。
+// 落库失败由 handler 映射 500 internal_error(spec §2.5)
+func (s *Store) CreateRenderRecord(ctx context.Context, templateID int64) (*RenderRecord, error) {
+	now := nowRFC3339()
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO renders (template_id, images, created_at) VALUES (?, '[]', ?)`,
+		templateID, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("插入渲染记录: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("取渲染记录自增 id: %w", err)
+	}
+	return &RenderRecord{ID: id, TemplateID: templateID, CreatedAt: now, Images: []RenderImage{}}, nil
+}
+
+// UpdateRenderImages 回填 images JSON(产物全部落盘成功后调用)
+func (s *Store) UpdateRenderImages(ctx context.Context, id int64, images []RenderImage) error {
+	blob, err := json.Marshal(images)
+	if err != nil {
+		return fmt.Errorf("序列化渲染 images: %w", err)
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE renders SET images = ? WHERE id = ?`, string(blob), id)
+	if err != nil {
+		return fmt.Errorf("回填渲染记录 %d: %w", id, err)
+	}
+	return requireRow(res, "回填渲染记录", id)
+}
+
+// DeleteRenderRecord 删除 stub 记录(产物落盘失败时回滚;AUTOINCREMENT 保证
+// id 不复用,残留半成品文件不会与新渲染的产物路径相撞)
+func (s *Store) DeleteRenderRecord(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM renders WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("删除渲染记录 %d: %w", id, err)
+	}
+	return requireRow(res, "删除渲染记录", id)
+}

@@ -2,8 +2,8 @@
 # spec §6.2 curl 冒烟(契约面):前置 dev server 跑起(cd example/server && go run .)。
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080。
 # 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;
-# 8–9(渲染管线)随 13 票追加。
-# 任一断言失败非零退出(spec §6.2)。
+# 8–9(13 票)渲染管线 + keep-all + .cache 生效。
+# 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
 set -eu
 
 BASE="${1:-http://localhost:8080}"
@@ -150,4 +150,53 @@ expect_error POST /api/templates application/json "$TMP/not-json.json" 400 inval
 
 # ---- 断言 8–9(13 票):渲染管线 → RenderRecord + PNG 直链 ----
 
-echo "smoke: 断言 1–7、10、11 全绿 (BASE=$BASE)"
+echo "== 8/11 POST /api/templates/{SEED_ID}/render(渲染 → 201 RenderRecord) =="
+# 无 body POST(服务端不读,spec §2.4 #7);徽标走 picsum 物化(唯一外网点)
+_status=$(request POST "/api/templates/$SEED_ID/render" application/json /dev/null "$TMP/render1.json")
+[ "$_status" = "201" ] || die "POST render 期望 201,实得 $_status"
+assert_json "$TMP/render1.json" "d['templateId'] == $SEED_ID and isinstance(d['createdAt'], str)"
+assert_json "$TMP/render1.json" "len(d['images']) == 3"
+assert_json "$TMP/render1.json" "[ (i['frame'], i['name']) for i in d['images'] ] == [(0, '主页'), (1, '续页'), (1, '续页')]"
+assert_json "$TMP/render1.json" "[i['url'] for i in d['images']] == [f'/renders/{d[\"id\"]}/{n}.png' for n in (1, 2, 3)]"
+RENDER1_URLS="$(python3 -c 'import json,sys; print("\n".join(i["url"] for i in json.load(open(sys.argv[1], encoding="utf-8"))["images"]))' "$TMP/render1.json")"
+for u in $RENDER1_URLS; do
+	_ct="$(curl -fsS -o "$TMP/render-png.bin" -w '%{content_type}' "$BASE$u")" || die "GET $u 失败"
+	[ "$_ct" = "image/png" ] || die "GET $u Content-Type = $_ct, 期望 image/png"
+	[ -s "$TMP/render-png.bin" ] || die "GET $u 响应体为空"
+done
+
+# keep-all 不清理(spec §2.4 #7):PUT 触碰模板(内容原样回写)后再渲染,
+# 旧 renderId 的 url 仍服务旧图;同时覆盖 .cache 生效——二次渲染不再下载
+get "/api/templates/$SEED_ID" "$TMP/seed-before-touch.json"
+python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+json.dump({"name": d["name"], "canvases": d["canvases"], "flowChain": d["flowChain"]},
+          open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)
+' "$TMP/seed-before-touch.json" "$TMP/seed-touch-payload.json"
+_status=$(request PUT "/api/templates/$SEED_ID" application/json "$TMP/seed-touch-payload.json" "$TMP/seed-touched.json")
+[ "$_status" = "200" ] || die "PUT 模板(触碰)期望 200,实得 $_status"
+
+CACHE_DIR="$ROOT/server/.cache"
+CACHE_COUNT="$(find "$CACHE_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+[ "$CACHE_COUNT" -gt 0 ] || die "首次渲染后 $CACHE_DIR 应有物化缓存文件(徽标下载/QR 物化)"
+touch "$TMP/cache-marker"
+find "$CACHE_DIR" -type f -newer "$TMP/cache-marker" | grep -q . && die "触碰前不应有新缓存写入" || true
+
+_status=$(request POST "/api/templates/$SEED_ID/render" application/json /dev/null "$TMP/render2.json")
+[ "$_status" = "201" ] || die "二次渲染期望 201,实得 $_status"
+assert_json "$TMP/render2.json" "d['id'] != $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/render1.json")"
+CACHE_COUNT2="$(find "$CACHE_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+[ "$CACHE_COUNT2" = "$CACHE_COUNT" ] || die "二次渲染不应新增缓存: $CACHE_COUNT → $CACHE_COUNT2(命中即跳过)"
+NEWER="$(find "$CACHE_DIR" -type f -newer "$TMP/cache-marker")"
+[ -z "$NEWER" ] || die "二次渲染有缓存文件被改写: $NEWER"
+
+for u in $RENDER1_URLS; do
+	_ct="$(curl -fsS -o /dev/null -w '%{content_type}' "$BASE$u")" || die "旧渲染 GET $u 失败(keep-all 不清理)"
+	[ "$_ct" = "image/png" ] || die "旧渲染 GET $u Content-Type = $_ct, 期望 image/png"
+done
+
+echo "== 9/11 POST /api/templates/{不存在的id}/render(404) =="
+expect_error POST "/api/templates/999999/render" application/json /dev/null 404 template_not_found
+
+echo "smoke: 断言 1–11 全绿 (BASE=$BASE)"

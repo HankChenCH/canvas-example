@@ -2,6 +2,7 @@ package preflight
 
 import (
 	"encoding/json"
+	"example/server/internal/codes"
 	"fmt"
 	"testing"
 )
@@ -75,14 +76,14 @@ func TestCheck_DecodeCodes(t *testing.T) {
 		layers   string
 		wantCode string
 	}{
-		"未知图层类型": {`{"type":"GhostLayer","priority":0}`, CodeUnknownLayerType},
+		"未知图层类型": {`{"type":"GhostLayer","priority":0}`, codes.UnknownLayerType},
 		"template与rows双键": {
 			`{"type":"TableLayer","priority":0,"data":{"rowsPath":"rows"},"template":{"type":"TableRowTemplate","cells":[]},"rows":[]}`,
-			CodeTemplateRowsConflict,
+			codes.TemplateRowsConflict,
 		},
 		"模板态缺rowsPath": {
 			`{"type":"TableLayer","priority":0,"template":{"type":"TableRowTemplate","cells":[]}}`,
-			CodeRowsPathMissing,
+			codes.RowsPathMissing,
 		},
 	}
 	for _, tc := range cases {
@@ -102,17 +103,17 @@ func TestCheck_ChainCodes(t *testing.T) {
 		"双paged不在链尾": {
 			twoFrames,
 			chainWire(`[{"frame":0,"mode":"paged"},{"frame":1,"mode":"paged"}]`),
-			CodeFlowChainInvalid,
+			codes.FlowChainInvalid,
 		},
 		"未知键": {
 			twoFrames,
 			chainWire(`[{"frame":0,"mode":"fixed","bogus":1}]`),
-			CodeFlowChainInvalid,
+			codes.FlowChainInvalid,
 		},
 		"frame越界": {
 			twoFrames,
 			chainWire(`[{"frame":5,"mode":"fixed"}]`),
-			CodeFlowChainInvalid,
+			codes.FlowChainInvalid,
 		},
 		"链内rowsPath不一致": {
 			[]json.RawMessage{
@@ -120,7 +121,7 @@ func TestCheck_ChainCodes(t *testing.T) {
 				graphWire(templateTableWire("other")),
 			},
 			chainWire(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged"}]`),
-			CodeFlowRowsPathInconsistent,
+			codes.FlowRowsPathInconsistent,
 		},
 		// 链外帧同 rowsPath 碰撞(不限定模板态,spec §3.3 链外一致性)
 		"链外帧同rowsPath碰撞": {
@@ -129,14 +130,14 @@ func TestCheck_ChainCodes(t *testing.T) {
 				graphWire(templateTableWire("certificates")),
 			},
 			chainWire(`[{"frame":0,"mode":"paged"}]`),
-			CodeFlowRowsPathInconsistent,
+			codes.FlowRowsPathInconsistent,
 		},
 		"链上帧双顶层表": {
 			[]json.RawMessage{
 				graphWire(templateTableWire("a") + "," + templateTableWire("a")),
 			},
 			chainWire(`[{"frame":0,"mode":"fixed"}]`),
-			CodePaginateTargetInvalid,
+			codes.PaginateTargetInvalid,
 		},
 		"链外帧双顶层表": {
 			[]json.RawMessage{
@@ -144,7 +145,7 @@ func TestCheck_ChainCodes(t *testing.T) {
 				graphWire(templateTableWire("b") + "," + templateTableWire("b")),
 			},
 			chainWire(`[{"frame":0,"mode":"fixed"}]`),
-			CodePaginateTargetInvalid,
+			codes.PaginateTargetInvalid,
 		},
 	}
 	for _, tc := range cases {
@@ -167,6 +168,6 @@ func TestCheck_WireFormErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := Check(tc.graphs, tc.chain)
-		mustCode(t, got, CodeInvalidJSON)
+		mustCode(t, got, codes.InvalidJSON)
 	}
 }

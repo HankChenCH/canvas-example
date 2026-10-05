@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"example/server/internal/codes"
 	"net/http"
 )
 
@@ -18,8 +19,8 @@ func withBodyLimit(next http.Handler) http.Handler {
 
 // decodeJSON 哨兵错误(值即稳定 code,spec §2.5 骨架段)
 var (
-	errInvalidJSON     = errors.New(codeInvalidJSON)
-	errRequestTooLarge = errors.New(codeRequestTooLarge)
+	errInvalidJSON     = errors.New(codes.InvalidJSON)
+	errRequestTooLarge = errors.New(codes.RequestTooLarge)
 )
 
 // decodeJSON 严格解码请求体为 dst:单 JSON 值 + 无尾随内容。超限与坏 JSON
@@ -43,10 +44,10 @@ func decodeJSON(r *http.Request, dst any) error {
 func writeDecodeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errRequestTooLarge):
-		writeError(w, http.StatusRequestEntityTooLarge, codeRequestTooLarge, "请求体超过 10MB 上限")
+		writeError(w, http.StatusRequestEntityTooLarge, codes.RequestTooLarge, "请求体超过 10MB 上限")
 	case errors.Is(err, errInvalidJSON):
-		writeError(w, http.StatusBadRequest, codeInvalidJSON, "请求体不是合法 JSON")
+		writeError(w, http.StatusBadRequest, codes.InvalidJSON, "请求体不是合法 JSON")
 	default:
-		writeError(w, http.StatusInternalServerError, codeInternalError, err.Error())
+		writeError(w, http.StatusInternalServerError, codes.InternalError, err.Error())
 	}
 }

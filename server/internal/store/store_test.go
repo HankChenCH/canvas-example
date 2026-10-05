@@ -307,3 +307,73 @@ func TestUpdateDataset_NotFound(t *testing.T) {
 		t.Fatalf("期望 ErrNotFound, 实得 %v", err)
 	}
 }
+
+// --- 渲染记录(13 票,spec §2.4 #7)---
+
+func TestCreateRenderRecord_StubRow(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
+		t.Fatalf("播种: %v", err)
+	}
+
+	rec, err := st.CreateRenderRecord(ctx, 1)
+	if err != nil {
+		t.Fatalf("创建渲染记录: %v", err)
+	}
+	if rec.ID <= 0 || rec.TemplateID != 1 {
+		t.Fatalf("id/templateId = %d/%d", rec.ID, rec.TemplateID)
+	}
+	if rec.Images == nil || len(rec.Images) != 0 {
+		t.Fatalf("stub 记录 images 应为空数组: %v", rec.Images)
+	}
+	if !strings.HasSuffix(rec.CreatedAt, "Z") {
+		t.Fatalf("时间戳应为 RFC3339 UTC: %q", rec.CreatedAt)
+	}
+}
+
+func TestUpdateRenderImages_Roundtrip(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	rec, err := st.CreateRenderRecord(ctx, 1)
+	if err != nil {
+		t.Fatalf("创建渲染记录: %v", err)
+	}
+
+	images := []RenderImage{
+		{Frame: 0, Name: "主页", Path: "renders/1/1.png"},
+		{Frame: 1, Name: "续页", Path: "renders/1/2.png"},
+	}
+	if err := st.UpdateRenderImages(ctx, rec.ID, images); err != nil {
+		t.Fatalf("回填 images: %v", err)
+	}
+
+	// DB 存相对 path(spec §2.4 #7),JSON 形状 [{frame,name,path}]
+	var raw []map[string]any
+	row := ""
+	if err := st.db.QueryRow(`SELECT images FROM renders WHERE id = ?`, rec.ID).Scan(&row); err != nil {
+		t.Fatalf("读 images 列: %v", err)
+	}
+	if err := json.Unmarshal([]byte(row), &raw); err != nil {
+		t.Fatalf("images 列非 JSON 数组: %s (%v)", row, err)
+	}
+	if len(raw) != 2 || raw[0]["path"] != "renders/1/1.png" || raw[1]["frame"] != float64(1) {
+		t.Fatalf("images 列内容不符: %s", row)
+	}
+}
+
+func TestDeleteRenderRecord_RemovesStub(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	rec, err := st.CreateRenderRecord(ctx, 1)
+	if err != nil {
+		t.Fatalf("创建渲染记录: %v", err)
+	}
+	if err := st.DeleteRenderRecord(ctx, rec.ID); err != nil {
+		t.Fatalf("删除 stub: %v", err)
+	}
+	var n int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM renders`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("删除后 renders 行数 = %d (%v), 期望 0", n, err)
+	}
+}

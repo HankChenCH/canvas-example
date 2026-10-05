@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"example/server/internal/codes"
 	"example/server/internal/dataset"
 )
 
@@ -20,7 +21,7 @@ type datasetPayload struct {
 func (s *Server) handleUpdateDataset(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, codeTemplateNotFound, "模板不存在")
+		writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
 		return
 	}
 	var payload datasetPayload

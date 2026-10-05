@@ -1,6 +1,7 @@
 package api
 
 import (
+	"example/server/internal/codes"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,7 +17,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	items, err := s.store.ListTemplates(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, codeInternalError, "列出模板失败")
+		writeError(w, http.StatusInternalServerError, codes.InternalError, "列出模板失败")
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
@@ -28,7 +29,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, codeTemplateNotFound, "模板不存在")
+		writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
 		return
 	}
 	rec, err := s.store.GetTemplate(r.Context(), id)
