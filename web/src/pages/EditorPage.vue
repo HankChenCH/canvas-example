@@ -1,21 +1,25 @@
 <script setup lang="ts">
-// 编辑器页（spec §4.2 / 15 票）：占位页换真编辑器——工具栏全量搬 playground +
-// 语义替换（上传图片接 POST /api/assets、「保存」改 PUT 服务端语义、「打开」钮
-// 去掉、预览导出文案标注「预览图」）。接线序照 playground onReady 收敛全套装配：
+// 编辑器页（spec §4.2 / 15 票装配，16 票升级多帧）：占位页换真编辑器——工具栏全量
+// 搬 playground + 语义替换（上传图片接 POST /api/assets、「保存」改 PUT 服务端语义、
+// 「打开」钮去掉、预览导出文案标注「预览图」）。接线序照 playground onReady 收敛全套装配：
 //   new EditorSession({scheduleFrame: createRafScheduler(), fitMargin: 48, uploadHandler})
 //   → setDataSourceSchema(datasetSchema)（null 跳过）
 //   → CanvasSurface @ready 内 Canvas2DBackend（基类，不搬 gridBackdrop）+ Materializer
 //     + attachContentBackend + setOverlayPainter + materializer 双订阅
 //     （doc 变更 → materialize；物化状态变更 → invalidate both）
-//   → decodeGraph 第 0 帧 → openDocument → fitToSurface
-// 保存面（spec §4.4，本票单帧口径，16 票升级文档级）：纯手动——按钮 + Ctrl/Cmd+S，
-// 无防抖自动保存；保存 = 全量 PUT（name + 当前帧 encodeGraph 替换第 0 帧 + 未载入帧
-// 原样透传 + flowChain 原样透传）；dirty 跟当前帧 ∪ 模板名；dirty 基线 = 载入时文档
-// 快照；路由离开 onBeforeRouteLeave confirm + 页签关闭 beforeunload 双保险；保存
-// 成功归 clean。
+//   → decodeGraph 逐帧 → openDocument 第 0 帧 → fitToSurface
+// 多帧（spec §4.2，16 票）：画布上方帧 tab 条；切帧即进宿主内存帧缓冲——切出前
+// encodeGraph(editor.store.doc) 快照该帧、换帧 openDocument 重建会话文档（openDocument
+// 不重置 schema，无需重复注入——01 票）；tab 双击重命名（改 canvases[i].name，进 dirty）；
+// 不做增删帧；帧间切换不提示。帧缓冲纯逻辑在 src/editor/frames.ts（TDD 缝）。
+// 保存面（spec §4.4，16 票文档级口径）：纯手动——按钮 + Ctrl/Cmd+S，无防抖自动保存；
+// 保存 = 全量 PUT（name + 当前帧 ∪ 帧缓冲各帧 + flowChain 原样）；dirty 跟文档级——
+// 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
+// onBeforeRouteLeave confirm + 页签关闭 beforeunload 双保险；保存成功归 clean、基线
+// 同步本次发送各帧。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute } from 'vue-router'
 
 import {
@@ -68,9 +72,18 @@ import {
     drawFindMatches,
     drawSelectionGizmo,
 } from '@hankchen/canvas-next-editor-vue'
-import { decodeGraph, encodeGraph } from '@hankchen/canvas-next'
-
 import { api, ApiError, formatApiError, type TemplateRecord } from '../api'
+import {
+    baselineFromSlots,
+    buildSavePayload,
+    canonicalFlowChain,
+    decodeGraphJson,
+    encodeGraphJson,
+    isDocDirty,
+    loadFrameSlots,
+    type FrameBaseline,
+    type FrameSlot,
+} from '../editor/frames'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
 // 提示 + 返回列表链接（按 code 判定，不按 HTTP status） ----
@@ -89,8 +102,19 @@ onMounted(async () => {
         }
         // 会话建立即注入数据源 schema（spec §4.2 接线序；null/缺省跳过 = 无候选）。
         // 声明只进编辑器会话态，不进 graph、不动 wire；注入失败内核静默降级 +
-        // console.warn 已内建，宿主不重复处理。
+        // console.warn 已内建，宿主不重复处理。openDocument 不重置 schema（01 票），
+        // 切帧重建会话文档无需重复注入。
         if (record.datasetSchema != null) editor.setDataSourceSchema(record.datasetSchema)
+        // 帧缓冲载入（spec §4.2「decodeGraph 逐帧」）：逐帧解码即验 + canonical 化，
+        // 基线与帧缓冲同形；任一帧解码失败 = 载入错误面（16 票）
+        try {
+            frameSlots.value = loadFrameSlots(record.canvases)
+        } catch (e) {
+            errorText.value = e instanceof Error ? e.message : String(e)
+            return
+        }
+        savedBaseline = baselineFromSlots(record.name, frameSlots.value, record.flowChain)
+        activeFrame.value = 0
         template.value = record
         templateName.value = record.name
     } catch (e) {
@@ -101,6 +125,72 @@ onMounted(async () => {
         }
     }
 })
+
+// ---- 多帧帧缓冲（spec §4.2，16 票）：宿主内存帧缓冲 = canvases 的宿主镜像，
+// graphJson 以 canonical encode 字符串持有（dirty 比较/保存载荷直接消费字符串）；
+// activeFrame 当前帧下标；不做增删帧。 ----
+
+const frameSlots = ref<FrameSlot[]>([])
+const activeFrame = ref(0)
+
+/** 切出前快照当前帧（spec §4.2：encodeGraph(editor.store.doc) 快照该帧进缓冲） */
+function snapshotActiveFrame(): void {
+    const doc = editor.store.doc
+    if (!doc) return
+    const index = activeFrame.value
+    const slot = frameSlots.value[index]
+    if (!slot) return
+    frameSlots.value[index] = { ...slot, graphJson: encodeGraphJson(doc) }
+}
+
+/** 切帧（spec §4.2）：快照切出帧 → decodeGraph 重建会话文档（ui 选择/撤销历史等
+ *  会话态随 openDocument 重置）。视口保留不 refit；schema 不重置无需重复注入；
+ *  materialize 与 dirty 重算由 doc 订阅顺带驱动；帧间切换不提示。 */
+function switchToFrame(index: number): void {
+    if (index === activeFrame.value || !frameSlots.value[index]) return
+    snapshotActiveFrame()
+    const doc = decodeGraphJson(frameSlots.value[index]!.graphJson)
+    activeFrame.value = index
+    editor.openDocument(doc)
+}
+
+// ---- tab 双击重命名（spec §4.2）：改 canvases[i].name（帧缓冲 name 即它）进 dirty；
+// 与 graph 无关，活动帧重命名不动文档。空名拒绝提交。 ----
+
+const renamingFrame = ref<number | null>(null)
+const renamingValue = ref('')
+const renameInputEl = ref<HTMLInputElement | null>(null)
+
+function setRenameInputEl(el: unknown): void {
+    renameInputEl.value = el instanceof HTMLInputElement ? el : null
+}
+
+watch(renamingFrame, async (index) => {
+    if (index === null) return
+    await nextTick()
+    renameInputEl.value?.focus()
+    renameInputEl.value?.select()
+})
+
+function beginFrameRename(index: number): void {
+    renamingFrame.value = index
+    renamingValue.value = frameSlots.value[index]?.name ?? ''
+}
+
+function commitFrameRename(): void {
+    const index = renamingFrame.value
+    renamingFrame.value = null
+    if (index === null) return
+    const next = renamingValue.value.trim()
+    const slot = frameSlots.value[index]
+    if (!slot || !next || next === slot.name) return
+    frameSlots.value[index] = { ...slot, name: next }
+    syncDirty()
+}
+
+function cancelFrameRename(): void {
+    renamingFrame.value = null
+}
 
 // ---- 会话（spec §4.2 接线序第 1 步）：fitMargin 48 与 playground 同款；上传注入
 // 点接 POST /api/assets（响应 url 前导斜杠形态，原样写入 graph spec.src）。
@@ -339,20 +429,17 @@ function onReady({ contentCanvas, overlayCanvas }: CanvasSurfaceReady) {
         syncDirty()
     })
 
-    // 载入第 0 帧（本票单帧口径，16 票升级多帧）：decodeGraph → openDocument → fit
-    const record = template.value
-    const first = record?.canvases[0]
-    if (!record || !first) return
-    const doc = decodeGraph(first.graph)
+    // 载入第 0 帧（spec §4.2）：帧缓冲 graphJson → decodeGraph → openDocument → fit
+    if (!template.value || frameSlots.value.length === 0) return
+    const doc = decodeGraphJson(frameSlots.value[0]!.graphJson)
     editor.openDocument(doc)
-    // dirty 基线 = 载入时文档快照（spec §4.4）：canonical encode JSON + 模板名
-    savedBaseline = { name: templateName.value, frame0: JSON.stringify(encodeGraph(doc)) }
+    // dirty 基线已在载入时打快照（各帧 canonical 串）；此处即算一次让守卫立即可用
     computeDirty()
     materializer.materialize(doc)
     editor.fitToSurface() // 初始进入：整页 fit 语义
 }
 
-// ---- 保存面（spec §4.4，单帧口径）：纯手动 + dirty 双守卫 ----
+// ---- 保存面（spec §4.4，16 票文档级口径）：纯手动 + dirty 双守卫 ----
 
 /** 模板名（顶栏可编辑输入框，内容进 dirty 口径） */
 const templateName = ref('')
@@ -363,16 +450,25 @@ const templateName = ref('')
 const isDirty = ref(false)
 const DIRTY_DEBOUNCE_MS = 500
 let dirtyTimer: ReturnType<typeof setTimeout> | null = null
-/** dirty 基线 = 载入（或保存成功）时的文档快照：模板名 + 第 0 帧 canonical encode */
-let savedBaseline: { name: string; frame0: string } | null = null
+/** dirty 基线 = 载入（或保存成功）时的文档级快照（spec §4.4 文档级口径）：
+ *  模板名 + 各帧名 + 各帧 canonical 串 + flowChain canonical 串 */
+let savedBaseline: FrameBaseline | null = null
 
 function computeDirty(): void {
+    const record = template.value
+    if (savedBaseline === null || record === null) {
+        isDirty.value = false
+        return
+    }
     const doc = editor.store.doc
-    const frameJson = doc ? JSON.stringify(encodeGraph(doc)) : null
-    isDirty.value =
-        savedBaseline !== null &&
-        frameJson !== null &&
-        (frameJson !== savedBaseline.frame0 || templateName.value !== savedBaseline.name)
+    isDirty.value = isDocDirty({
+        baseline: savedBaseline,
+        slots: frameSlots.value,
+        activeIndex: activeFrame.value,
+        activeGraphJson: doc ? encodeGraphJson(doc) : null,
+        templateName: templateName.value,
+        flowChain: record.flowChain,
+    })
 }
 
 function syncDirty(): void {
@@ -388,29 +484,37 @@ watch(templateName, () => syncDirty())
 const saving = ref(false)
 
 /** 保存按钮共享 title（顶栏/工具栏两处同文案，单点维护） */
-const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 当前帧 + flowChain）'
+const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档各帧 + flowChain）'
 
-/** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义）：name + 当前帧 encodeGraph 替换
- *  第 0 帧 + 未载入帧原样透传 + flowChain 原样透传。未载入帧必须透传——flowChain
- *  仍引用帧下标（seed 续页 frame:1），只发单帧会被预检 flow_chain_invalid 打回；
- *  16 票帧缓冲落地后由「当前帧 ∪ 帧缓冲」接管。 */
+/** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义，spec §4.4 文档级口径）：当前帧
+ *  快照并入帧缓冲（与切出同一条缝）→ 载荷 = name + 帧缓冲各帧 + flowChain 原样
+ *  透传。帧缓冲载入即全量解码 canonical 化，不再有「未载入帧」，15 票的透传缝
+ *  由「当前帧 ∪ 帧缓冲」接管。基线 = 本次发送字节，保存期间的继续编辑保持 dirty。 */
 async function saveTemplate(): Promise<void> {
     const record = template.value
-    const doc = editor.store.doc
-    if (!record || !doc || saving.value) return
-    const wire = encodeGraph(doc)
+    if (!record || !editor.store.doc || saving.value) return
+    snapshotActiveFrame()
     const sentName = templateName.value
+    const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
+    const sentFlowChain = canonicalFlowChain(record.flowChain)
+    const payload = buildSavePayload({
+        slots: sentSlots,
+        templateName: sentName,
+        flowChain: record.flowChain,
+    })
     saving.value = true
     docNote.value = '保存中…'
     try {
-        const updated = await api.updateTemplate(record.id, {
-            name: sentName,
-            canvases: record.canvases.map((c, i) => (i === 0 ? { name: c.name, graph: wire } : c)),
-            flowChain: record.flowChain,
-        })
+        const updated = await api.updateTemplate(record.id, payload)
         template.value = updated
-        // 基线 = 本次发送的字节（canonical encode），保存期间的继续编辑保持 dirty
-        savedBaseline = { name: updated.name, frame0: JSON.stringify(wire) }
+        // 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），保存期间的
+        // 继续编辑保持 dirty
+        savedBaseline = {
+            name: sentName,
+            names: sentSlots.map((slot) => slot.name),
+            frames: sentSlots.map((slot) => slot.graphJson),
+            flowChain: sentFlowChain,
+        }
         computeDirty()
         docNote.value = '已保存到服务端'
     } catch (e) {
@@ -667,26 +771,62 @@ onBeforeUnmount(() => {
 
         <section class="workbench" aria-label="画布与面板">
             <LayerPanel :editor="editor" />
-            <!-- canvas-area：画布覆盖物（标尺/参考线/对齐浮条）的宿主级定位上下文 -->
+            <!-- canvas-area：帧 tab 条（顶）+ canvas-holder（画布覆盖物定位上下文） -->
             <div class="canvas-area">
-                <CanvasSurface class="surface" :editor="editor" @ready="onReady" />
-                <!-- 参考线/吸附线层：root 自带 absolute inset:0 + pointer-events:none，
-                     与 .surface 同矩形直挂、浮于画布之上；挂点次序在标尺之前（拖回
-                     删除的落点判定要求标尺条盖在参考线命中条之上） -->
-                <GuidesOverlay ref="guidesOverlayRef" :editor="editor" />
-                <!-- 标尺：画布容器顶+左贴边宿主挂载；壳 pointer-events:none 不拦画布
-                     事件；内联箭头保证每次触发都取当前 ref -->
-                <div class="ruler-shell">
-                    <Ruler
-                        :editor="editor"
-                        @guide-drag-start="(g) => guidesOverlayRef?.beginGuideDrag(g)"
-                        @guide-drag-move="(g) => guidesOverlayRef?.moveGuideDrag(g)"
-                        @guide-drag-end="(g) => guidesOverlayRef?.endGuideDrag(g)"
-                        @guide-drag-cancel="() => guidesOverlayRef?.cancelGuideDrag()"
-                    />
+                <!-- 帧 tab 条（spec §4.2 多帧，16 票）：画布上方；单击切帧（帧间切换
+                     不提示），双击重命名（改 canvases[i].name，进 dirty）；不做增删帧 -->
+                <div class="frame-tabs" role="tablist" aria-label="文档帧">
+                    <div
+                        v-for="(slot, i) in frameSlots"
+                        :key="i"
+                        class="frame-tab"
+                        :class="{ 'is-active': i === activeFrame }"
+                        role="tab"
+                        :aria-selected="i === activeFrame"
+                        :title="`帧 ${i + 1}：${slot.name || '（未命名）'}`"
+                        :data-frame-tab="i"
+                        @click="switchToFrame(i)"
+                        @dblclick="beginFrameRename(i)"
+                    >
+                        <input
+                            v-if="renamingFrame === i"
+                            :ref="setRenameInputEl"
+                            v-model="renamingValue"
+                            class="frame-tab-input"
+                            data-frame-rename-input
+                            aria-label="帧名"
+                            spellcheck="false"
+                            @click.stop
+                            @dblclick.stop
+                            @keydown.enter.prevent="commitFrameRename"
+                            @keydown.esc.prevent="cancelFrameRename"
+                            @blur="commitFrameRename"
+                        />
+                        <span v-else class="frame-tab-label" :data-frame-tab-label="i">
+                            {{ slot.name || `帧 ${i + 1}` }}
+                        </span>
+                    </div>
                 </div>
-                <!-- 对齐浮条：画布容器顶部居中宿主级挂载，浮于 CanvasSurface 之上 -->
-                <AlignFloatBar class="align-float" :editor="editor" />
+                <div class="canvas-holder">
+                    <CanvasSurface class="surface" :editor="editor" @ready="onReady" />
+                    <!-- 参考线/吸附线层：root 自带 absolute inset:0 + pointer-events:none，
+                         与 .surface 同矩形直挂、浮于画布之上；挂点次序在标尺之前（拖回
+                         删除的落点判定要求标尺条盖在参考线命中条之上） -->
+                    <GuidesOverlay ref="guidesOverlayRef" :editor="editor" />
+                    <!-- 标尺：画布容器顶+左贴边宿主挂载；壳 pointer-events:none 不拦画布
+                         事件；内联箭头保证每次触发都取当前 ref -->
+                    <div class="ruler-shell">
+                        <Ruler
+                            :editor="editor"
+                            @guide-drag-start="(g) => guidesOverlayRef?.beginGuideDrag(g)"
+                            @guide-drag-move="(g) => guidesOverlayRef?.moveGuideDrag(g)"
+                            @guide-drag-end="(g) => guidesOverlayRef?.endGuideDrag(g)"
+                            @guide-drag-cancel="() => guidesOverlayRef?.cancelGuideDrag()"
+                        />
+                    </div>
+                    <!-- 对齐浮条：画布容器顶部居中宿主级挂载，浮于 CanvasSurface 之上 -->
+                    <AlignFloatBar class="align-float" :editor="editor" />
+                </div>
             </div>
             <PropertyPanel :editor="editor" />
         </section>
@@ -921,11 +1061,82 @@ onBeforeUnmount(() => {
     border-top: 1px solid var(--shell-line);
 }
 
-/* 画布容器 = 覆盖物（标尺/参考线/对齐浮条）的定位上下文 */
+/* 画布容器 = 帧 tab 条（顶）+ canvas-holder（覆盖物定位上下文）的纵向排布 */
 .canvas-area {
-    position: relative;
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-width: 0;
+}
+
+/* 帧 tab 条（spec §4.2 多帧，16 票）：画布上方窄条；活动 tab 面板色高亮；
+   多帧横向内滚降级（同工具栏姿势） */
+.frame-tabs {
+    display: flex;
+    flex: none;
+    align-items: flex-end;
+    gap: 2px;
+    height: 32px;
+    padding: 0 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+}
+
+.frame-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.frame-tab {
+    display: flex;
+    flex: none;
+    align-items: center;
+    box-sizing: border-box;
+    max-width: 200px;
+    height: 26px;
+    padding: 0 12px;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    font-size: 12px;
+    white-space: nowrap;
+    color: var(--shell-fg-3);
+    cursor: pointer;
+    user-select: none;
+}
+
+.frame-tab:hover {
+    background: var(--shell-hover);
+    color: var(--shell-fg-2);
+}
+
+.frame-tab.is-active {
+    border-color: var(--shell-line);
+    background: var(--shell-panel);
+    color: var(--shell-fg);
+}
+
+.frame-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.frame-tab-input {
+    width: 96px;
+    padding: 1px 4px;
+    border: 1px solid var(--shell-line-strong);
+    border-radius: 4px;
+    background: var(--shell-bg);
+    font-size: 12px;
+    color: var(--shell-fg);
+    outline: none;
+}
+
+/* canvas-holder：画布与覆盖物（标尺/参考线/对齐浮条）的定位上下文 */
+.canvas-holder {
+    position: relative;
+    flex: 1;
+    min-height: 0;
 }
 
 .workbench .surface {
