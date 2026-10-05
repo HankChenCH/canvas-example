@@ -29,6 +29,12 @@
 // replace('/editor/<newId>') 不重走载入——App.vue 去 :key 后 editor→editor 参数
 // 级导航复用本页实例，路由 id 与会话脱钩的导航走防御性重载兜底；中途失败阶段
 // 归因回显弹窗内，客户端不进入半副本（不重绑不导航），重试为全新两连调用。
+// 渲染终图（spec §4.6，19 票）：顶栏「渲染终图」→ POST /templates/{id}/render
+// （无 body，存储态为准——dirty 可渲染，结果对应已保存版本）；等待期按钮禁用，
+// 30s deadline 服务端控制、前端不另设超时；失败错误体（稳定码在前）走状态栏
+// 反馈段回显；成功自动打开结果抽屉（RenderResultDrawer，只显本次会话最近一次）。
+// 与预览导出并存：导出预览图钮保留（文案含「预览图」），抽屉注明「预览仅断行
+// 参考，以终图为准」——导出 vs 终图词汇直接做进 UI。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
@@ -84,7 +90,7 @@ import {
     drawFindMatches,
     drawSelectionGizmo,
 } from '@hankchen/canvas-next-editor-vue'
-import { api, ApiError, formatApiError, type TemplateRecord } from '../api'
+import { api, ApiError, formatApiError, type RenderRecord, type TemplateRecord } from '../api'
 import {
     baselineFromSlots,
     buildSavePayload,
@@ -104,7 +110,9 @@ import {
     type DrawerDraftBaseline,
 } from '../editor/datasource'
 import { datasetCopyPayload, saveAsCopy } from '../editor/saveas'
+import { sanitizeFileBase } from '../editor/render'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
+import RenderResultDrawer from '../components/RenderResultDrawer.vue'
 import SaveAsDialog from '../components/SaveAsDialog.vue'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
@@ -789,6 +797,33 @@ async function saveDataset(): Promise<void> {
     }
 }
 
+// ---- 渲染终图（spec §4.6，19 票）：顶栏触发 POST /templates/{id}/render（无
+// body）——渲染始终以服务端存储态为准（模板 + dataset），dirty 时可渲染、结果
+// 对应已保存版本（抽屉注记说明）。等待期按钮禁用；30s deadline 服务端控制，
+// 前端不另设超时；失败错误体 {error:{code,message}} 以稳定码在前回显状态栏反
+// 馈段；成功自动打开结果抽屉，lastRender 整体替换 = 只显本次会话最近一次。 ----
+
+const rendering = ref(false)
+const renderDrawerOpen = ref(false)
+const lastRender = ref<RenderRecord | null>(null)
+
+async function runRender(): Promise<void> {
+    const record = template.value
+    if (!record || rendering.value) return
+    rendering.value = true
+    docNote.value = '渲染终图中…（以服务端存储态为准，结果对应已保存版本）'
+    try {
+        const result = await api.renderTemplate(record.id)
+        lastRender.value = result
+        renderDrawerOpen.value = true
+        docNote.value = `渲染完成，共 ${result.images.length} 页`
+    } catch (e) {
+        docNote.value = `渲染失败：${formatApiError(e)}`
+    } finally {
+        rendering.value = false
+    }
+}
+
 /** 输入法合成中的按键不触发保存 */
 function isImeComposing(event: KeyboardEvent): boolean {
     return event.isComposing || event.keyCode === 229
@@ -861,7 +896,8 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 function previewFileName(): string {
-    const base = templateName.value.replace(/[/\\:*?"<>|]/g, '_').trim()
+    // 非法字符折叠与终图下载建议名同口径（render.ts sanitizeFileBase 单源）
+    const base = sanitizeFileBase(templateName.value)
     return `${base || 'template'}-preview.png`
 }
 
@@ -926,7 +962,8 @@ onBeforeUnmount(() => {
          工作台 / 状态栏），页面零滚动 -->
     <main v-else class="stage">
         <!-- 顶栏（spec §4.1）：← 返回列表｜模板名可编辑（内容进 dirty 口径）｜
-             保存态｜保存 / 另存为（18 票）/ 导出预览图（渲染终图 19 票） -->
+             保存态｜保存 / 另存为（18 票）/ 渲染终图（19 票）/ 导出预览图（预览
+             与终图并存，spec §4.6） -->
         <header class="topbar" aria-label="编辑器顶栏">
             <div class="topbar-doc">
                 <RouterLink to="/" class="back-link" data-back-link>← 返回列表</RouterLink>
@@ -971,6 +1008,18 @@ onBeforeUnmount(() => {
                     @click="openSaveAs"
                 >
                     另存为
+                </button>
+                <!-- 渲染终图（spec §4.6，19 票）：POST /render 无 body，存储态为准；
+                     等待期禁用（30s deadline 服务端控制，前端不另设超时） -->
+                <button
+                    type="button"
+                    class="ghost"
+                    data-render-final
+                    title="渲染终图：服务端渲染已保存版本（模板 + 数据集，dirty 时结果对应已保存版本）；服务端 30s 上限，完成自动打开结果抽屉"
+                    :disabled="rendering"
+                    @click="runRender"
+                >
+                    {{ rendering ? '渲染中…' : '渲染终图' }}
                 </button>
                 <!-- editor.store.doc 是非响应式读数，按钮可用态不做文档门（处理器自守卫），
                      导出中状态走响应式 exporting -->
@@ -1157,6 +1206,16 @@ onBeforeUnmount(() => {
             :error="saveAsError"
             @confirm="runSaveAs"
             @cancel="closeSaveAs"
+        />
+
+        <!-- 渲染结果抽屉（spec §4.6，19 票）：记录/开合/模板名（下载建议名）由宿主
+             持有，缩略图网格直用 images[].url；成功自动打开、关闭钮回落，只显本次
+             会话最近一次（lastRender 整体替换） -->
+        <RenderResultDrawer
+            :open="renderDrawerOpen"
+            :record="lastRender"
+            :template-name="templateName"
+            @close="renderDrawerOpen = false"
         />
     </main>
 </template>

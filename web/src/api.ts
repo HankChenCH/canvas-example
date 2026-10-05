@@ -54,6 +54,22 @@ export interface DatasetWritePayload {
     data: unknown
 }
 
+/** 渲染记录单图（spec §2.4 #7）：images = 帧序×页序扁平序；url 为前导斜杠形态
+ *  （spec §2.2 响应两态），即 /renders 直链 */
+export interface RenderImage {
+    frame: number
+    name: string
+    url: string
+}
+
+/** RenderRecord 响应（spec §2.3/§2.4 #7）：201 渲染一跳的落库记录 */
+export interface RenderRecord {
+    id: number
+    templateId: number
+    createdAt: string
+    images: RenderImage[]
+}
+
 export const api = {
     listTemplates: () => request<TemplateSummary[]>('/api/templates'),
     getTemplate: (id: string | number) => request<TemplateRecord>(`/api/templates/${id}`),
@@ -89,6 +105,11 @@ export const api = {
         form.append('file', new Blob([file.bytes.slice()], { type: file.mime || 'application/octet-stream' }), file.name)
         return request<{ url: string }>('/api/assets', { method: 'POST', body: form })
     },
+    // POST /api/templates/{id}/render（spec §2.4 #7）：无 body——渲染始终以服务端
+    // 存储态为准（模板 + dataset），dirty 时结果对应已保存版本（spec §4.6）；30s
+    // deadline 由服务端控制，前端不另设超时
+    renderTemplate: (id: string | number) =>
+        request<RenderRecord>(`/api/templates/${id}/render`, { method: 'POST' }),
 }
 
 // 页面错误回显统一格式：稳定 code 在前（spec §2.1 按 code 判定语义），网络层
