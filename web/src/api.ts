@@ -1,5 +1,6 @@
-// HTTP 契约客户面（spec §2.4）：本票只消费列表摘要与模板全量两条读路径。
-// 错误信封统一 {"error":{code,message}}，按 code 判定语义（spec §2.5）。
+// HTTP 契约客户面（spec §2.4）：列表摘要 / 模板全量两条读路径 + 模板 PUT（#5）
+// 与资源上传（#8）两条写路径。错误信封统一 {"error":{code,message}}，按 code
+// 判定语义（spec §2.5）。
 
 export interface TemplateSummary {
     id: number
@@ -28,8 +29,8 @@ export class ApiError extends Error {
     }
 }
 
-async function request<T>(url: string): Promise<T> {
-    const res = await fetch(url)
+async function request<T>(url: string, init?: { method?: string; headers?: HeadersInit; body?: BodyInit }): Promise<T> {
+    const res = await fetch(url, init)
     const body: unknown = await res.json().catch(() => null)
     if (!res.ok) {
         const err = (body as { error?: { code?: string; message?: string } } | null)?.error
@@ -38,9 +39,32 @@ async function request<T>(url: string): Promise<T> {
     return body as T
 }
 
+/** PUT /api/templates/{id} 载荷（spec §2.4 #5）：整存替换 name/canvases/flowChain，
+ *  服务端不触碰 dataset/datasetSchema */
+export interface TemplateWritePayload {
+    name: string
+    canvases: { name: string; graph: unknown }[]
+    flowChain: unknown
+}
+
 export const api = {
     listTemplates: () => request<TemplateSummary[]>('/api/templates'),
     getTemplate: (id: string | number) => request<TemplateRecord>(`/api/templates/${id}`),
+    updateTemplate: (id: string | number, payload: TemplateWritePayload) =>
+        request<TemplateRecord>(`/api/templates/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        }),
+    // multipart 上传：字段名 file（spec §2.4 #8）；不手写 Content-Type（boundary
+    // 归浏览器）；响应 url 前导斜杠形态，原样写 graph spec.src（spec §2.2）
+    uploadAsset: (file: { name: string; mime: string; bytes: Uint8Array }) => {
+        const form = new FormData()
+        // slice() 落一份独立 ArrayBuffer 拷贝（TS 5.9 BlobPart 收紧为
+        // ArrayBufferView<ArrayBuffer>，泛型 ArrayBufferLike 视图不直收）
+        form.append('file', new Blob([file.bytes.slice()], { type: file.mime || 'application/octet-stream' }), file.name)
+        return request<{ url: string }>('/api/assets', { method: 'POST', body: form })
+    },
 }
 
 // 页面错误回显统一格式：稳定 code 在前（spec §2.1 按 code 判定语义），网络层
