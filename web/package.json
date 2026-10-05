@@ -1,0 +1,33 @@
+{
+    "name": "example-web",
+    "version": "0.1.0",
+    "private": true,
+    "description": "证书批量生成示例应用前端（不发布）：vue-router 列表页 + 编辑器宿主",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "@hankchen/canvas-next": "file:../../canvas-web/packages/canvas-next",
+        "@hankchen/canvas-next-browser-renderer": "file:../../canvas-web/packages/canvas-next-browser-renderer",
+        "@hankchen/canvas-next-editor": "file:../../canvas-web/packages/canvas-next-editor",
+        "@hankchen/canvas-next-editor-vue": "file:../../canvas-web/packages/canvas-next-editor-vue",
+        "vue": "^3.5.43",
+        "vue-router": "^4"
+    },
+    "devDependencies": {
+        "@tailwindcss/vite": "^4.3.3",
+        "@vitejs/plugin-vue": "^6.0.9",
+        "tailwindcss": "^4.3.3",
+        "vite": "^8.3.1"
+    },
+    "pnpm": {
+        "overrides": {
+            "@hankchen/canvas-next": "file:../../canvas-web/packages/canvas-next",
+            "@hankchen/canvas-next-browser-renderer": "file:../../canvas-web/packages/canvas-next-browser-renderer",
+            "@hankchen/canvas-next-editor": "file:../../canvas-web/packages/canvas-next-editor"
+        }
+    }
+}

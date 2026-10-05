@@ -1,0 +1,28 @@
+/*
+ * 宿主全局样式：Tailwind v4 入口 + 面板令牌的 Tailwind 映射（playground
+ * style.css 同款，spec §1.3 宿主三步之二）。
+ *
+ * - @source 把 editor-vue 包源码纳入扫描：属性面板组件里的工具类（shadcn
+ *   anatomy 配方）由宿主编译——包本身零构建、零 tailwind 依赖（源码直引约定）。
+ *   路径相对本文件三级上行到工作区根（example/web/src → example → 工作区）。
+ * - @theme inline 把 panel-theme.css 的 --cn-* 令牌映射为 --color-cn-* 颜色族，
+ *   工具类（bg-cn-bg、text-cn-muted、border-cn-line…）在元素上解析回运行时
+ *   变量——令牌作用域在 .cn-props 根，面板自带主题、可整面换肤。
+ */
+@import 'tailwindcss';
+@source '../../../canvas-web/packages/canvas-next-editor-vue/src';
+
+@theme inline {
+    --color-cn-bg: var(--cn-bg);
+    --color-cn-bg-elevated: var(--cn-bg-elevated);
+    --color-cn-fg: var(--cn-fg);
+    --color-cn-muted: var(--cn-muted);
+    --color-cn-line: var(--cn-line);
+    --color-cn-field-line: var(--cn-field-line);
+    --color-cn-field: var(--cn-field);
+    --color-cn-accent: var(--cn-accent);
+    --color-cn-accent-soft: var(--cn-accent-soft);
+    --color-cn-on-accent: var(--cn-on-accent);
+    --color-cn-danger: var(--cn-danger);
+    --font-mono: var(--cn-font-mono);
+}
