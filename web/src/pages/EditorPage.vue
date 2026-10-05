@@ -17,6 +17,12 @@
 // 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
 // onBeforeRouteLeave confirm + 页签关闭 beforeunload 双保险；保存成功归 clean、基线
 // 同步本次发送各帧。
+// 数据源抽屉（spec §4.3 双通道，17 票）：一个抽屉两条保存通道——数据源段
+// （schema/data 文本域 +「保存数据源」→ PUT /templates/{id}/dataset，schema_invalid /
+// dataset_schema_mismatch 段内回显，成功后 setDataSourceSchema 更新补全候选）与流链段
+// （flowChain 文本域 +「保存流链」→ 文档级 PUT，canvases 一并整存，flow_chain_invalid
+// 等编译码段内回显）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混全局指示灯；
+// dataset 不进全局 dirty 口径，flowChain 草稿进（spec §4.4）。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
@@ -84,6 +90,14 @@ import {
     type FrameBaseline,
     type FrameSlot,
 } from '../editor/frames'
+import {
+    datasetDraftPayload,
+    drawerBaselineFromRecord,
+    isSegmentDirty,
+    parseJsonDraft,
+    type DrawerDraftBaseline,
+} from '../editor/datasource'
+import DataSourceDrawer from '../components/DataSourceDrawer.vue'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
 // 提示 + 返回列表链接（按 code 判定，不按 HTTP status） ----
@@ -100,11 +114,12 @@ onMounted(async () => {
             errorText.value = '模板不含任何帧，无法编辑'
             return
         }
-        // 会话建立即注入数据源 schema（spec §4.2 接线序；null/缺省跳过 = 无候选）。
-        // 声明只进编辑器会话态，不进 graph、不动 wire；注入失败内核静默降级 +
-        // console.warn 已内建，宿主不重复处理。openDocument 不重置 schema（01 票），
-        // 切帧重建会话文档无需重复注入。
-        if (record.datasetSchema != null) editor.setDataSourceSchema(record.datasetSchema)
+        // 会话建立即注入数据源 schema（spec §4.2 接线序；null/缺省 = 清除声明 =
+        // 无候选，与会话初始态一致）。声明只进编辑器会话态，不进 graph、不动 wire；
+        // 注入失败内核静默降级 + console.warn 已内建，宿主不重复处理。openDocument
+        // 不重置 schema（01 票），切帧重建会话文档无需重复注入；数据源段保存成功后
+        // 走同一入口更新（saveDataset）。
+        editor.setDataSourceSchema(record.datasetSchema)
         // 帧缓冲载入（spec §4.2「decodeGraph 逐帧」）：逐帧解码即验 + canonical 化，
         // 基线与帧缓冲同形；任一帧解码失败 = 载入错误面（16 票）
         try {
@@ -117,6 +132,11 @@ onMounted(async () => {
         activeFrame.value = 0
         template.value = record
         templateName.value = record.name
+        // 抽屉文本域初值 = 模板记录三字段的 pretty 文本（spec §4.3），基线同步打点
+        drawerBaseline.value = drawerBaselineFromRecord(record)
+        schemaText.value = drawerBaseline.value.schemaText
+        dataText.value = drawerBaseline.value.dataText
+        flowChainText.value = drawerBaseline.value.flowChainText
     } catch (e) {
         if (e instanceof ApiError && e.code === 'template_not_found') {
             notFound.value = true
@@ -191,6 +211,41 @@ function commitFrameRename(): void {
 function cancelFrameRename(): void {
     renamingFrame.value = null
 }
+
+// ---- 数据源抽屉（spec §4.3 双通道，17 票）：三文本域草稿 + 段基线。段内独立
+// 未保存标记 = 文本域 vs 载入基线（spec §4.4，不混全局 saveState 指示灯）——
+// dataset 不在全局 dirty 口径，抽屉开着改数据源全局仍 clean；flowChain 草稿在
+// 全局口径内，文本变更经 syncDirty 计入。各段保存成功后基线同步本次发送文本。 ----
+
+const drawerOpen = ref(false)
+// 未绑数据源/空链的文本域初值（spec §3.1：空链与 null 同义，抽屉内以 null 字面表达）
+const EMPTY_DRAFT_TEXT = 'null'
+const schemaText = ref(EMPTY_DRAFT_TEXT)
+const dataText = ref(EMPTY_DRAFT_TEXT)
+const flowChainText = ref(EMPTY_DRAFT_TEXT)
+const drawerBaseline = ref<DrawerDraftBaseline>({
+    schemaText: EMPTY_DRAFT_TEXT,
+    dataText: EMPTY_DRAFT_TEXT,
+    flowChainText: EMPTY_DRAFT_TEXT,
+})
+
+const datasetSegmentDirty = computed(
+    () =>
+        isSegmentDirty(schemaText.value, drawerBaseline.value.schemaText) ||
+        isSegmentDirty(dataText.value, drawerBaseline.value.dataText),
+)
+const flowChainSegmentDirty = computed(() => isSegmentDirty(flowChainText.value, drawerBaseline.value.flowChainText))
+
+// 段内错误随再编辑清空（陈旧错误误导）；流链草稿文本同时计入全局 dirty 口径
+const datasetError = ref<string | null>(null)
+const flowChainError = ref<string | null>(null)
+watch([schemaText, dataText], () => {
+    datasetError.value = null
+})
+watch(flowChainText, () => {
+    flowChainError.value = null
+    syncDirty()
+})
 
 // ---- 会话（spec §4.2 接线序第 1 步）：fitMargin 48 与 playground 同款；上传注入
 // 点接 POST /api/assets（响应 url 前导斜杠形态，原样写入 graph spec.src）。
@@ -455,9 +510,15 @@ let dirtyTimer: ReturnType<typeof setTimeout> | null = null
 let savedBaseline: FrameBaseline | null = null
 
 function computeDirty(): void {
-    const record = template.value
-    if (savedBaseline === null || record === null) {
+    if (savedBaseline === null || template.value === null) {
         isDirty.value = false
+        return
+    }
+    // flowChain 现值 = 抽屉流链草稿的解析值（spec §4.4 口径含 flowChain，17 票）；
+    // 半成品文本（解析失败）视同已改动占住 dirty，直到修复或还原
+    const flowDraft = parseJsonDraft(flowChainText.value)
+    if (!flowDraft.ok) {
+        isDirty.value = true
         return
     }
     const doc = editor.store.doc
@@ -467,7 +528,7 @@ function computeDirty(): void {
         activeIndex: activeFrame.value,
         activeGraphJson: doc ? encodeGraphJson(doc) : null,
         templateName: templateName.value,
-        flowChain: record.flowChain,
+        flowChain: flowDraft.value,
     })
 }
 
@@ -487,20 +548,29 @@ const saving = ref(false)
 const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档各帧 + flowChain）'
 
 /** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义，spec §4.4 文档级口径）：当前帧
- *  快照并入帧缓冲（与切出同一条缝）→ 载荷 = name + 帧缓冲各帧 + flowChain 原样
- *  透传。帧缓冲载入即全量解码 canonical 化，不再有「未载入帧」，15 票的透传缝
- *  由「当前帧 ∪ 帧缓冲」接管。基线 = 本次发送字节，保存期间的继续编辑保持 dirty。 */
-async function saveTemplate(): Promise<void> {
+ *  快照并入帧缓冲（与切出同一条缝）→ 载荷 = name + 帧缓冲各帧 + flowChain。
+ *  flowChain 以抽屉流链草稿的解析值为准随载荷整存（17 票）——「保存流链」与
+ *  顶栏保存是同一条文档级通道，区别只在错误回显面（段内 vs 状态栏），解析失败
+ *  则任何文档级保存都无载荷可发，就地回显流链段并终止。基线 = 本次发送字节，
+ *  保存期间的继续编辑保持 dirty。 */
+async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
     const record = template.value
     if (!record || !editor.store.doc || saving.value) return
+    const flowDraft = parseJsonDraft(flowChainText.value)
+    if (!flowDraft.ok) {
+        flowChainError.value = `flowChain JSON 解析失败：${flowDraft.message}`
+        if (origin === 'topbar') docNote.value = '保存失败：流链 JSON 解析失败（在数据源抽屉内修复或还原后再保存）'
+        return
+    }
     snapshotActiveFrame()
     const sentName = templateName.value
     const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
-    const sentFlowChain = canonicalFlowChain(record.flowChain)
+    const sentFlowChainText = flowChainText.value
+    const sentFlowChainCanonical = canonicalFlowChain(flowDraft.value)
     const payload = buildSavePayload({
         slots: sentSlots,
         templateName: sentName,
-        flowChain: record.flowChain,
+        flowChain: flowDraft.value,
     })
     saving.value = true
     docNote.value = '保存中…'
@@ -513,14 +583,67 @@ async function saveTemplate(): Promise<void> {
             name: sentName,
             names: sentSlots.map((slot) => slot.name),
             frames: sentSlots.map((slot) => slot.graphJson),
-            flowChain: sentFlowChain,
+            flowChain: sentFlowChainCanonical,
         }
+        // 流链草稿已随本次文档级 PUT 落库：段基线同步发送文本，段内标记归灭
+        drawerBaseline.value = { ...drawerBaseline.value, flowChainText: sentFlowChainText }
+        flowChainError.value = null
         computeDirty()
         docNote.value = '已保存到服务端'
     } catch (e) {
-        docNote.value = `保存失败：${formatApiError(e)}`
+        const text = formatApiError(e)
+        docNote.value = `保存失败：${text}`
+        // flow_chain_invalid 等编译码在流链段内回显（spec §4.3）
+        if (origin === 'flowchain') flowChainError.value = text
     } finally {
         saving.value = false
+    }
+}
+
+/** 顶栏保存钮 / Ctrl/Cmd+S 入口（错误回显走状态栏反馈段） */
+function saveTemplate(): void {
+    void runDocumentSave('topbar')
+}
+
+/** 抽屉流链段「保存流链」入口：同一文档级通道，错误段内回显（spec §4.3） */
+function saveFlowChain(): void {
+    void runDocumentSave('flowchain')
+}
+
+// ---- 数据源段保存通道（spec §2.4 #6 / §4.3）：显式「保存数据源」→
+// PUT /templates/{id}/dataset。校验权威在服务端——schema_invalid /
+// dataset_schema_mismatch 等错误码原样段内回显，前端只做「能否成 JSON」的机械
+// 解析（解析失败本地拒绝、不打服务端）；成功后 editor.setDataSourceSchema(schema)
+// 更新补全候选（null = 清除；注入失败内核静默降级 + console.warn 已内建）。
+// dataset 不随文档级 PUT、不进全局 dirty 口径（spec §4.4）。 ----
+
+const datasetSaving = ref(false)
+
+async function saveDataset(): Promise<void> {
+    const record = template.value
+    if (!record || datasetSaving.value) return
+    const draft = datasetDraftPayload(schemaText.value, dataText.value)
+    if (!draft.ok) {
+        datasetError.value = draft.message
+        return
+    }
+    datasetSaving.value = true
+    try {
+        const updated = await api.putDataset(record.id, draft.payload)
+        template.value = updated
+        drawerBaseline.value = {
+            ...drawerBaseline.value,
+            schemaText: schemaText.value,
+            dataText: dataText.value,
+        }
+        // 补全候选按新 schema 更新（null = 清除；注入失败内核静默降级 + console.warn
+        // 已内建）——与载入路径同一入口，口径一致
+        editor.setDataSourceSchema(draft.payload.schema)
+        docNote.value = '数据源已保存（渲染读取已保存的数据集）'
+    } catch (e) {
+        datasetError.value = formatApiError(e)
+    } finally {
+        datasetSaving.value = false
     }
 }
 
@@ -677,6 +800,15 @@ onBeforeUnmount(() => {
                 </span>
             </div>
             <div class="topbar-actions">
+                <button
+                    type="button"
+                    class="ghost"
+                    data-open-datasource
+                    title="数据源抽屉：schema/data 数据集与流链（两条独立保存通道）"
+                    @click="drawerOpen = !drawerOpen"
+                >
+                    数据源
+                </button>
                 <button
                     type="button"
                     class="primary"
@@ -844,6 +976,24 @@ onBeforeUnmount(() => {
 
         <!-- 快捷键帮助面板：⌘/ 与状态栏「快捷键」入口随组件与桥自带，宿主零键位代码 -->
         <HelpDialog />
+
+        <!-- 数据源抽屉（spec §4.3 双通道，17 票）：文本域草稿与段内错误/标记状态
+             全由宿主持有，组件纯呈现；段内独立标记与全局保存态指示灯分离 -->
+        <DataSourceDrawer
+            v-model:schema-text="schemaText"
+            v-model:data-text="dataText"
+            v-model:flow-chain-text="flowChainText"
+            :open="drawerOpen"
+            :dataset-dirty="datasetSegmentDirty"
+            :flow-chain-dirty="flowChainSegmentDirty"
+            :dataset-saving="datasetSaving"
+            :flow-chain-saving="saving"
+            :dataset-error="datasetError"
+            :flow-chain-error="flowChainError"
+            @close="drawerOpen = false"
+            @save-dataset="saveDataset"
+            @save-flowchain="saveFlowChain"
+        />
     </main>
 </template>
 

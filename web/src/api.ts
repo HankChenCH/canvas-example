@@ -47,11 +47,27 @@ export interface TemplateWritePayload {
     flowChain: unknown
 }
 
+/** PUT /api/templates/{id}/dataset 载荷（spec §2.4 #6）：draft-07 校验权威在服务端，
+ *  前端只做机械解析（datasource.ts datasetDraftPayload 组装） */
+export interface DatasetWritePayload {
+    schema: unknown
+    data: unknown
+}
+
 export const api = {
     listTemplates: () => request<TemplateSummary[]>('/api/templates'),
     getTemplate: (id: string | number) => request<TemplateRecord>(`/api/templates/${id}`),
     updateTemplate: (id: string | number, payload: TemplateWritePayload) =>
         request<TemplateRecord>(`/api/templates/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        }),
+    // PUT /api/templates/{id}/dataset（spec §2.4 #6）：{schema, data} draft-07 完整
+    // 校验权威在服务端（schema_invalid / dataset_schema_mismatch），通过则整存替换
+    // 两列；不触碰 name/canvases/flowChain
+    putDataset: (id: string | number, payload: DatasetWritePayload) =>
+        request<TemplateRecord>(`/api/templates/${id}/dataset`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
