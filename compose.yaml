@@ -1,0 +1,31 @@
+# 验收/演示轨(spec §1.4):`docker compose up --build` 一次起齐,nginx 发布 :8080
+# 唯一入口,全功能可用(列表/编辑/保存/上传/渲染)。
+#
+# build context = example/ 根;两个本地依赖仓(go-canvas、canvas-web)在 context 之外,
+# 经 additional_contexts 挂入,镜像内按工作区同构布局摆放(/src/example/… + /src/go-canvas
+# + /src/canvas-web),go.mod replace 与 pnpm file: 的相对路径原样解析——两仓零改动红线内接线。
+#
+# 出网注意(spec §5.3):机构徽标是唯一外网依赖(picsum),容器需出网;离线演示可把
+# dataset 中 org.logo 换成自引用 URL(/assets/u/…)。
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      additional_contexts:
+        gocanvas: ../go-canvas
+    # 端口不发布:仅 compose 网络内经 nginx 反代可达(http://server:8080),
+    # 监听 :8080 固定、无配置面(spec §1.4)
+    expose:
+      - "8080"
+
+  nginx:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      additional_contexts:
+        canvasweb: ../canvas-web
+    ports:
+      - "8080:80"
+    depends_on:
+      - server

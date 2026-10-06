@@ -1,0 +1,9 @@
+# build context 裁剪(context = example/ 根):运行时产物与宿主依赖不入镜像——
+# 运行时目录由 server 启动自建(main.go runtimeDirs),dist 镜像内重新构建
+.git
+server/data
+server/renders
+server/.cache
+server/assets
+web/node_modules
+web/dist

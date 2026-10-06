@@ -1,6 +1,7 @@
 #!/bin/sh
-# spec §6.2 curl 冒烟(契约面):前置 dev server 跑起(cd example/server && go run .)。
-# 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080。
+# spec §6.2 curl 冒烟(契约面),双轨通用:compose 轨(cd example && docker compose up
+# --build)或 dev 轨(cd example/server && go run .)任一起服务后运行。
+# 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080(compose 轨验收口径)。
 # 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;
 # 8–9(13 票)渲染管线 + keep-all + .cache 生效。
 # 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
@@ -177,18 +178,41 @@ json.dump({"name": d["name"], "canvases": d["canvases"], "flowChain": d["flowCha
 _status=$(request PUT "/api/templates/$SEED_ID" application/json "$TMP/seed-touch-payload.json" "$TMP/seed-touched.json")
 [ "$_status" = "200" ] || die "PUT 模板(触碰)期望 200,实得 $_status"
 
-CACHE_DIR="$ROOT/server/.cache"
-CACHE_COUNT="$(find "$CACHE_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
-[ "$CACHE_COUNT" -gt 0 ] || die "首次渲染后 $CACHE_DIR 应有物化缓存文件(徽标下载/QR 物化)"
-touch "$TMP/cache-marker"
-find "$CACHE_DIR" -type f -newer "$TMP/cache-marker" | grep -q . && die "触碰前不应有新缓存写入" || true
+# 缓存断言面按轨探测(断言 8 伴随):compose 轨 .cache 在容器内(运行相 WORKDIR=/app,
+# 不落宿主),经 docker compose exec 探针;dev 轨缓存在宿主 CWD(example/server)。
+# compose 项目内有 server 容器在跑即取容器探针,否则宿主路径。
+compose_srv() { docker compose -f "$ROOT/compose.yaml" "$@"; }
+COMPOSE_SERVER_CTR="$(compose_srv ps -q server 2>/dev/null || true)"
+if [ -n "$COMPOSE_SERVER_CTR" ]; then
+	echo "   缓存探针面 = compose 容器内(.cache 不落宿主)"
+	cache_count() {
+		compose_srv exec -T server sh -c 'find .cache -type f | wc -l' | tr -d '[:space:]'
+	}
+	cache_newer() {
+		compose_srv exec -T server sh -c 'find .cache -type f -newer /tmp/smoke-cache-marker'
+	}
+	compose_srv exec -T server touch /tmp/smoke-cache-marker >/dev/null
+else
+	echo "   缓存探针面 = 宿主 $ROOT/server/.cache(dev 轨)"
+	cache_count() {
+		find "$ROOT/server/.cache" -type f 2>/dev/null | wc -l | tr -d ' '
+	}
+	cache_newer() {
+		find "$ROOT/server/.cache" -type f -newer "$TMP/cache-marker" 2>/dev/null
+	}
+	touch "$TMP/cache-marker"
+fi
+
+CACHE_COUNT="$(cache_count)"
+[ "$CACHE_COUNT" -gt 0 ] || die "首次渲染后应有物化缓存文件(徽标下载/QR 物化)"
+[ -z "$(cache_newer)" ] || die "触碰前不应有新缓存写入"
 
 _status=$(request POST "/api/templates/$SEED_ID/render" application/json /dev/null "$TMP/render2.json")
 [ "$_status" = "201" ] || die "二次渲染期望 201,实得 $_status"
 assert_json "$TMP/render2.json" "d['id'] != $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/render1.json")"
-CACHE_COUNT2="$(find "$CACHE_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+CACHE_COUNT2="$(cache_count)"
 [ "$CACHE_COUNT2" = "$CACHE_COUNT" ] || die "二次渲染不应新增缓存: $CACHE_COUNT → $CACHE_COUNT2(命中即跳过)"
-NEWER="$(find "$CACHE_DIR" -type f -newer "$TMP/cache-marker")"
+NEWER="$(cache_newer)"
 [ -z "$NEWER" ] || die "二次渲染有缓存文件被改写: $NEWER"
 
 for u in $RENDER1_URLS; do
