@@ -125,8 +125,11 @@ func decodeDataset(raw json.RawMessage) (any, error) {
 }
 
 // renderPages 逐页渲染(spec §2.7):每请求一个 Renderer 请求内顺序复用
-// (Begin 每页新分配 surface,faces 为实例内缓存;实例非并发安全,跨请求不复用)
+// (Begin 每页新分配 surface,faces 为实例内缓存;实例非并发安全,跨请求不复用)。
+// 渲染前对编译产物做资源引用归一(spec §2.2,normalize.go):本地引用的前导
+// 斜杠形态在此落成磁盘相对形态,字面与表达式求值产物同一覆盖
 func (s *Service) renderPages(ctx context.Context, names []string, pages []*canvas.Canvas, frameByPage []int) ([]Page, *PipelineErr) {
+	normalizePages(pages)
 	backend := imagerenderer.NewRenderer(s.rs)
 	out := make([]Page, 0, len(pages))
 	for i, page := range pages {

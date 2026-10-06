@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hankchen/go-canvas/canvas"
+	"github.com/hankchen/go-canvas/layer"
 	"github.com/hankchen/go-canvas/resolver"
 
 	"example/server/internal/store"
@@ -137,6 +139,154 @@ func TestRun_SeedDocument(t *testing.T) {
 		if w, h := pngSize(t, pages[i].PNG); w != 794 || h != 1123 {
 			t.Fatalf("pages[%d] 尺寸 = %dx%d, 期望 794x1123", i, w, h)
 		}
+	}
+}
+
+// --- 前导斜杠上传引用归一(21 票,spec §2.2 双吃)---
+
+// TestRun_LeadingSlashStaticAsset 静态形态:属性面板编辑产出 ExpressionValue
+// 三键且 expression/value 同为前导斜杠 url(21 票复现 2),dataset 未绑直通后
+// Image() = url 原文。渲染成功且终图含该图(像素取样比对资源本体色);
+// 归一接线前 500 internal_error「读取图片 /assets/u/…」
+func TestRun_LeadingSlashStaticAsset(t *testing.T) {
+	chdirToSeedAssets(t)
+	svc := newService(t, &fakeDownloader{})
+	rec := &store.TemplateRecord{
+		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+			"canvas":{"width":160,"height":400},
+			"layers":[{"type":"ImageLayer","priority":0,
+				"spec":{"shape":{"width":160,"height":400}},
+				"data":{"valueType":"ExpressionValue","expression":"/assets/u/student-1.png","value":"/assets/u/student-1.png"}}]}`)}},
+	}
+
+	pages, perr := svc.Run(t.Context(), rec)
+	if perr != nil {
+		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("页数 = %d, 期望 1", len(pages))
+	}
+	ref, err := os.ReadFile(filepath.Join(seedDir, "assets", "u", "student-1.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 80, 200)
+}
+
+// TestRun_LeadingSlashExpressionAsset 表达式形态:dataset 行内上传 url(前导
+// 斜杠)经 {{row.photo}} 求值进入图层——求值产物在 hydrate 改写 wire 后
+// FromGraph 重建时产生,server 侧 graph 字面遍历拦不到(21 票影响面),归一须
+// 落在编译后渲染前。渲染成功且行内照片格呈现该图
+func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
+	chdirToSeedAssets(t)
+	svc := newService(t, &fakeDownloader{})
+	rec := &store.TemplateRecord{
+		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+			"canvas":{"width":794,"height":1123},
+			"layers":[{"type":"TableLayer","name":"t","priority":50,
+				"data":{"rowsPath":"certificates"},
+				"template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":400}},
+					"cells":[{"type":"TableCellLayer","priority":0,"spec":{"shape":{"width":160,"height":400}},
+						"content":{"type":"ImageLayer","priority":0,
+							"spec":{"shape":{"width":160,"height":400}},
+							"data":{"valueType":"ExpressionValue","expression":"{{row.photo}}","value":"{{row.photo}}"}}}]}}]}`)}},
+		Dataset: json.RawMessage(`{"certificates":[{"photo":"/assets/u/student-2.png"}]}`),
+	}
+
+	pages, perr := svc.Run(t.Context(), rec)
+	if perr != nil {
+		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("页数 = %d, 期望 1", len(pages))
+	}
+	ref, err := os.ReadFile(filepath.Join(seedDir, "assets", "u", "student-2.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 80, 200)
+}
+
+// TestRun_LeadingSlashFontPath 字体路径同归一(spec §2.2 双吃,ToLocalPath
+// 消费点二):前导斜杠字体引用渲染期加载成功;归一接线前字体打开失败 500
+func TestRun_LeadingSlashFontPath(t *testing.T) {
+	chdirToSeedAssets(t)
+	svc := newService(t, &fakeDownloader{})
+	rec := &store.TemplateRecord{
+		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+			"canvas":{"width":794,"height":1123},
+			"layers":[{"type":"TextLayer","priority":0,
+				"spec":{"shape":{"width":794,"height":100},
+					"fontFamily":{"font":"/assets/fonts/NotoSansSC-Regular.otf","fontSize":30,"fontColor":"#333333","angle":0,"autowrap":false}},
+				"data":{"valueType":"StaticValue","value":"结业证书"}}]}`)}},
+	}
+
+	pages, perr := svc.Run(t.Context(), rec)
+	if perr != nil {
+		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("页数 = %d, 期望 1", len(pages))
+	}
+}
+
+// TestNormalizePages_RemoteUntouched 归一只动本地引用(直测):远程 URL 不回写
+// 物化槽(交回渲染期惰性物化下载),本地引用归一为磁盘相对形态——以预写哨兵
+// 探针判定:归一若误碰远程必覆写哨兵(21 票审查补)
+func TestNormalizePages_RemoteUntouched(t *testing.T) {
+	var wire canvas.Graph
+	if err := json.Unmarshal([]byte(`{"canvas":{"width":10,"height":10},"layers":[
+		{"type":"ImageLayer","priority":0,"spec":{"shape":{"width":10,"height":10}},
+		 "data":{"valueType":"StaticValue","value":"https://remote.example/logo.png"}},
+		{"type":"ImageLayer","priority":1,"spec":{"shape":{"width":10,"height":10}},
+		 "data":{"valueType":"StaticValue","value":"/assets/u/x.png"}}]}`), &wire); err != nil {
+		t.Fatal(err)
+	}
+	c, err := canvas.FromGraph(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var remote, local *layer.ImageLayer
+	for _, l := range c.GetLayers() {
+		img := l.(*layer.ImageLayer)
+		switch *img.Image() {
+		case "https://remote.example/logo.png":
+			remote = img
+		case "/assets/u/x.png":
+			local = img
+		}
+	}
+	remote.SetResolvedSrc("哨兵")
+	local.SetResolvedSrc("哨兵")
+
+	normalizePages([]*canvas.Canvas{c})
+
+	if got := *remote.ResolvedSrc(); got != "哨兵" {
+		t.Fatalf("远程引用不应被归一回写,物化槽被覆写为 %q", got)
+	}
+	if got := *local.ResolvedSrc(); got != "assets/u/x.png" {
+		t.Fatalf("本地引用应归一为磁盘相对形态,实得 %q", got)
+	}
+}
+
+// assertPixelMatches 渲染产物 (x, y) 像素与参考图 (rx, ry) 像素一致——渲染
+// 成功之外的实质断言(终图包含该图,§6.3 第 4 项后半句);两图同为不透明
+// 8bit 色,cover 同尺寸恒等,像素应精确相等
+func assertPixelMatches(t *testing.T, png []byte, x, y int, ref []byte, rx, ry int) {
+	t.Helper()
+	got, _, err := image.Decode(bytes.NewReader(png))
+	if err != nil {
+		t.Fatalf("解码渲染 PNG: %v", err)
+	}
+	want, _, err := image.Decode(bytes.NewReader(ref))
+	if err != nil {
+		t.Fatalf("解码参考图: %v", err)
+	}
+	gr, gg, gb, ga := got.At(x, y).RGBA()
+	wr, wg, wb, wa := want.At(rx, ry).RGBA()
+	if gr != wr || gg != wg || gb != wb || ga != wa {
+		t.Fatalf("渲染像素 (%d,%d) = (%d,%d,%d,%d), 参考图 (%d,%d) = (%d,%d,%d,%d)",
+			x, y, gr, gg, gb, ga, rx, ry, wr, wg, wb, wa)
 	}
 }
 
