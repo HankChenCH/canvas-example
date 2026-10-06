@@ -67,6 +67,25 @@ export function blankFrameSlot(width: number, height: number, index: number): Fr
     }
 }
 
+/** 删帧的流链重写（27 票，spec §3.1）：flowChain 节点按帧数组下标引用，删帧即
+ *  重写——frame === index 的节点丢弃（被删帧出链），frame > index 整体减一，
+ *  frame < index 与其余键（mode/omitIfEmpty 等未知键）原样保留。重写后为空链归一
+ *  null（空链与 null 同义，§3.1，与 canonicalFlowChain dirty 口径一致）。非数组
+ *  原样返回（null/缺省 = 空链，无节点可动）。不校验链规则——校验权威在服务端
+ *  保存预检；节点严格递增在重写下保持、paged 原在链尾则重写后仍在链尾，即合法
+ *  链入 → 合法链出。 */
+export function rewriteFlowChainForDeletion(flowChain: unknown, index: number): unknown {
+    if (!Array.isArray(flowChain)) return flowChain
+    const rewritten = flowChain
+        .filter((node) => (node as { frame?: unknown } | null)?.frame !== index)
+        .map((node) => {
+            const raw = node as { frame?: unknown } & Record<string, unknown>
+            if (typeof raw?.frame !== 'number' || raw.frame <= index) return node
+            return { ...raw, frame: raw.frame - 1 }
+        })
+    return rewritten.length > 0 ? rewritten : null
+}
+
 /** 初始基线：各帧取槽位名与 canonical 串，flowChain 归一 canonicalFlowChain */
 export function baselineFromSlots(name: string, slots: readonly FrameSlot[], flowChain: unknown): FrameBaseline {
     return {

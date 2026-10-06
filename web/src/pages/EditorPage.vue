@@ -8,12 +8,13 @@
 //     + attachContentBackend + setOverlayPainter + materializer 双订阅
 //     （doc 变更 → materialize；物化状态变更 → invalidate both）
 //   → decodeGraph 逐帧 → openDocument 第 0 帧 → fitToSurface
-// 多帧（spec §4.2，16 票升级多帧 / 26 票放开尾部增帧）：画布上方帧 tab 条；切帧即进
-// 宿主内存帧缓冲——切出前 encodeGraph(editor.store.doc) 快照该帧、换帧 openDocument
-// 重建会话文档（openDocument 不重置 schema，无需重复注入——01 票）；tab 双击重命名
-// （改 canvases[i].name，进 dirty）；帧 tab 条尾部「＋」钮尾部追加空白帧（「第 N 帧」、
-// 幅面随追加时活动帧、层空，追加即切并进文档级 dirty）；不做删帧/中插/复制（flowChain
-// 按帧下标引用，中插与删除需链重写语义）；帧间切换不提示。帧缓冲纯逻辑在 src/editor/frames.ts（TDD 缝）。
+// 多帧（spec §4.2，16 票升级多帧 / 26 票放开尾部增帧 / 27 票删帧）：画布上方帧 tab 条；
+// 切帧即进宿主内存帧缓冲——切出前 encodeGraph(editor.store.doc) 快照该帧、换帧
+// openDocument 重建会话文档（openDocument 不重置 schema，无需重复注入——01 票）；tab
+// 双击重命名（改 canvases[i].name，进 dirty）；帧 tab 条尾部「＋」钮尾部追加空白帧
+// （「第 N 帧」、幅面随追加时活动帧、层空，追加即切并进文档级 dirty）；tab hover「✕」
+// 删帧（流链随帧下标重写：被删帧节点丢弃、其后下标减一、空链归一 null）；不做中插/
+// 复制（需链重写之外的落位语义）；帧间切换不提示。帧缓冲纯逻辑在 src/editor/frames.ts（TDD 缝）。
 // 保存面（spec §4.4，16 票文档级口径）：纯手动——按钮 + Ctrl/Cmd+S，无防抖自动保存；
 // 保存 = 全量 PUT（name + 当前帧 ∪ 帧缓冲各帧 + flowChain 原样）；dirty 跟文档级——
 // 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
@@ -110,6 +111,7 @@ import {
     encodeGraphJson,
     isDocDirty,
     loadFrameSlots,
+    rewriteFlowChainForDeletion,
     type FrameBaseline,
     type FrameSlot,
 } from '../editor/frames'
@@ -210,9 +212,10 @@ watch(
     },
 )
 
-// ---- 多帧帧缓冲（spec §4.2，16 票 / 26 票增帧）：宿主内存帧缓冲 = canvases 的宿主
-// 镜像，graphJson 以 canonical encode 字符串持有（dirty 比较/保存载荷直接消费字符串）；
-// activeFrame 当前帧下标；增帧 = 尾部追加（见 appendBlankFrame），不做删帧/中插/复制。 ----
+// ---- 多帧帧缓冲（spec §4.2，16 票 / 26 票增帧 / 27 票删帧）：宿主内存帧缓冲 =
+// canvases 的宿主镜像，graphJson 以 canonical encode 字符串持有（dirty 比较/保存
+// 载荷直接消费字符串）；activeFrame 当前帧下标；增帧 = 尾部追加（见 appendBlankFrame），
+// 删帧 = 链下标重写（见 deleteFrame），不做中插/复制。 ----
 
 const frameSlots = ref<FrameSlot[]>([])
 const activeFrame = ref(0)
@@ -240,7 +243,7 @@ function switchToFrame(index: number): void {
 
 /** 尾部追加空白帧（spec §4.2 增帧，26 票）：追加位置恒为尾部与活动帧位置无关——
  *  flowChain 节点按帧数组下标引用，尾部追加既有节点下标无一失效（链零改写即仍
- *  合法；中插/删除会整体位移下标，另票再做）。时序复用 16 票切帧缝：先快照当前帧
+ *  合法；中插会整体位移下标，仍不做）。时序复用 16 票切帧缝：先快照当前帧
  *  入槽（防丢未保存编辑）→ push 新槽位（「第 N 帧」、幅面 = 追加时活动帧画布宽高、
  *  层空）→ activeFrame 指向新帧 → openDocument 空白文档（schema 不重置无需注入；
  *  与活动帧同幅，切帧惯例视口保留不 refit）。dirty 重算与 materialize 由 openDocument
@@ -254,6 +257,53 @@ function appendBlankFrame(): void {
     frameSlots.value.push(blankFrameSlot(doc.width, doc.height, index))
     activeFrame.value = index
     editor.openDocument(decodeGraphJson(frameSlots.value[index]!.graphJson))
+}
+
+// ---- 删帧（spec §4.2 删帧，27 票）：flowChain 按帧下标引用，删除即链重写——
+// 被删帧节点丢弃、其后节点下标减一、删至空链归一 null；重写权威缝与保存同源
+// （服务端保存预检照常校验）。中插/复制仍不做。 ----
+
+/** 删帧确认文案（title 单点，确认框同口径） */
+const DELETE_FRAME_TITLE =
+    '删除该帧：其后各帧下标前移，流链随帧下标重写（被删帧若在链内，其节点丢弃）；该帧内容删除后不可恢复'
+
+/** 删帧入口：唯一帧不可删（canvases 空是非法态）；流链草稿解析守卫前置（坏 JSON
+ *  就地拒绝、不劳用户确认白跑）；confirm 前置即防误删（帧级操作不进撤销历史，
+ *  宿主态同 16/26 票边界） */
+function confirmDeleteFrame(index: number): void {
+    if (frameSlots.value.length <= 1) return
+    const flowDraft = parseJsonDraft(flowChainText.value)
+    if (!flowDraft.ok) {
+        docNote.value = '删除失败：流链 JSON 解析失败（在数据源抽屉内修复或还原后再删帧）'
+        return
+    }
+    const name = frameSlots.value[index]?.name || `帧 ${index + 1}`
+    if (!window.confirm(`删除帧「${name}」？${DELETE_FRAME_TITLE.replace('删除该帧：', '')}`)) return
+    deleteFrame(index, flowDraft.value)
+}
+
+/** 删帧执行：先快照当前帧入槽（防丢未保存编辑）→ splice 删槽位 → 重写流链草稿
+ *  文本（watch 顺带清段内错误 + 计入 dirty）→ 活动帧重定向（删活动帧之前的前移
+ *  一位；删活动帧的取同位、末位越界缩一；命中活动帧变化才 openDocument 重建会话
+ *  文档，schema 不重置、视口保留不 refit）→ 显式 syncDirty（删活动帧之后的帧不产生
+ *  文档事件，槽位数变化需手动触发重算）。链值取入口已解析的草稿（真值源，17 票）。 */
+function deleteFrame(index: number, chain: unknown): void {
+    if (!template.value || frameSlots.value.length <= 1) return
+    if (renamingFrame.value !== null) cancelFrameRename()
+    if (editor.store.doc) snapshotActiveFrame()
+    frameSlots.value.splice(index, 1)
+    flowChainText.value = prettyJsonText(rewriteFlowChainForDeletion(chain, index))
+    const wasActive = index === activeFrame.value
+    const beforeActive = index < activeFrame.value
+    if (beforeActive) {
+        activeFrame.value -= 1
+    } else if (wasActive) {
+        activeFrame.value = Math.min(index, frameSlots.value.length - 1)
+    }
+    if (wasActive || beforeActive) {
+        editor.openDocument(decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson))
+    }
+    syncDirty()
 }
 
 // ---- tab 双击重命名（spec §4.2）：改 canvases[i].name（帧缓冲 name 即它）进 dirty；
@@ -1244,10 +1294,11 @@ onBeforeUnmount(() => {
             <LayerPanel :editor="editor" />
             <!-- canvas-area：帧 tab 条（顶）+ canvas-holder（画布覆盖物定位上下文） -->
             <div class="canvas-area">
-                <!-- 帧 tab 条（spec §4.2 多帧，16 票 / 26 票增帧）：画布上方；单击切帧
-                     （帧间切换不提示），双击重命名（改 canvases[i].name，进 dirty）；
-                     尾部「＋」钮追加空白帧并切为活动帧（普通 button 非 tab 角色——
-                     它不是页签）；不做删帧/中插/复制 -->
+                <!-- 帧 tab 条（spec §4.2 多帧，16 票 / 26 票增帧 / 27 票删帧）：画布上方；
+                     单击切帧（帧间切换不提示），双击重命名（改 canvases[i].name，进 dirty）；
+                     尾部「＋」钮追加空白帧并切为活动帧（普通 button 非 tab 角色——它不是
+                     页签）；tab hover「✕」删帧（confirm 前置、链下标重写，唯一帧不出现）；
+                     不做中插/复制 -->
                 <div class="frame-tabs" role="tablist" aria-label="文档帧">
                     <div
                         v-for="(slot, i) in frameSlots"
@@ -1275,9 +1326,25 @@ onBeforeUnmount(() => {
                             @keydown.esc.prevent="cancelFrameRename"
                             @blur="commitFrameRename"
                         />
-                        <span v-else class="frame-tab-label" :data-frame-tab-label="i">
-                            {{ slot.name || `帧 ${i + 1}` }}
-                        </span>
+                        <template v-else>
+                            <span class="frame-tab-label" :data-frame-tab-label="i">
+                                {{ slot.name || `帧 ${i + 1}` }}
+                            </span>
+                            <!-- 删帧（27 票）：hover 现身（visibility 不挤占布局）、唯一帧
+                                 不出现；@click.stop 不触发切帧 -->
+                            <button
+                                v-if="frameSlots.length > 1"
+                                type="button"
+                                class="frame-tab-delete"
+                                data-frame-delete
+                                :aria-label="`删除第 ${i + 1} 帧`"
+                                :title="DELETE_FRAME_TITLE"
+                                @click.stop="confirmDeleteFrame(i)"
+                                @dblclick.stop
+                            >
+                                ✕
+                            </button>
+                        </template>
                     </div>
                     <button
                         type="button"
@@ -1673,6 +1740,35 @@ onBeforeUnmount(() => {
 .frame-tab-label {
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* 帧 tab 删除钮（27 票删帧）：hover 现身（visibility 不挤占布局、tab 宽不抖动），
+   唯一帧由 v-if 收起；红系 hover 提示不可恢复 */
+.frame-tab-delete {
+    flex: none;
+    box-sizing: border-box;
+    width: 16px;
+    height: 16px;
+    margin-left: 4px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--shell-fg-3);
+    cursor: pointer;
+    visibility: hidden;
+}
+
+.frame-tab:hover .frame-tab-delete,
+.frame-tab-delete:focus-visible {
+    visibility: visible;
+}
+
+.frame-tab-delete:hover {
+    background: var(--shell-hover);
+    color: #f87171;
 }
 
 .frame-tab-input {
