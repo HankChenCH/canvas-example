@@ -26,6 +26,9 @@ const props = defineProps<{
     record: RenderRecord | null
     /** 模板名（单张下载建议名的基段） */
     templateName: string
+    /** 抽屉顶部偏移（缺省 92px = 编辑器顶栏 48 + 工具栏 44 之下；无工具栏宿主
+     *  如列表页可传更小值贴顶） */
+    top?: string
 }>()
 
 const emit = defineEmits<{
@@ -60,7 +63,7 @@ watch(
 
 <template>
     <Teleport to="body">
-        <aside v-if="open" class="cn-rrd" data-render-drawer aria-label="渲染结果抽屉">
+        <aside v-if="open" class="cn-rrd" data-render-drawer aria-label="渲染结果抽屉" :style="top ? { top } : undefined">
             <header class="cn-rrd__header">
                 <h2 class="cn-rrd__title">渲染终图</h2>
                 <button type="button" class="cn-rrd__close" data-render-drawer-close aria-label="关闭渲染结果抽屉" @click="emit('close')">

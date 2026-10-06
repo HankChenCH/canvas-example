@@ -14,6 +14,12 @@ export default defineConfig({
     build: {
         assetsDir: 'static',
     },
+    // 注意：@hankchen 四包是 file: 链接的同仓源码包，Vite 的依赖预构建产物
+    // （node_modules/.vite/deps）不会因链接包源码变化而失效——改了
+    // canvas-web/packages/* 源码后，dev 轨需 `pnpm dev --force`（或删除
+    // node_modules/.vite）重启，否则浏览器继续跑旧包代码；build 轨每次全量
+    // 打包不受影响。勿把这些包 exclude 出预构建：编辑器包的 CJS 依赖
+    // （qrcode）在源码直引形态下具名导入互操作会炸（mounted 前整页白屏）。
     server: {
         proxy: {
             '/api': 'http://localhost:8080',

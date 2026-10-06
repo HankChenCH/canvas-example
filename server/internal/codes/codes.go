@@ -10,6 +10,9 @@ const (
 	RequestTooLarge  = "request_too_large"
 	TemplateNotFound = "template_not_found"
 
+	// 数据源寻址(◆;数据源是独立实体,与模板寻址分码)
+	DataSourceNotFound = "data_source_not_found"
+
 	// 解码(FromGraph)
 	UnknownLayerType     = "unknown_layer_type"
 	TemplateRowsConflict = "template_rows_conflict"

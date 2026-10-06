@@ -42,9 +42,18 @@ func templateTableGraph() map[string]any {
 }
 
 // newLocalRenderTemplate 造一个离线可渲染的模板(双帧模板表 + 默认链),
-// 绑定 dataset 后返回模板 id
+// 创建即绑定数据源(单调用,spec §2.4 #3)后返回模板 id
 func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 	t.Helper()
+	ds := mustJSONFile(t, map[string]any{
+		"name":   "渲染用数据源",
+		"schema": map[string]any{"type": "object"},
+		"data":   map[string]any{"certificates": []any{map[string]any{"n": "x"}}},
+	})
+	code, body := doRequest(t, h, http.MethodPost, "/api/datasources", "application/json", ds)
+	if code != http.StatusCreated {
+		t.Fatalf("造数据源失败: %d %v", code, body)
+	}
 	payload := mustJSONFile(t, map[string]any{
 		"name": "渲染用本地模板",
 		"canvases": []any{
@@ -55,18 +64,11 @@ func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 			map[string]any{"frame": 0, "mode": "fixed"},
 			map[string]any{"frame": 1, "mode": "paged", "omitIfEmpty": true},
 		},
+		"dataSourceId": body["id"],
 	})
-	code, body := doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
+	code, body = doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
 	if code != http.StatusCreated {
 		t.Fatalf("造模板失败: %d %v", code, body)
-	}
-	ds := mustJSONFile(t, map[string]any{
-		"schema": map[string]any{"type": "object"},
-		"data":   map[string]any{"certificates": []any{map[string]any{"n": "x"}}},
-	})
-	code, body = doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%v/dataset", body["id"]), "application/json", ds)
-	if code != http.StatusOK {
-		t.Fatalf("绑数据源失败: %d %v", code, body)
 	}
 	return int64(body["id"].(float64))
 }

@@ -2,9 +2,12 @@
 # spec §6.2 curl 冒烟(契约面),双轨通用:compose 轨(cd example && docker compose up
 # --build)或 dev 轨(cd example/server && go run .)任一起服务后运行。
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080(compose 轨验收口径)。
-# 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;
-# 8–9(13 票)渲染管线 + keep-all + .cache 生效。
+# 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
+# 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效;
+# 12(卡片操作修订)DELETE /api/templates/{id}:204 + 渲染记录级联清 + 产物文件保留。
 # 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
+# 注意:断言 3/8 依赖种子模板仍绑种子数据源(3 页容量数学)——UI 里重绑/改数据源
+# 后会失真,属预期;重置运行库复跑:停服删 server/data/app.db 重启(播种自动补回)。
 set -eu
 
 BASE="${1:-http://localhost:8080}"
@@ -46,11 +49,11 @@ expect_error() {
 	assert_json "$TMP/err.json" "d['error']['code'] == '$6'"
 }
 
-echo "== 1/11 GET /api/health =="
+echo "== 1/12 GET /api/health =="
 get /api/health "$TMP/health.json"
 assert_json "$TMP/health.json" 'd.get("status") == "ok"'
 
-echo "== 2/11 GET /api/templates =="
+echo "== 2/12 GET /api/templates =="
 get /api/templates "$TMP/templates.json"
 assert_json "$TMP/templates.json" 'isinstance(d, list) and len(d) >= 1'
 assert_json "$TMP/templates.json" '[t["updatedAt"] for t in d] == sorted((t["updatedAt"] for t in d), reverse=True)'
@@ -66,13 +69,18 @@ print(seeds[0]["id"])
 ' "$TMP/templates.json")"
 echo "   SEED_ID=$SEED_ID"
 
-echo "== 3/11 GET /api/templates/{SEED_ID} =="
+echo "== 3/12 GET /api/templates/{SEED_ID} =="
 get "/api/templates/$SEED_ID" "$TMP/template.json"
 assert_json "$TMP/template.json" 'len(d["canvases"]) == 2 and [c["name"] for c in d["canvases"]] == ["主页", "续页"]'
 assert_json "$TMP/template.json" 'isinstance(d["flowChain"], list) and len(d["flowChain"]) == 2'
-assert_json "$TMP/template.json" 'd["datasetSchema"] is not None and d["dataset"] is not None'
+# 数据源是独立实体:模板持引用(spec §2.4 数据源段),引用的实体可回读且含 schema/data
+assert_json "$TMP/template.json" 'isinstance(d["dataSourceId"], int) and d["dataSourceId"] > 0'
+DS_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["dataSourceId"])' "$TMP/template.json")"
+get "/api/datasources/$DS_ID" "$TMP/ds.json"
+assert_json "$TMP/ds.json" 'd["schema"] is not None and d["data"] is not None'
+assert_json "$TMP/ds.json" 'd["data"]["certificates"] and len(d["data"]["certificates"]) == 5'
 
-echo "== 4/11 POST /api/templates(最小模板 → 201 自增 id) =="
+echo "== 4/12 POST /api/templates(最小模板 → 201 自增 id,未绑数据源) =="
 cat > "$TMP/min-template.json" <<'EOF'
 {"name":"冒烟最小模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
 EOF
@@ -80,45 +88,83 @@ _status=$(request POST /api/templates application/json "$TMP/min-template.json" 
 [ "$_status" = "201" ] || die "POST /api/templates 期望 201,实得 $_status"
 assert_json "$TMP/t1.json" "isinstance(d['id'], int) and d['id'] > $SEED_ID"
 assert_json "$TMP/t1.json" "d['createdAt'] == d['updatedAt']"
-assert_json "$TMP/t1.json" "d['dataset'] is None and d['datasetSchema'] is None and d['flowChain'] is None"
+assert_json "$TMP/t1.json" "d['dataSourceId'] is None and d['flowChain'] is None"
 T1="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/t1.json")"
 echo "   T1=$T1"
 
-echo "== 5/11 PUT /api/templates/{T1}(改 name;dataset 仍为 null) =="
+echo "== 5/12 PUT /api/templates/{T1}(改 name;绑定引用不被触碰) =="
 cat > "$TMP/put-t1.json" <<'EOF'
 {"name":"冒烟改名模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
 EOF
 _status=$(request PUT "/api/templates/$T1" application/json "$TMP/put-t1.json" "$TMP/t1-put.json")
 [ "$_status" = "200" ] || die "PUT /api/templates/$T1 期望 200,实得 $_status"
 assert_json "$TMP/t1-put.json" "d['name'] == '冒烟改名模板'"
-assert_json "$TMP/t1-put.json" "d['dataset'] is None and d['datasetSchema'] is None"
+assert_json "$TMP/t1-put.json" "d['dataSourceId'] is None"
 assert_json "$TMP/t1-put.json" "d['flowChain'] is None"
 
-echo "== 6/11 PUT /api/templates/{T1}/dataset(合法 200 / 坏 schema 400 / 不过 schema 400) =="
+echo "== 6/12 数据源实体 CRUD + 绑定通道(CRUD 校验码 / 绑定 / 解绑 / 404) =="
+# 合法创建 → 201 全量记录
 cat > "$TMP/ds-ok.json" <<'EOF'
-{"schema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"student":{"type":"string"}},"required":["student"]},"data":{"student":"林晚晴"}}
+{"name":"冒烟数据源","schema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"student":{"type":"string"}},"required":["student"]},"data":{"student":"林晚晴"}}
 EOF
-_status=$(request PUT "/api/templates/$T1/dataset" application/json "$TMP/ds-ok.json" "$TMP/ds-ok-resp.json")
-[ "$_status" = "200" ] || die "PUT dataset(合法)期望 200,实得 $_status"
-assert_json "$TMP/ds-ok-resp.json" "d['dataset'] == {'student': '林晚晴'}"
+_status=$(request POST /api/datasources application/json "$TMP/ds-ok.json" "$TMP/ds-ok-resp.json")
+[ "$_status" = "201" ] || die "POST /api/datasources 期望 201,实得 $_status"
+assert_json "$TMP/ds-ok-resp.json" "d['name'] == '冒烟数据源' and d['data'] == {'student': '林晚晴'}"
+DS1="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/ds-ok-resp.json")"
+echo "   DS1=$DS1"
 
 cat > "$TMP/ds-bad-schema.json" <<'EOF'
-{"schema":{"type":42},"data":{}}
+{"name":"坏schema","schema":{"type":42},"data":{}}
 EOF
-expect_error PUT "/api/templates/$T1/dataset" application/json "$TMP/ds-bad-schema.json" 400 schema_invalid
+expect_error POST /api/datasources application/json "$TMP/ds-bad-schema.json" 400 schema_invalid
 
 cat > "$TMP/ds-mismatch.json" <<'EOF'
-{"schema":{"type":"object"},"data":[1,2]}
+{"name":"坏data","schema":{"type":"object"},"data":[1,2]}
 EOF
-expect_error PUT "/api/templates/$T1/dataset" application/json "$TMP/ds-mismatch.json" 400 dataset_schema_mismatch
+expect_error POST /api/datasources application/json "$TMP/ds-mismatch.json" 400 dataset_schema_mismatch
 
-# 票面第三条:数据源就位后 PUT 模板,验证 dataset/datasetSchema 仍在(spec §2.4 #5)
+# PUT 更新 → 200 整存替换;寻址失败 → 404 data_source_not_found
+cat > "$TMP/ds-update.json" <<'EOF'
+{"name":"冒烟改名数据源","schema":{"type":"object"},"data":{"kept":true}}
+EOF
+_status=$(request PUT "/api/datasources/$DS1" application/json "$TMP/ds-update.json" "$TMP/ds-update-resp.json")
+[ "$_status" = "200" ] || die "PUT /api/datasources/$DS1 期望 200,实得 $_status"
+assert_json "$TMP/ds-update-resp.json" "d['name'] == '冒烟改名数据源' and d['data'] == {'kept': True}"
+expect_error GET "/api/datasources/999999" application/json /dev/null 404 data_source_not_found
+
+# 绑定 → 200 引用列更新;其后 PUT 模板不触碰绑定(spec §2.4 #5);
+# 绑定不存在的数据源 → 404 data_source_not_found;解绑 → null
+cat > "$TMP/bind.json" <<EOF
+{"dataSourceId":$DS1}
+EOF
+_status=$(request PUT "/api/templates/$T1/datasource" application/json "$TMP/bind.json" "$TMP/bind-resp.json")
+[ "$_status" = "200" ] || die "PUT …/datasource(绑定)期望 200,实得 $_status"
+assert_json "$TMP/bind-resp.json" "d['dataSourceId'] == $DS1"
 _status=$(request PUT "/api/templates/$T1" application/json "$TMP/put-t1.json" "$TMP/t1-put2.json")
-[ "$_status" = "200" ] || die "数据源就位后 PUT 模板期望 200,实得 $_status"
-assert_json "$TMP/t1-put2.json" "d['dataset'] == {'student': '林晚晴'}"
-assert_json "$TMP/t1-put2.json" "d['datasetSchema'] is not None"
+[ "$_status" = "200" ] || die "绑定后 PUT 模板期望 200,实得 $_status"
+assert_json "$TMP/t1-put2.json" "d['dataSourceId'] == $DS1"
 
-echo "== 7/11 POST /api/templates 保存预检打回(未知图层类型 / 双 paged 链) =="
+cat > "$TMP/bind-bad.json" <<'EOF'
+{"dataSourceId":999999}
+EOF
+expect_error PUT "/api/templates/$T1/datasource" application/json "$TMP/bind-bad.json" 404 data_source_not_found
+
+# 创建即绑定(另存为单调用路径,spec §2.4 #3):POST 模板携带 dataSourceId → 201 随建随绑
+cat > "$TMP/t2.json" <<EOF
+{"name":"冒烟随建绑定模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}],"dataSourceId":$DS1}
+EOF
+_status=$(request POST /api/templates application/json "$TMP/t2.json" "$TMP/t2-resp.json")
+[ "$_status" = "201" ] || die "POST /api/templates(带 dataSourceId)期望 201,实得 $_status"
+assert_json "$TMP/t2-resp.json" "d['dataSourceId'] == $DS1"
+
+cat > "$TMP/unbind.json" <<'EOF'
+{"dataSourceId":null}
+EOF
+_status=$(request PUT "/api/templates/$T1/datasource" application/json "$TMP/unbind.json" "$TMP/unbind-resp.json")
+[ "$_status" = "200" ] || die "PUT …/datasource(解绑)期望 200,实得 $_status"
+assert_json "$TMP/unbind-resp.json" "d['dataSourceId'] is None"
+
+echo "== 7/12 POST /api/templates 保存预检打回(未知图层类型 / 双 paged 链) =="
 cat > "$TMP/bad-layer.json" <<'EOF'
 {"name":"坏图层模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}}]}
 EOF
@@ -132,7 +178,7 @@ cat > "$TMP/double-paged.json" <<'EOF'
 EOF
 expect_error POST /api/templates application/json "$TMP/double-paged.json" 400 flow_chain_invalid
 
-echo "== 10/11 POST /api/assets(multipart 上传 → url 形态 + 可 GET) =="
+echo "== 10/12 POST /api/assets(multipart 上传 → url 形态 + 可 GET) =="
 PNG="$ROOT/server/seed/assets/u/student-1.png"
 [ -f "$PNG" ] || die "上传样张缺失: $PNG"
 _status=$(curl -sS -o "$TMP/upload.json" -w '%{http_code}' -F "file=@$PNG;type=image/png" "$BASE/api/assets")
@@ -142,7 +188,7 @@ UPLOAD_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], enc
 curl -fsS -o "$TMP/upload-roundtrip.png" "$BASE$UPLOAD_URL" || die "GET $UPLOAD_URL 失败"
 cmp -s "$TMP/upload-roundtrip.png" "$PNG" || die "上传回读字节与原文件不一致"
 
-echo "== 11/11 请求体上限与坏 body(413 / 400) =="
+echo "== 11/12 请求体上限与坏 body(413 / 400) =="
 python3 -c 'import json,sys; sys.stdout.write(json.dumps({"name":"a" * (10 * 1024 * 1024)}))' > "$TMP/big.json"
 expect_error POST /api/templates application/json "$TMP/big.json" 413 request_too_large
 
@@ -151,7 +197,7 @@ expect_error POST /api/templates application/json "$TMP/not-json.json" 400 inval
 
 # ---- 断言 8–9(13 票):渲染管线 → RenderRecord + PNG 直链 ----
 
-echo "== 8/11 POST /api/templates/{SEED_ID}/render(渲染 → 201 RenderRecord) =="
+echo "== 8/12 POST /api/templates/{SEED_ID}/render(渲染 → 201 RenderRecord) =="
 # 无 body POST(服务端不读,spec §2.4 #7);徽标走 picsum 物化(唯一外网点)
 _status=$(request POST "/api/templates/$SEED_ID/render" application/json /dev/null "$TMP/render1.json")
 [ "$_status" = "201" ] || die "POST render 期望 201,实得 $_status"
@@ -220,7 +266,36 @@ for u in $RENDER1_URLS; do
 	[ "$_ct" = "image/png" ] || die "旧渲染 GET $u Content-Type = $_ct, 期望 image/png"
 done
 
-echo "== 9/11 POST /api/templates/{不存在的id}/render(404) =="
+echo "== 9/12 POST /api/templates/{不存在的id}/render(404) =="
 expect_error POST "/api/templates/999999/render" application/json /dev/null 404 template_not_found
 
-echo "smoke: 断言 1–11 全绿 (BASE=$BASE)"
+# ---- 断言 12(卡片操作修订):DELETE /api/templates/{id} → 204 无响应体;
+# 渲染记录行级联清;产物文件保留(keep-all 快照直链仍可用);再删/非整数 id 404 ----
+
+echo "== 12/12 DELETE /api/templates/{id}(删除 → 204,记录级联清,产物文件保留) =="
+cat > "$TMP/t3.json" <<'EOF'
+{"name":"冒烟删除模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
+EOF
+_status=$(request POST /api/templates application/json "$TMP/t3.json" "$TMP/t3-resp.json")
+[ "$_status" = "201" ] || die "POST /api/templates(删除用)期望 201,实得 $_status"
+T3="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/t3-resp.json")"
+echo "   T3=$T3"
+
+# 先渲染一次:造渲染记录行 + 落盘产物(单帧空链直通 1 页,无外网依赖)
+_status=$(request POST "/api/templates/$T3/render" application/json /dev/null "$TMP/render3.json")
+[ "$_status" = "201" ] || die "删除前渲染期望 201,实得 $_status"
+RENDER3_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["images"][0]["url"])' "$TMP/render3.json")"
+
+_status=$(curl -sS -o "$TMP/del.out" -w '%{http_code}' -X DELETE "$BASE/api/templates/$T3")
+[ "$_status" = "204" ] || die "DELETE /api/templates/$T3 期望 204,实得 $_status"
+if [ -s "$TMP/del.out" ]; then die "DELETE 响应体应为空"; fi
+
+# 模板行与渲染记录行级联清:GET/render 寻址 404;产物文件保留直链仍服务
+expect_error GET "/api/templates/$T3" application/json /dev/null 404 template_not_found
+expect_error POST "/api/templates/$T3/render" application/json /dev/null 404 template_not_found
+_ct="$(curl -fsS -o /dev/null -w '%{content_type}' "$BASE$RENDER3_URL")" || die "已删模板产物 GET $RENDER3_URL 失败"
+[ "$_ct" = "image/png" ] || die "已删模板产物 Content-Type = $_ct, 期望 image/png"
+expect_error DELETE "/api/templates/$T3" application/json /dev/null 404 template_not_found
+expect_error DELETE "/api/templates/abc" application/json /dev/null 404 template_not_found
+
+echo "smoke: 断言 1–12 全绿 (BASE=$BASE)"

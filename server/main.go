@@ -48,7 +48,8 @@ func run() error {
 	}
 	defer st.Close()
 
-	// 启动播种(spec §5.2):资源补齐 + templates 表空则插默认模板,二者幂等
+	// 启动播种(spec §5.2):资源补齐 + 数据源实体按名取回或插入 + templates 表
+	// 空则插默认模板(引用该数据源),三者幂等
 	if _, err := seed.CopyAssets(filepath.Join("seed", "assets"), "assets"); err != nil {
 		return err
 	}
@@ -56,7 +57,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err := st.SeedTemplateIfEmpty(context.Background(), content); err != nil {
+	dsID, err := st.SeedDataSourceIfMissing(context.Background(), content.DataSource)
+	if err != nil {
+		return err
+	}
+	content.Template.DataSourceID = &dsID
+	if err := st.SeedTemplateIfEmpty(context.Background(), content.Template); err != nil {
 		return err
 	}
 

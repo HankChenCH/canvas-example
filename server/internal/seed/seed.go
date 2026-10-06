@@ -1,5 +1,6 @@
-// Package seed:启动播种(spec §5.2)——五份 fixture 读入默认模板 +
-// seed/assets 幂等补齐到运行时 assets/(字体一份 + student-1..5.png)。
+// Package seed:启动播种(spec §5.2)——五份 fixture 读入默认数据源实体 + 默认
+// 模板(经 data_source_id 引用数据源)+ seed/assets 幂等补齐到运行时 assets/
+// (字体一份 + student-1..5.png)。
 package seed
 
 import (
@@ -14,13 +15,23 @@ import (
 	"example/server/internal/store"
 )
 
+// DefaultDataSourceName 默认数据源实体名(spec §5.2 钉名;独立资源,与模板解耦)
+const DefaultDataSourceName = "结业证书批量打印数据源"
+
 // DefaultTemplateName 默认模板名(spec §5.2 钉名)
 const DefaultTemplateName = "结业证书 · 批量打印页"
+
+// Content 播种内容:数据源实体 + 引用它的模板。模板内容不带绑定 id——
+// data_source_id 由启动序在数据源播种后接线(main.go)。
+type Content struct {
+	DataSource store.DataSourceContent
+	Template   store.TemplateContent
+}
 
 // Load 从 seedDir 读五份 fixture。文件随仓库逐字节分发(spec §5.2,来源 05 票
 // fixture,已过解码往返与编译断言验证),此处仅按 JSON 语义读入,graph/流链
 // 的契约正确性不在此复制校验。
-func Load(seedDir string) (store.TemplateContent, error) {
+func Load(seedDir string) (Content, error) {
 	readJSON := func(name string) (json.RawMessage, error) {
 		b, err := os.ReadFile(filepath.Join(seedDir, name))
 		if err != nil {
@@ -44,19 +55,24 @@ func Load(seedDir string) (store.TemplateContent, error) {
 	} {
 		raw, err := readJSON(slot.file)
 		if err != nil {
-			return store.TemplateContent{}, err
+			return Content{}, err
 		}
 		*slot.target = raw
 	}
-	return store.TemplateContent{
-		Name: DefaultTemplateName,
-		Canvases: []store.CanvasEntry{
-			{Name: "主页", Graph: frameMain},
-			{Name: "续页", Graph: frameCont},
+	return Content{
+		DataSource: store.DataSourceContent{
+			Name:   DefaultDataSourceName,
+			Schema: schema,
+			Data:   dataset,
 		},
-		FlowChain:     flowChain,
-		DatasetSchema: schema,
-		Dataset:       dataset,
+		Template: store.TemplateContent{
+			Name: DefaultTemplateName,
+			Canvases: []store.CanvasEntry{
+				{Name: "主页", Graph: frameMain},
+				{Name: "续页", Graph: frameCont},
+			},
+			FlowChain: flowChain,
+		},
 	}, nil
 }
 

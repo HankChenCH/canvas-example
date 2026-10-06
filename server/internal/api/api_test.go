@@ -24,8 +24,8 @@ var seedDir = func() string {
 	return abs
 }()
 
-// newTestServer 真实 seed 装载(05 票 fixture)→ 播种 → api handler;
-// 返回 handler 与种子模板 id(列表首项)
+// newTestServer 真实 seed 装载(05 票 fixture)→ 播种(数据源实体 + 引用它的
+// 模板)→ api handler;返回 handler 与种子模板 id(列表首项)
 func newTestServer(t *testing.T) (http.Handler, int64) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -37,7 +37,12 @@ func newTestServer(t *testing.T) (http.Handler, int64) {
 	if err != nil {
 		t.Fatalf("装载 seed: %v", err)
 	}
-	if err := st.SeedTemplateIfEmpty(t.Context(), content); err != nil {
+	dsID, err := st.SeedDataSourceIfMissing(t.Context(), content.DataSource)
+	if err != nil {
+		t.Fatalf("播种数据源: %v", err)
+	}
+	content.Template.DataSourceID = &dsID
+	if err := st.SeedTemplateIfEmpty(t.Context(), content.Template); err != nil {
 		t.Fatalf("播种: %v", err)
 	}
 	items, err := st.ListTemplates(t.Context())
@@ -128,8 +133,14 @@ func TestGetTemplate_Seeded(t *testing.T) {
 	if !ok || len(chain) != 2 {
 		t.Fatalf("flowChain 应为两节点: %v", body["flowChain"])
 	}
-	if body["datasetSchema"] == nil || body["dataset"] == nil {
-		t.Fatal("全量记录应含 datasetSchema 与 dataset(spec §2.4 #4)")
+	// 种子模板绑定种子数据源实体(spec §5.2)
+	dsID, ok := body["dataSourceId"].(float64)
+	if !ok || dsID <= 0 {
+		t.Fatalf("种子模板应绑定数据源实体: %v", body["dataSourceId"])
+	}
+	dsCode, dsBody := doJSON(t, h, fmt.Sprintf("/api/datasources/%d", int64(dsID)))
+	if dsCode != http.StatusOK || dsBody["schema"] == nil || dsBody["data"] == nil {
+		t.Fatalf("引用的数据源实体应可回读且含 schema/data: %d %v", dsCode, dsBody)
 	}
 	if body["id"].(float64) != float64(seedID) || body["name"] != seed.DefaultTemplateName {
 		t.Fatalf("id/name 不符: %v / %v", body["id"], body["name"])

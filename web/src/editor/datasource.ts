@@ -1,37 +1,16 @@
-// 数据源抽屉纯逻辑（17 票，spec §4.3 双通道 / §4.4 独立未保存标记）：抽屉三个
-// 文本域（schema / data / flowChain）的基线换算、草稿 JSON 解析、段内独立标记与
-// 数据源段载荷组装。与 Vue/DOM 解耦，EditorPage 只做响应式桥接。
+// 数据源抽屉纯逻辑（23 票重构：数据源为独立实体、模板持引用，spec §4.3 三段式）：
+// 绑定段（当前绑定 vs 选中项变更判定）、内容段（绑定的数据源实体 name/schema/data
+// 文本基线与载荷组装）、流链段（flowChain 文本基线沿用）。与 Vue/DOM 解耦，
+// EditorPage 只做响应式桥接。
 // 校验边界：draft-07 与流链语义的校验权威在服务端（spec §4.3「前端不复制校验
 // 器」），这里只做「文本能否成 JSON」的机械判定——解析失败本地拒绝，语义校验
 // 一律经服务端错误码回显。
-import type { DatasetWritePayload } from '../api'
-
-/** 抽屉段基线：文本域载入（或该段保存成功）时的文本快照——段内标记按文本逐字
- *  比较（「文本域 vs 载入基线」），不语义等价折叠：重新缩进/改键序也算改动，
- *  标记如实反映「离开即丢文本」。 */
-export interface DrawerDraftBaseline {
-    schemaText: string
-    dataText: string
-    flowChainText: string
-}
+import type { DataSourceRecord, DataSourceWritePayload } from '../api'
 
 /** 值 → 文本域展示文本（2 空格 pretty；null/缺省归 null 字面——空链与 null
- *  同义，spec §3.1，抽屉内以 `null` 表达空链/未绑数据源） */
+ *  同义，spec §3.1，抽屉内以 `null` 表达空链） */
 export function prettyJsonText(value: unknown): string {
     return JSON.stringify(value ?? null, null, 2)
-}
-
-/** 载入基线：模板记录三字段 → 文本域初值（spec §4.3） */
-export function drawerBaselineFromRecord(record: {
-    datasetSchema: unknown
-    dataset: unknown
-    flowChain: unknown
-}): DrawerDraftBaseline {
-    return {
-        schemaText: prettyJsonText(record.datasetSchema),
-        dataText: prettyJsonText(record.dataset),
-        flowChainText: prettyJsonText(record.flowChain),
-    }
 }
 
 export type JsonDraft = { ok: true; value: unknown } | { ok: false; message: string }
@@ -50,17 +29,46 @@ export function isSegmentDirty(text: string, baselineText: string): boolean {
     return text !== baselineText
 }
 
-export type DatasetDraftPayload =
-    | { ok: true; payload: DatasetWritePayload }
-    | { ok: false; field: 'schema' | 'data'; message: string }
+/** 绑定段判定：选中项与当前绑定是否一致（一致 = 无变更，动作钮禁用） */
+export function isBindingChange(
+    currentId: number | null,
+    selectedId: number | null,
+): boolean {
+    return currentId !== selectedId
+}
 
-/** 数据源段两文本域 → `PUT /templates/{id}/dataset` 载荷（spec §2.4 #6）：
- *  schema 先判（报错定位优先左字段），任一解析失败即短路返回字段与段内可直显
- *  的完整文案（字段名前缀在此单点拼装），不打服务端。 */
-export function datasetDraftPayload(schemaText: string, dataText: string): DatasetDraftPayload {
+// ---- 数据源内容段（编辑的是绑定的数据源实体，spec §4.3）----
+
+/** 内容段载荷：name 先判（报错定位优先左字段），schema/data 仅解析不校验；
+ *  未绑数据源时同样的三文本域组装「创建并绑定」载荷 */
+export type DataSourceDraftPayload =
+    | { ok: true; payload: DataSourceWritePayload }
+    | { ok: false; field: 'name' | 'schema' | 'data'; message: string }
+
+export function dataSourceDraftPayload(
+    nameText: string,
+    schemaText: string,
+    dataText: string,
+): DataSourceDraftPayload {
+    const name = nameText.trim()
+    if (!name) return { ok: false, field: 'name', message: '数据源名不能为空' }
     const schema = parseJsonDraft(schemaText)
     if (!schema.ok) return { ok: false, field: 'schema', message: `schema JSON 解析失败：${schema.message}` }
     const data = parseJsonDraft(dataText)
     if (!data.ok) return { ok: false, field: 'data', message: `data JSON 解析失败：${data.message}` }
-    return { ok: true, payload: { schema: schema.value, data: data.value } }
+    return { ok: true, payload: { name, schema: schema.value, data: data.value } }
+}
+
+/** 内容段基线：绑定的数据源实体（或未绑空态）→ 文本域初值。
+ *  未绑（source = null）：名字空串、schema/data 空——创建并绑定的起笔态。 */
+export function sourceDraftBaseline(source: DataSourceRecord | null): {
+    nameText: string
+    schemaText: string
+    dataText: string
+} {
+    return {
+        nameText: source?.name ?? '',
+        schemaText: source === null ? '' : prettyJsonText(source.schema),
+        dataText: source === null ? '' : prettyJsonText(source.data),
+    }
 }

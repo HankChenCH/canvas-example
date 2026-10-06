@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -34,9 +35,10 @@ type renderImageResponse struct {
 	URL   string `json:"url"`
 }
 
-// handleRenderTemplate 渲染一跳:取存储态 → 管线(解码/编译/逐页渲染)→
-// 落盘 → 落库 → 201。错误映射全走 render 包对 §2.5/§2.6 的实现;断连取消
-// 不写响应仅日志(spec §2.5 渲染段)。
+// handleRenderTemplate 渲染一跳:取存储态 → 解析数据源引用 → 管线(解码/编译/
+// 逐页渲染)→ 落盘 → 落库 → 201。未绑数据源按未绑直通编译(spec §2.4 #7 直通
+// 语义);错误映射全走 render 包对 §2.5/§2.6 的实现;断连取消不写响应仅日志
+// (spec §2.5 渲染段)。
 func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -45,15 +47,25 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	rec, err := s.store.GetTemplate(r.Context(), id)
 	if err != nil {
-		// 模板/dataset 存取不设超时(spec §2.6),用 r.Context()
+		// 模板/数据源存取不设超时(spec §2.6),用 r.Context()
 		writeStoreError(w, err, "读取模板失败")
 		return
+	}
+	var datasetJSON json.RawMessage
+	if rec.DataSourceID != nil {
+		ds, err := s.store.GetDataSource(r.Context(), *rec.DataSourceID)
+		if err != nil {
+			// 绑定与渲染间隙的防御面:绑定端点先验存在且数据源无 DELETE,正常不可达
+			writeDataSourceStoreError(w, err, "读取数据源失败")
+			return
+		}
+		datasetJSON = ds.Data
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), renderDeadline)
 	defer cancel()
 
-	pages, perr := s.render.Run(ctx, rec)
+	pages, perr := s.render.Run(ctx, rec, datasetJSON)
 	if perr != nil {
 		if perr.Silent {
 			log.Printf("渲染模板 %d 取消(客户端断连): %s", id, perr.Message)

@@ -1,6 +1,7 @@
 // 模板写端点(spec §2.4 #3/#5):POST /api/templates 与 PUT /api/templates/{id}。
-// 保存即预检(spec §3.4):逐帧解码 + 流链校验全跑,不过 400 打回不落库;
-// POST 载荷不含 dataset(04 票锚点③的前提),PUT 不触碰 dataset/datasetSchema。
+// 保存即预检(spec §3.4):逐帧解码 + 流链校验全跑,不过 400 打回不落库。
+// 数据源为独立实体(spec §2.4 数据源段):POST 载荷可选 dataSourceId 随建随绑
+// (另存为单调用携带引用),PUT 不触碰绑定——绑定只经 PUT …/datasource 通道。
 package api
 
 import (
@@ -14,25 +15,34 @@ import (
 	"example/server/internal/store"
 )
 
-// templateWritePayload POST/PUT 模板载荷(spec §2.4 #3/#5):不含 dataset——
-// 数据源走独立端点(另存为两连调用补足);flowChain 缺键 = null = 空链(spec §3.1)
+// templateWritePayload POST/PUT 模板载荷(spec §2.4 #3/#5):flowChain 缺键 =
+// null = 空链(spec §3.1);dataSourceId 仅 POST 消费(缺省 null = 未绑)——
+// PUT 忽略此键,绑定只经数据源绑定通道变更
 type templateWritePayload struct {
-	Name      string              `json:"name"`
-	Canvases  []store.CanvasEntry `json:"canvases"`
-	FlowChain json.RawMessage     `json:"flowChain"`
+	Name         string              `json:"name"`
+	Canvases     []store.CanvasEntry `json:"canvases"`
+	FlowChain    json.RawMessage     `json:"flowChain"`
+	DataSourceID *int64              `json:"dataSourceId"`
 }
 
 // handleCreateTemplate POST /api/templates → 201 全量 TemplateRecord:id 自增
-// 分配,createdAt = updatedAt(spec §2.4 #3)
+// 分配,createdAt = updatedAt(spec §2.4 #3);dataSourceId 引用存在性先验
 func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	payload, ok := decodeTemplatePayload(w, r)
 	if !ok {
 		return
 	}
+	if payload.DataSourceID != nil {
+		if _, err := s.store.GetDataSource(r.Context(), *payload.DataSourceID); err != nil {
+			writeDataSourceStoreError(w, err, "绑定的数据源不存在")
+			return
+		}
+	}
 	id, err := s.store.CreateTemplate(r.Context(), store.TemplateContent{
-		Name:      payload.Name,
-		Canvases:  payload.Canvases,
-		FlowChain: normalizeNullJSON(payload.FlowChain),
+		Name:         payload.Name,
+		Canvases:     payload.Canvases,
+		FlowChain:    normalizeNullJSON(payload.FlowChain),
+		DataSourceID: payload.DataSourceID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, codes.InternalError, "写入模板失败")
@@ -42,7 +52,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateTemplate PUT /api/templates/{id} → 200 全量 TemplateRecord:
-// name/canvases/flowChain 整存替换、不触碰 dataset/datasetSchema、刷新 updatedAt
+// name/canvases/flowChain 整存替换、不触碰 data_source_id、刷新 updatedAt
 // (spec §2.4 #5)
 func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))

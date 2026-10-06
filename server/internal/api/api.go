@@ -46,7 +46,14 @@ func newServer(st *store.Store, rs *render.Service) http.Handler {
 	mux.HandleFunc("GET /api/templates/{id}", s.handleGetTemplate)
 	mux.HandleFunc("POST /api/templates", s.handleCreateTemplate)
 	mux.HandleFunc("PUT /api/templates/{id}", s.handleUpdateTemplate)
-	mux.HandleFunc("PUT /api/templates/{id}/dataset", s.handleUpdateDataset)
+	mux.HandleFunc("PUT /api/templates/{id}/datasource", s.handleBindTemplateDataSource)
+	// 删除模板(spec §2.4 #10,卡片操作修订):级联清渲染记录行,产物文件保留
+	mux.HandleFunc("DELETE /api/templates/{id}", s.handleDeleteTemplate)
+	// 数据源是独立实体(spec §2.4 数据源段):自有 CRUD,模板经绑定端点持引用
+	mux.HandleFunc("GET /api/datasources", s.handleListDataSources)
+	mux.HandleFunc("POST /api/datasources", s.handleCreateDataSource)
+	mux.HandleFunc("GET /api/datasources/{id}", s.handleGetDataSource)
+	mux.HandleFunc("PUT /api/datasources/{id}", s.handleUpdateDataSource)
 	mux.HandleFunc("POST /api/assets", s.handleUploadAsset)
 	mux.HandleFunc("POST /api/templates/{id}/render", s.handleRenderTemplate)
 	// 静态前缀(spec §2.1):URL /assets/u/x.png ↔ 磁盘 assets/u/x.png(剥前缀即三合一的相对形态)

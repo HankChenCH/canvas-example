@@ -17,18 +17,19 @@
 // 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
 // onBeforeRouteLeave confirm + 页签关闭 beforeunload 双保险；保存成功归 clean、基线
 // 同步本次发送各帧。
-// 数据源抽屉（spec §4.3 双通道，17 票）：一个抽屉两条保存通道——数据源段
-// （schema/data 文本域 +「保存数据源」→ PUT /templates/{id}/dataset，schema_invalid /
-// dataset_schema_mismatch 段内回显，成功后 setDataSourceSchema 更新补全候选）与流链段
-// （flowChain 文本域 +「保存流链」→ 文档级 PUT，canvases 一并整存，flow_chain_invalid
-// 等编译码段内回显）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混全局指示灯；
-// dataset 不进全局 dirty 口径，flowChain 草稿进（spec §4.4）。
-// 另存为（spec §4.5 两连调用精度锚点③，18 票）：弹名字输入 → saveAsCopy 两连
-// 调用（POST /templates 不带 dataset + PUT /templates/{newId}/dataset 复制数据
-// 源）→ 成功后会话延续式重绑（dirty 基线重置为新模板、抽屉基线同步）+ router.
-// replace('/editor/<newId>') 不重走载入——App.vue 去 :key 后 editor→editor 参数
-// 级导航复用本页实例，路由 id 与会话脱钩的导航走防御性重载兜底；中途失败阶段
-// 归因回显弹窗内，客户端不进入半副本（不重绑不导航），重试为全新两连调用。
+// 数据源抽屉（spec §4.3 三段式，23 票重构：数据源为独立实体、模板持引用）：
+// 绑定段（数据源列表下拉 + 绑定/解绑 → PUT /templates/{id}/datasource，引用列
+// 整存替换）、内容段（编辑绑定的数据源实体——name/schema/data + 「保存数据源」
+// → PUT /datasources/{id}，共享实体影响所有引用模板；未绑时「创建并绑定」→
+// POST + 绑定；已绑另有「另存为新数据源」→ 弹名字框 POST + 重绑）、流链段
+// （flowChain 文本域 +「保存流链」→ 文档级 PUT，canvases 一并整存，flow_chain_
+// invalid 等编译码段内回显）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混
+// 全局指示灯；数据源实体与绑定均不进全局 dirty 口径，flowChain 草稿进（spec §4.4）。
+// 另存为（spec §4.5，23 票改单调用）：弹名字输入 → POST /templates（name +
+// canvases + flowChain + dataSourceId 引用随行，副本与原模板引用同一数据源实体）
+// → 成功后会话延续式重绑（dirty 基线重置为新模板）+ router.replace('/editor/<newId>')
+// 不重走载入——App.vue 去 :key 后 editor→editor 参数级导航复用本页实例，路由 id
+// 与会话脱钩的导航走防御性重载兜底；中途失败错误归因弹窗内回显，不重绑不导航。
 // 渲染终图（spec §4.6，19 票）：顶栏「渲染终图」→ POST /templates/{id}/render
 // （无 body，存储态为准——dirty 可渲染，结果对应已保存版本）；等待期按钮禁用，
 // 30s deadline 服务端控制、前端不另设超时；失败错误体（稳定码在前）走状态栏
@@ -90,7 +91,15 @@ import {
     drawFindMatches,
     drawSelectionGizmo,
 } from '@hankchen/canvas-next-editor-vue'
-import { api, ApiError, formatApiError, type RenderRecord, type TemplateRecord } from '../api'
+import {
+    api,
+    ApiError,
+    formatApiError,
+    type DataSourceRecord,
+    type DataSourceSummary,
+    type RenderRecord,
+    type TemplateRecord,
+} from '../api'
 import {
     baselineFromSlots,
     buildSavePayload,
@@ -102,18 +111,17 @@ import {
     type FrameSlot,
 } from '../editor/frames'
 import {
-    datasetDraftPayload,
-    drawerBaselineFromRecord,
+    dataSourceDraftPayload,
+    isBindingChange,
     isSegmentDirty,
     parseJsonDraft,
     prettyJsonText,
-    type DrawerDraftBaseline,
+    sourceDraftBaseline,
 } from '../editor/datasource'
-import { datasetCopyPayload, saveAsCopy } from '../editor/saveas'
 import { sanitizeFileBase } from '../editor/render'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
 import RenderResultDrawer from '../components/RenderResultDrawer.vue'
-import SaveAsDialog from '../components/SaveAsDialog.vue'
+import NamePromptDialog from '../components/NamePromptDialog.vue'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
 // 提示 + 返回列表链接（按 code 判定，不按 HTTP status）。onMounted 首载与路由 id
@@ -139,12 +147,22 @@ async function loadTemplate(id: string): Promise<void> {
             errorText.value = '模板不含任何帧，无法编辑'
             return
         }
-        // 会话建立即注入数据源 schema（spec §4.2 接线序；null/缺省 = 清除声明 =
-        // 无候选，与会话初始态一致）。声明只进编辑器会话态，不进 graph、不动 wire；
-        // 注入失败内核静默降级 + console.warn 已内建，宿主不重复处理。openDocument
-        // 不重置 schema（01 票），切帧重建会话文档无需重复注入；数据源段保存成功后
-        // 走同一入口更新（saveDataset）。
-        editor.setDataSourceSchema(record.datasetSchema)
+        // 会话建立即注入数据源 schema（spec §4.2 接线序）：模板持引用——按
+        // dataSourceId 取数据源实体注入其 schema；未绑 = null = 清除声明 = 无候选，
+        // 与会话初始态一致。声明只进编辑器会话态，不进 graph、不动 wire；注入失败
+        // 内核静默降级 + console.warn 已内建，宿主不重复处理。openDocument 不重置
+        // schema（01 票），切帧重建会话文档无需重复注入；数据源保存/绑定变更后走
+        // 同一入口 applyBoundSource 更新。
+        if (record.dataSourceId === null) {
+            applyBoundSource(null)
+        } else {
+            const source = await api.getDataSource(record.dataSourceId)
+            if (seq !== loadSeq) return
+            applyBoundSource(source)
+        }
+        // 抽屉流链文本域初值 = 模板记录 flowChain 的 pretty 文本（spec §4.3），基线同步打点
+        flowChainBaselineText = prettyJsonText(record.flowChain)
+        flowChainText.value = flowChainBaselineText
         // 帧缓冲载入（spec §4.2「decodeGraph 逐帧」）：逐帧解码即验 + canonical 化，
         // 基线与帧缓冲同形；任一帧解码失败 = 载入错误面（16 票）
         try {
@@ -157,11 +175,6 @@ async function loadTemplate(id: string): Promise<void> {
         activeFrame.value = 0
         template.value = record
         templateName.value = record.name
-        // 抽屉文本域初值 = 模板记录三字段的 pretty 文本（spec §4.3），基线同步打点
-        drawerBaseline.value = drawerBaselineFromRecord(record)
-        schemaText.value = drawerBaseline.value.schemaText
-        dataText.value = drawerBaseline.value.dataText
-        flowChainText.value = drawerBaseline.value.flowChainText
         // 重载路径（画布已就绪，onReady 不会再来）：换文档重开当前帧；首载路径由
         // onReady 收口（CanvasSurface 在 template 置位后才挂载）
         if (contentBackend !== null) openFrameDocument()
@@ -260,39 +273,74 @@ function cancelFrameRename(): void {
     renamingFrame.value = null
 }
 
-// ---- 数据源抽屉（spec §4.3 双通道，17 票）：三文本域草稿 + 段基线。段内独立
-// 未保存标记 = 文本域 vs 载入基线（spec §4.4，不混全局 saveState 指示灯）——
-// dataset 不在全局 dirty 口径，抽屉开着改数据源全局仍 clean；flowChain 草稿在
-// 全局口径内，文本变更经 syncDirty 计入。各段保存成功后基线同步本次发送文本。 ----
+// ---- 数据源抽屉（spec §4.3 三段式，23 票：数据源为独立实体、模板持引用）。
+// 段内独立未保存标记 = 文本域 vs 载入基线（spec §4.4，不混全局 saveState 指示灯）
+// ——数据源实体与绑定都不在全局 dirty 口径（独立通道即时落库），抽屉开着改全局
+// 仍 clean；flowChain 草稿在全局口径内，文本变更经 syncDirty 计入。各段保存成功
+// 后基线同步本次发送文本。 ----
 
 const drawerOpen = ref(false)
-// 未绑数据源/空链的文本域初值（spec §3.1：空链与 null 同义，抽屉内以 null 字面表达）
+// 空链文本域初值（spec §3.1：空链与 null 同义，抽屉内以 null 字面表达）
 const EMPTY_DRAFT_TEXT = 'null'
-const schemaText = ref(EMPTY_DRAFT_TEXT)
-const dataText = ref(EMPTY_DRAFT_TEXT)
 const flowChainText = ref(EMPTY_DRAFT_TEXT)
-const drawerBaseline = ref<DrawerDraftBaseline>({
-    schemaText: EMPTY_DRAFT_TEXT,
-    dataText: EMPTY_DRAFT_TEXT,
-    flowChainText: EMPTY_DRAFT_TEXT,
-})
+let flowChainBaselineText = EMPTY_DRAFT_TEXT
+const flowChainSegmentDirty = computed(() => isSegmentDirty(flowChainText.value, flowChainBaselineText))
 
-const datasetSegmentDirty = computed(
+// 绑定段：数据源列表摘要（抽屉打开时刷新）+ 选中项草稿。列表错误不影响其余段。
+const sources = ref<DataSourceSummary[]>([])
+const selectedBindId = ref<number | null>(null)
+const bindSaving = ref(false)
+const bindError = ref<string | null>(null)
+
+// 内容段：编辑的是「绑定的数据源实体」；未绑 = 创建并绑定的起笔态（三文本域空）。
+const boundSource = ref<DataSourceRecord | null>(null)
+const nameText = ref('')
+const schemaText = ref('')
+const dataText = ref('')
+const contentBaseline = ref({ nameText: '', schemaText: '', dataText: '' })
+const contentDirty = computed(
     () =>
-        isSegmentDirty(schemaText.value, drawerBaseline.value.schemaText) ||
-        isSegmentDirty(dataText.value, drawerBaseline.value.dataText),
+        isSegmentDirty(nameText.value, contentBaseline.value.nameText) ||
+        isSegmentDirty(schemaText.value, contentBaseline.value.schemaText) ||
+        isSegmentDirty(dataText.value, contentBaseline.value.dataText),
 )
-const flowChainSegmentDirty = computed(() => isSegmentDirty(flowChainText.value, drawerBaseline.value.flowChainText))
+const contentSaving = ref(false)
+const contentError = ref<string | null>(null)
+
+/** 应用绑定态（spec §4.3 载入/保存/绑定同一入口）：实体进内容段基线与文本域、
+ *  schema 注入编辑器会话（null = 清除候选；注入失败内核静默降级已内建） */
+function applyBoundSource(source: DataSourceRecord | null): void {
+    boundSource.value = source
+    contentBaseline.value = sourceDraftBaseline(source)
+    nameText.value = contentBaseline.value.nameText
+    schemaText.value = contentBaseline.value.schemaText
+    dataText.value = contentBaseline.value.dataText
+    selectedBindId.value = source?.id ?? null
+    contentError.value = null
+    editor.setDataSourceSchema(source === null ? null : source.schema)
+}
+
+/** 抽屉打开：数据源列表刷新（共享影响面 templateCount 与新建实体即时可见） */
+watch(drawerOpen, async (open) => {
+    if (!open) return
+    try {
+        sources.value = await api.listDataSources()
+    } catch (e) {
+        bindError.value = formatApiError(e)
+    }
+})
 
 // 段内错误随再编辑清空（陈旧错误误导）；流链草稿文本同时计入全局 dirty 口径
-const datasetError = ref<string | null>(null)
 const flowChainError = ref<string | null>(null)
-watch([schemaText, dataText], () => {
-    datasetError.value = null
-})
 watch(flowChainText, () => {
     flowChainError.value = null
     syncDirty()
+})
+watch([nameText, schemaText, dataText], () => {
+    contentError.value = null
+})
+watch(selectedBindId, () => {
+    bindError.value = null
 })
 
 // ---- 会话（spec §4.2 接线序第 1 步）：fitMargin 48 与 playground 同款；上传注入
@@ -635,7 +683,7 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
         // 继续编辑保持 dirty
         savedBaseline = baselineFromSlots(sentName, sentSlots, flowDraft.value)
         // 流链草稿已随本次文档级 PUT 落库：段基线同步发送文本，段内标记归灭
-        drawerBaseline.value = { ...drawerBaseline.value, flowChainText: sentFlowChainText }
+        flowChainBaselineText = sentFlowChainText
         flowChainError.value = null
         computeDirty()
         docNote.value = '已保存到服务端'
@@ -659,15 +707,14 @@ function saveFlowChain(): void {
     void runDocumentSave('flowchain')
 }
 
-// ---- 另存为（spec §4.5 两连调用精度锚点③，18 票）：弹名字输入 → saveAsCopy
-// 两连调用（POST /templates 不带 dataset + PUT /templates/{newId}/dataset 连带
-// 复制数据源）。成功 = 会话延续式重绑：template / dirty 基线 / 抽屉基线整体切到
-// 副本后 router.replace——App.vue 去 :key，本页实例承接参数级导航，不重走载入；
-// 「帧缓冲重挂」以基线重绑承载（帧缓冲字节 = 发送字节 = 服务端存储字节，重建是
-// 恒等操作）；dirty 基线 = 本次发送字节（与保存同缝），另存后不改任何东西
-// saveState 即 clean。中途失败回显弹窗内：create 阶段失败无副本落地；dataset
-// 阶段失败不导航不重绑（客户端不进入半副本），重试为全新两连调用。未保存的
-// 数据源草稿不随两连调用（复制的是存储态），草稿保留、段内标记如实延续到副本上。 ----
+// ---- 另存为（spec §4.5，23 票改单调用：副本引用同一数据源实体，不再复制）：
+// 弹名字输入 → POST /templates（name + canvases + flowChain + dataSourceId 引用
+// 随行）。成功 = 会话延续式重绑：template / dirty 基线 / 抽屉基线整体切到副本后
+// router.replace——App.vue 去 :key，本页实例承接参数级导航，不重走载入；「帧缓冲
+// 重挂」以基线重绑承载（帧缓冲字节 = 发送字节 = 服务端存储字节，重建是恒等操作）；
+// dirty 基线 = 本次发送字节（与保存同缝），另存后不改任何东西 saveState 即 clean。
+// 绑定是存储态引用，不进 dirty 口径——副本与原模板从落库起即引用同一数据源实体，
+// 对实体的后续编辑两模板同享。中途失败回显弹窗内不重绑不导航，重试为全新调用。 ----
 
 const saveAsOpen = ref(false)
 const saveAsName = ref('')
@@ -707,44 +754,29 @@ async function runSaveAs(): Promise<void> {
     docNote.value = '另存为中…'
     let savedAsId: number | null = null
     try {
-        // 与保存同一条缝：当前帧快照并入帧缓冲，载荷只消费已快照槽位
+        // 与保存同一条缝：当前帧快照并入帧缓冲，载荷只消费已快照槽位；
+        // dataSourceId = 存储态引用原样随行（单调用，副本即刻可渲染）
         snapshotActiveFrame()
         const sentName = name
         const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
         const sentFlowChainText = flowChainText.value
-        const result = await saveAsCopy({
-            payload: buildSavePayload({ slots: sentSlots, templateName: sentName, flowChain: flowDraft.value }),
-            dataset: datasetCopyPayload(record),
-            createTemplate: api.createTemplate,
-            putDataset: api.putDataset,
+        const newRecord = await api.createTemplate({
+            ...buildSavePayload({ slots: sentSlots, templateName: sentName, flowChain: flowDraft.value }),
+            dataSourceId: record.dataSourceId,
         })
-        if (!result.ok) {
-            const prefix =
-                result.failure.stage === 'dataset'
-                    ? '副本已创建但数据源复制失败，重试将另建新副本：'
-                    : '副本创建失败：'
-            saveAsError.value = prefix + result.failure.message
-            docNote.value = `另存为失败：${result.failure.message}`
-            return
-        }
         // ---- 成功：会话延续式重绑（spec §4.5）----
-        const newRecord = result.record
         template.value = newRecord
         // dirty 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），与保存
         // 同缝；另存期间的继续编辑保持 dirty
         savedBaseline = baselineFromSlots(sentName, sentSlots, flowDraft.value)
         templateName.value = sentName
-        // 抽屉基线：流链已随 POST 落库 → 基线同步发送文本（段内标记归灭）；schema/
-        // data 基线 = 副本存储态，草稿文本不动（未保存标记如实延续）
-        drawerBaseline.value = {
-            schemaText: prettyJsonText(newRecord.datasetSchema),
-            dataText: prettyJsonText(newRecord.dataset),
-            flowChainText: sentFlowChainText,
-        }
+        // 抽屉基线：流链已随 POST 落库 → 基线同步发送文本（段内标记归灭）；数据源
+        // 实体未动（引用随行），内容段基线与文本域保持
+        flowChainBaselineText = sentFlowChainText
         flowChainError.value = null
         computeDirty()
         saveAsOpen.value = false
-        docNote.value = `已另存为「${sentName}」，数据源随行（副本即刻可渲染）`
+        docNote.value = `已另存为「${sentName}」，副本引用同一数据源（即刻可渲染）`
         savedAsId = newRecord.id
     } catch (e) {
         saveAsError.value = formatApiError(e)
@@ -760,40 +792,124 @@ async function runSaveAs(): Promise<void> {
     }
 }
 
-// ---- 数据源段保存通道（spec §2.4 #6 / §4.3）：显式「保存数据源」→
-// PUT /templates/{id}/dataset。校验权威在服务端——schema_invalid /
-// dataset_schema_mismatch 等错误码原样段内回显，前端只做「能否成 JSON」的机械
-// 解析（解析失败本地拒绝、不打服务端）；成功后 editor.setDataSourceSchema(schema)
-// 更新补全候选（null = 清除；注入失败内核静默降级 + console.warn 已内建）。
-// dataset 不随文档级 PUT、不进全局 dirty 口径（spec §4.4）。 ----
+// ---- 数据源抽屉动作（spec §2.4 数据源段 / §4.3，23 票）：绑定、内容保存、
+// 另存为新数据源三条独立通道。校验权威在服务端——schema_invalid /
+// dataset_schema_mismatch / data_source_not_found 等错误码原样段内回显，前端只做
+// 「能否成 JSON/名字非空」的机械解析（解析失败本地拒绝、不打服务端）；成功后经
+// applyBoundSource 同一入口更新基线与补全候选。数据源实体与绑定均不随文档级
+// PUT、不进全局 dirty 口径（spec §4.4）。 ----
 
-const datasetSaving = ref(false)
-
-async function saveDataset(): Promise<void> {
+/** 绑定段动作：按选中项与当前绑定的差值发绑定通道（PUT …/datasource 引用列
+ *  整存替换）；绑上后取回实体进内容段（applyBoundSource），解绑回落空态 */
+async function runBind(): Promise<void> {
     const record = template.value
-    if (!record || datasetSaving.value) return
-    const draft = datasetDraftPayload(schemaText.value, dataText.value)
+    if (!record || bindSaving.value || !isBindingChange(record.dataSourceId, selectedBindId.value)) return
+    bindSaving.value = true
+    try {
+        const updated = await api.bindTemplateDataSource(record.id, selectedBindId.value)
+        template.value = updated
+        const nextId = updated.dataSourceId
+        applyBoundSource(nextId === null ? null : await api.getDataSource(nextId))
+        await refreshSources()
+        docNote.value = nextId === null ? '已解绑数据源' : `已绑定数据源「${boundSource.value?.name ?? ''}」`
+    } catch (e) {
+        bindError.value = formatApiError(e)
+    } finally {
+        bindSaving.value = false
+    }
+}
+
+/** 内容段列表刷新（templateCount 共享影响面即时可见） */
+async function refreshSources(): Promise<void> {
+    try {
+        sources.value = await api.listDataSources()
+    } catch {
+        // 列表刷新失败不打断主流程（绑定段错误面已由相应动作负责）
+    }
+}
+
+/** 内容段保存：已绑 = PUT 实体（共享，影响所有引用模板）；未绑 = 创建并绑定。
+ *  载荷组装失败（名字空/JSON 坏）本地拒绝段内回显，不打服务端 */
+async function saveContent(): Promise<void> {
+    const record = template.value
+    if (!record || contentSaving.value) return
+    const draft = dataSourceDraftPayload(nameText.value, schemaText.value, dataText.value)
     if (!draft.ok) {
-        datasetError.value = draft.message
+        contentError.value = draft.message
         return
     }
-    datasetSaving.value = true
+    contentSaving.value = true
     try {
-        const updated = await api.putDataset(record.id, draft.payload)
-        template.value = updated
-        drawerBaseline.value = {
-            ...drawerBaseline.value,
-            schemaText: schemaText.value,
-            dataText: dataText.value,
+        if (boundSource.value === null) {
+            const created = await api.createDataSource(draft.payload)
+            const updated = await api.bindTemplateDataSource(record.id, created.id)
+            template.value = updated
+            applyBoundSource(created)
+            await refreshSources()
+            docNote.value = `已创建数据源「${created.name}」并绑定`
+        } else {
+            const saved = await api.updateDataSource(boundSource.value.id, draft.payload)
+            applyBoundSource(saved)
+            await refreshSources()
+            docNote.value = '数据源已保存（共享实体，所有引用模板同享；渲染读取已保存的数据集）'
         }
-        // 补全候选按新 schema 更新（null = 清除；注入失败内核静默降级 + console.warn
-        // 已内建）——与载入路径同一入口，口径一致
-        editor.setDataSourceSchema(draft.payload.schema)
-        docNote.value = '数据源已保存（渲染读取已保存的数据集）'
     } catch (e) {
-        datasetError.value = formatApiError(e)
+        contentError.value = formatApiError(e)
     } finally {
-        datasetSaving.value = false
+        contentSaving.value = false
+    }
+}
+
+// 另存为新数据源弹窗态（仅已绑可用）：名字草稿/错误/在途态宿主持有
+const saveAsNewOpen = ref(false)
+const saveAsNewName = ref('')
+const saveAsNewError = ref<string | null>(null)
+const saveAsNewSaving = ref(false)
+
+function openSaveAsNew(): void {
+    if (boundSource.value === null) return
+    saveAsNewName.value = `${boundSource.value.name} 副本`
+    saveAsNewError.value = null
+    saveAsNewOpen.value = true
+}
+
+function closeSaveAsNew(): void {
+    saveAsNewOpen.value = false
+    saveAsNewError.value = null
+}
+
+watch(saveAsNewName, () => {
+    saveAsNewError.value = null
+})
+
+/** 另存为新数据源：以当前内容段草稿 POST 新实体 → 绑定到本模板（copy-on-write，
+ *  不影响现共享实体与其他引用模板）；失败弹窗内回显，现绑定不动 */
+async function runSaveAsNew(): Promise<void> {
+    const record = template.value
+    if (!record || saveAsNewSaving.value) return
+    const name = saveAsNewName.value.trim()
+    if (!name) {
+        saveAsNewError.value = '数据源名不能为空'
+        return
+    }
+    const draft = dataSourceDraftPayload(name, schemaText.value, dataText.value)
+    if (!draft.ok) {
+        saveAsNewError.value = draft.message
+        return
+    }
+    saveAsNewSaving.value = true
+    try {
+        const created = await api.createDataSource(draft.payload)
+        const updated = await api.bindTemplateDataSource(record.id, created.id)
+        template.value = updated
+        applyBoundSource(created)
+        await refreshSources()
+        saveAsNewOpen.value = false
+        docNote.value = `已另存为新数据源「${created.name}」并绑定`
+    } catch (e) {
+        saveAsNewError.value = formatApiError(e)
+    } finally {
+        saveAsNewSaving.value = false
     }
 }
 
@@ -832,7 +948,7 @@ function isImeComposing(event: KeyboardEvent): boolean {
 /** 键盘：仅 Ctrl/Cmd+S（保存是宿主职责，不入内核注册表）。文本编辑中键盘路由
  *  进 textarea，保存不抢；其余快捷键已由 useShortcuts 统一处理。 */
 function onKeydown(event: KeyboardEvent): void {
-    if (saveAsOpen.value) return // 另存为弹窗模态持有键盘（Enter/Esc 由弹窗自理）
+    if (saveAsOpen.value || saveAsNewOpen.value) return // 名字弹窗模态持有键盘（Enter/Esc 由弹窗自理）
     if (editor.store.ui.editing !== null) return
     const mod = event.ctrlKey || event.metaKey
     if (mod && !event.shiftKey && event.key.toLowerCase() === 's') {
@@ -984,7 +1100,7 @@ onBeforeUnmount(() => {
                     type="button"
                     class="ghost"
                     data-open-datasource
-                    title="数据源抽屉：schema/data 数据集与流链（两条独立保存通道）"
+                    title="数据源抽屉：绑定独立数据源实体、编辑其 schema/data、流链（各自独立保存通道）"
                     @click="drawerOpen = !drawerOpen"
                 >
                     数据源
@@ -1179,33 +1295,65 @@ onBeforeUnmount(() => {
         <!-- 快捷键帮助面板：⌘/ 与状态栏「快捷键」入口随组件与桥自带，宿主零键位代码 -->
         <HelpDialog />
 
-        <!-- 数据源抽屉（spec §4.3 双通道，17 票）：文本域草稿与段内错误/标记状态
-             全由宿主持有，组件纯呈现；段内独立标记与全局保存态指示灯分离 -->
+        <!-- 数据源抽屉（spec §4.3 三段式，23 票）：绑定/内容/流链三段，文本域草稿
+             与段内错误/标记状态全由宿主持有，组件纯呈现；段内独立标记与全局保存态
+             指示灯分离 -->
         <DataSourceDrawer
+            v-model:selected-bind-id="selectedBindId"
+            v-model:name-text="nameText"
             v-model:schema-text="schemaText"
             v-model:data-text="dataText"
             v-model:flow-chain-text="flowChainText"
             :open="drawerOpen"
-            :dataset-dirty="datasetSegmentDirty"
+            :bound-id="template?.dataSourceId ?? null"
+            :bound-name="boundSource?.name ?? null"
+            :sources="sources"
+            :bind-saving="bindSaving"
+            :bind-error="bindError"
+            :content-dirty="contentDirty"
+            :content-saving="contentSaving"
+            :content-error="contentError"
             :flow-chain-dirty="flowChainSegmentDirty"
-            :dataset-saving="datasetSaving"
             :flow-chain-saving="saving"
-            :dataset-error="datasetError"
             :flow-chain-error="flowChainError"
             @close="drawerOpen = false"
-            @save-dataset="saveDataset"
+            @bind="runBind"
+            @save-content="saveContent"
+            @save-as-new="openSaveAsNew"
             @save-flowchain="saveFlowChain"
         />
 
-        <!-- 另存为弹窗（spec §4.5 两连调用，18 票）：名字草稿与错误/在途态全由宿主
-             持有，组件纯呈现；确认 → 两连调用 + 会话延续式重绑 + router.replace -->
-        <SaveAsDialog
+        <!-- 另存为弹窗（spec §4.5 单调用随行引用，18 票组件、23 票文案修订）：
+             名字草稿与错误/在途态全由宿主持有，组件纯呈现；确认 → 单调用 POST +
+             会话延续式重绑 + router.replace -->
+        <NamePromptDialog
             v-model:name="saveAsName"
             :open="saveAsOpen"
             :saving="saveAsSaving"
             :error="saveAsError"
+            title="另存为副本"
+            label="副本名"
+            note="以当前内容（各帧 + 流链 + 数据源引用）创建副本模板，副本与原模板引用同一数据源实体；成功后跳转到副本继续编辑，原模板保持不变。"
+            confirm-text="另存为"
+            confirm-busy-text="另存中…"
             @confirm="runSaveAs"
             @cancel="closeSaveAs"
+        />
+
+        <!-- 另存为新数据源弹窗（23 票 copy-on-write）：以内容段草稿 POST 新数据源
+             实体并重绑本模板，不影响现共享实体与其他引用模板 -->
+        <NamePromptDialog
+            v-model:name="saveAsNewName"
+            :open="saveAsNewOpen"
+            :saving="saveAsNewSaving"
+            :error="saveAsNewError"
+            title="另存为新数据源"
+            label="数据源名"
+            note="以当前草稿内容创建新的数据源实体并绑定到本模板；现有数据源与其他引用它的模板不受影响。"
+            confirm-text="创建并绑定"
+            confirm-busy-text="创建中…"
+            @confirm="runSaveAsNew"
+            @cancel="closeSaveAsNew"
         />
 
         <!-- 渲染结果抽屉（spec §4.6，19 票）：记录/开合/模板名（下载建议名）由宿主
@@ -1504,6 +1652,7 @@ onBeforeUnmount(() => {
     color: var(--shell-fg);
     outline: none;
 }
+
 
 /* canvas-holder：画布与覆盖物（标尺/参考线/对齐浮条）的定位上下文 */
 .canvas-holder {

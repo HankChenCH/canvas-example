@@ -26,3 +26,122 @@
     --color-cn-danger: var(--cn-danger);
     --font-mono: var(--cn-font-mono);
 }
+
+/*
+ * ── 列表/数据源管理面的「蓝晒印坊」氛围层（pc- 前缀）────────────────────────
+ * 与编辑器同族的深海军 + 青色 token 之上，给管理页加：蓝图网格 + 顶部青辉 +
+ * 噪点的氛围底（pc-atelier）、衬线展示标题（pc-display，Noto Serif SC——证书
+ * 雕版气质）、mono kicker（pc-kicker）、卡片升格（pc-card）与进场 stagger
+ * （pc-rise）。只新增类，不触碰上方 Tailwind/面板令牌映射，编辑器零感知。
+ */
+:root {
+    --pc-font-display: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
+    --pc-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --pc-gold: #e3c37f;
+}
+
+/* 印坊底：深海军 + 双径向辉光（顶青、右下深蓝），边缘沉入底色 */
+.pc-atelier {
+    position: relative;
+    background:
+        radial-gradient(1100px 460px at 50% -100px, rgba(56, 189, 248, 0.11), transparent 65%),
+        radial-gradient(900px 520px at 88% 112%, rgba(30, 64, 120, 0.32), transparent 62%),
+        #070d18;
+}
+
+/* 蓝图网格：细青线，径向 mask 让网格在页头清晰、向下渐隐 */
+.pc-atelier::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(125, 211, 252, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 211, 252, 0.05) 1px, transparent 1px);
+    background-size: 36px 36px;
+    -webkit-mask-image: radial-gradient(1300px 640px at 50% 0%, #000 26%, transparent 76%);
+    mask-image: radial-gradient(1300px 640px at 50% 0%, #000 26%, transparent 76%);
+    pointer-events: none;
+}
+
+/* 噪点：feTurbulence 细颗粒，压住渐变带的塑料感 */
+.pc-atelier::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.045;
+    pointer-events: none;
+}
+
+/* 展示标题与 kicker：衬线大字 + 金杠 mono 眉题（印坊铭牌语言） */
+.pc-display {
+    font-family: var(--pc-font-display);
+    font-weight: 900;
+    letter-spacing: 0.05em;
+}
+
+.pc-kicker {
+    font-family: var(--pc-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: rgba(125, 211, 252, 0.72);
+}
+
+.pc-kicker::before {
+    content: '';
+    display: inline-block;
+    width: 22px;
+    height: 1px;
+    margin-right: 10px;
+    vertical-align: 3px;
+    background: var(--pc-gold);
+}
+
+/* 卡片升格：渐变卡面 + 内发丝高光，hover 上浮转青辉 */
+.pc-card {
+    position: relative;
+    border: 1px solid rgba(56, 84, 132, 0.55);
+    background: linear-gradient(180deg, #0d1728 0%, #0a1220 100%);
+    box-shadow:
+        inset 0 1px 0 rgba(148, 197, 255, 0.05),
+        0 12px 32px rgba(2, 6, 23, 0.45);
+    transition:
+        transform 0.28s cubic-bezier(0.2, 0.7, 0.3, 1),
+        border-color 0.28s,
+        box-shadow 0.28s;
+}
+
+.pc-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(56, 189, 248, 0.55);
+    box-shadow:
+        inset 0 1px 0 rgba(148, 197, 255, 0.07),
+        0 18px 44px rgba(2, 6, 23, 0.6),
+        0 0 0 1px rgba(56, 189, 248, 0.16),
+        0 14px 48px rgba(56, 189, 248, 0.08);
+}
+
+/* 进场 stagger：backwards 填充——动画结束后交还 transform 给 hover 用 */
+@keyframes pc-rise {
+    from {
+        opacity: 0;
+        transform: translateY(14px);
+    }
+}
+
+.pc-rise {
+    animation: pc-rise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pc-rise,
+    .pc-atelier .pc-rise {
+        animation: none;
+    }
+
+    .pc-card,
+    .pc-card * {
+        transition: none !important;
+    }
+}

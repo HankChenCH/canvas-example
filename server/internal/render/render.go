@@ -72,10 +72,11 @@ type PipelineErr struct {
 func (e *PipelineErr) Error() string { return e.Code + ": " + e.Message }
 
 // Run 渲染一跳(spec §2.4 #7):解码(防御性复跑保存预检段,spec §3.4)→
-// 文档编译 → 逐页渲染为 PNG。dataset 为 null 按未绑直通编译,零行空壳页合法。
+// 文档编译 → 逐页渲染为 PNG。datasetRaw 为模板所引数据源实体的 data 列
+// (handler 解析引用后传入),null/缺省按未绑直通编译,零行空壳页合法。
 // ctx 携带渲染期 30s deadline(handler 叠加,spec §2.6),穿引到绘制检查点与
 // 物化下载;编译为纯结构计算不设检查点。
-func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord) ([]Page, *PipelineErr) {
+func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord, datasetRaw json.RawMessage) ([]Page, *PipelineErr) {
 	graphs := make([]json.RawMessage, 0, len(rec.Canvases))
 	for _, c := range rec.Canvases {
 		graphs = append(graphs, c.Graph)
@@ -86,7 +87,7 @@ func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord) ([]Page, *
 		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: verr.Code, Message: verr.Message}
 	}
 
-	dataset, jerr := decodeDataset(rec.Dataset)
+	dataset, jerr := decodeDataset(datasetRaw)
 	if jerr != nil {
 		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: codes.InvalidJSON, Message: jerr.Error()}
 	}
@@ -110,7 +111,7 @@ func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord) ([]Page, *
 	return s.renderPages(ctx, names, result.Canvases, frameByPage)
 }
 
-// decodeDataset 存储态 dataset 解码:null/缺省 = 未绑(Hydrate 恒等直通,
+// decodeDataset 数据源 data 列解码:null/缺省 = 未绑(Hydrate 恒等直通,
 // spec §2.4 #7 直通语义),否则经 JSON 语义读入(Hydrate 内部还会归一)
 func decodeDataset(raw json.RawMessage) (any, error) {
 	trimmed := bytes.TrimSpace(raw)

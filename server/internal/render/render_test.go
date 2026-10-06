@@ -70,9 +70,10 @@ func readSeedJSON(t *testing.T, name string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// newOfflineRecord 真实 seed 两帧文档(05 票 fixture),dataset 徽标换本地路径
-// 以离线可跑(spec §5.3:徽标是唯一外网点);返回记录与记录里的远程 URL 清单
-func newOfflineRecord(t *testing.T) *store.TemplateRecord {
+// newOfflineRecord 真实 seed 两帧文档(05 票 fixture)与配套 dataset:徽标换本地
+// 路径以离线可跑(spec §5.3:徽标是唯一外网点);数据源内容与模板记录分离传递
+// (数据源为独立实体,spec §2.4 数据源段)
+func newOfflineRecord(t *testing.T) (*store.TemplateRecord, json.RawMessage) {
 	t.Helper()
 	dataset := map[string]any{}
 	if err := json.Unmarshal(readSeedJSON(t, "dataset.json"), &dataset); err != nil {
@@ -84,15 +85,15 @@ func newOfflineRecord(t *testing.T) *store.TemplateRecord {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &store.TemplateRecord{
+	rec := &store.TemplateRecord{
 		ID: 1,
 		Canvases: []store.CanvasEntry{
 			{Name: "主页", Graph: readSeedJSON(t, "frame-main.json")},
 			{Name: "续页", Graph: readSeedJSON(t, "frame-continuation.json")},
 		},
 		FlowChain: readSeedJSON(t, "flow-chain.json"),
-		Dataset:   raw,
 	}
+	return rec, raw
 }
 
 // newService 逐用例独立 Service(注入假下载器,缓存根 .cache/ 按用例临时 CWD)
@@ -119,8 +120,9 @@ func pngSize(t *testing.T, png []byte) (int, int) {
 func TestRun_SeedDocument(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
+	rec, dataset := newOfflineRecord(t)
 
-	pages, perr := svc.Run(t.Context(), newOfflineRecord(t))
+	pages, perr := svc.Run(t.Context(), rec, dataset)
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -159,7 +161,7 @@ func TestRun_LeadingSlashStaticAsset(t *testing.T) {
 				"data":{"valueType":"ExpressionValue","expression":"/assets/u/student-1.png","value":"/assets/u/student-1.png"}}]}`)}},
 	}
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -190,10 +192,9 @@ func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
 						"content":{"type":"ImageLayer","priority":0,
 							"spec":{"shape":{"width":160,"height":400}},
 							"data":{"valueType":"ExpressionValue","expression":"{{row.photo}}","value":"{{row.photo}}"}}}]}}]}`)}},
-		Dataset: json.RawMessage(`{"certificates":[{"photo":"/assets/u/student-2.png"}]}`),
 	}
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec, json.RawMessage(`{"certificates":[{"photo":"/assets/u/student-2.png"}]}`))
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -218,10 +219,10 @@ func TestRun_LeadingSlashFontPath(t *testing.T) {
 			"layers":[{"type":"TextLayer","priority":0,
 				"spec":{"shape":{"width":794,"height":100},
 					"fontFamily":{"font":"/assets/fonts/NotoSansSC-Regular.otf","fontSize":30,"fontColor":"#333333","angle":0,"autowrap":false}},
-				"data":{"valueType":"StaticValue","value":"结业证书"}}]}`)}},
+					"data":{"valueType":"StaticValue","value":"结业证书"}}]}`)}},
 	}
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -305,7 +306,7 @@ func TestRun_UnboundDataset(t *testing.T) {
 		FlowChain: json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`),
 	}
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -328,11 +329,10 @@ func minimalTemplateTable() string {
 func TestRun_NullFlowChain(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := newOfflineRecord(t)
+	rec, _ := newOfflineRecord(t)
 	rec.FlowChain = nil
-	rec.Dataset = twoRowDataset(t)
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec, twoRowDataset(t))
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -364,10 +364,10 @@ func twoRowDataset(t *testing.T) json.RawMessage {
 func TestRun_EmptyRowsOmitSkip(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := newOfflineRecord(t)
-	rec.Dataset = json.RawMessage(`{"org":{"name":"瀚辰","logo":"` + localLogo + `"},"doc":{"title":"t"},"certificates":[]}`)
+	rec, _ := newOfflineRecord(t)
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec,
+		json.RawMessage(`{"org":{"name":"瀚辰","logo":"`+localLogo+`"},"doc":{"title":"t"},"certificates":[]}`))
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -398,13 +398,12 @@ func TestRun_ExternalFramesPageOnce(t *testing.T) {
 			{Name: "后帧", Graph: json.RawMessage(table("other"))},
 		},
 		FlowChain: json.RawMessage(`[{"frame":1,"mode":"fixed"}]`),
-		Dataset: json.RawMessage(`{
-			"extra":[{"n":"e1"},{"n":"e2"}],
-			"certificates":[{"n":"c1"},{"n":"c2"},{"n":"c3"}],
-			"other":[{"n":"o1"}]}`),
 	}
 
-	pages, perr := svc.Run(t.Context(), rec)
+	pages, perr := svc.Run(t.Context(), rec, json.RawMessage(`{
+		"extra":[{"n":"e1"},{"n":"e2"}],
+		"certificates":[{"n":"c1"},{"n":"c2"},{"n":"c3"}],
+		"other":[{"n":"o1"}]}`))
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
@@ -426,12 +425,14 @@ func TestRun_ErrorMapping(t *testing.T) {
 	svc := newService(t, &fakeDownloader{})
 
 	cases := map[string]struct {
-		record *store.TemplateRecord
-		want   string
+		record  *store.TemplateRecord
+		dataset json.RawMessage
+		want    string
 	}{
 		"未知图层类型": {
 			&store.TemplateRecord{Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
 				`{"canvas":{"width":100,"height":100},"layers":[{"type":"GhostLayer","priority":0}]}`)}}},
+			nil,
 			"unknown_layer_type",
 		},
 		"rowsPath 取不到行": {
@@ -440,8 +441,8 @@ func TestRun_ErrorMapping(t *testing.T) {
 					`{"canvas":{"width":794,"height":1123},"layers":[
 					 {"type":"TableLayer","priority":50,"data":{"rowsPath":"nope"},
 					  "template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":400}},"cells":[]}}]}`)}},
-				Dataset: json.RawMessage(`{"other":[]}`),
 			},
+			json.RawMessage(`{"other":[]}`),
 			"rows_path_invalid",
 		},
 		"双 paged 流链": {
@@ -452,6 +453,7 @@ func TestRun_ErrorMapping(t *testing.T) {
 				},
 				FlowChain: json.RawMessage(`[{"frame":0,"mode":"paged"},{"frame":1,"mode":"paged"}]`),
 			},
+			nil,
 			"flow_chain_invalid",
 		},
 		"fixed 首行超容": {
@@ -461,8 +463,8 @@ func TestRun_ErrorMapping(t *testing.T) {
 					 {"type":"TableLayer","priority":50,"data":{"rowsPath":"certificates"},
 					  "template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":1200}},"cells":[]}}]}`)}},
 				FlowChain: json.RawMessage(`[{"frame":0,"mode":"fixed"}]`),
-				Dataset:   json.RawMessage(`{"certificates":[{"n":"x"}]}`),
 			},
+			json.RawMessage(`{"certificates":[{"n":"x"}]}`),
 			"content_overflow",
 		},
 		"资源表达式求值空串": {
@@ -472,13 +474,13 @@ func TestRun_ErrorMapping(t *testing.T) {
 					 {"type":"ImageLayer","priority":0,
 					  "spec":{"shape":{"width":10,"height":10}},
 					  "data":{"valueType":"ExpressionValue","expression":"{{org.logo}}","value":"{{org.logo}}"}}]}`)}},
-				Dataset: json.RawMessage(`{"org":{"logo":""}}`),
 			},
+			json.RawMessage(`{"org":{"logo":""}}`),
 			"expression_empty_resource",
 		},
 	}
 	for name, tc := range cases {
-		_, perr := svc.Run(t.Context(), tc.record)
+		_, perr := svc.Run(t.Context(), tc.record, tc.dataset)
 		if perr == nil {
 			t.Fatalf("[%s] 期望失败,实得成功", name)
 		}
@@ -495,8 +497,9 @@ func TestRun_DeadlineExceeded(t *testing.T) {
 	svc := newService(t, &fakeDownloader{})
 	ctx, cancel := context.WithTimeout(t.Context(), -time.Second)
 	defer cancel()
+	rec, dataset := newOfflineRecord(t)
 
-	_, perr := svc.Run(ctx, newOfflineRecord(t))
+	_, perr := svc.Run(ctx, rec, dataset)
 	if perr == nil || perr.Status != 504 || perr.Code != "render_deadline_exceeded" {
 		t.Fatalf("期望 504/render_deadline_exceeded, 实得 %+v", perr)
 	}
@@ -509,8 +512,9 @@ func TestRun_CancelledSilent(t *testing.T) {
 	svc := newService(t, &fakeDownloader{})
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
+	rec, dataset := newOfflineRecord(t)
 
-	_, perr := svc.Run(ctx, newOfflineRecord(t))
+	_, perr := svc.Run(ctx, rec, dataset)
 	if perr == nil || !perr.Silent || perr.Code != "render_cancelled" {
 		t.Fatalf("期望 Silent/render_cancelled, 实得 %+v", perr)
 	}
@@ -524,10 +528,9 @@ func TestRun_DownloadOwnTimeoutIs502(t *testing.T) {
 	chdirToSeedAssets(t)
 	fd := &fakeDownloader{err: fmt.Errorf("下载请求失败: %w", context.DeadlineExceeded)}
 	svc := newService(t, fd)
-	rec := newOfflineRecord(t)
-	rec.Dataset = json.RawMessage(`{"org":{"logo":"https://remote.example/logo.png"},"doc":{"title":"t"},"certificates":[]}`)
+	rec, _ := newOfflineRecord(t)
 
-	_, perr := svc.Run(t.Context(), rec)
+	_, perr := svc.Run(t.Context(), rec, json.RawMessage(`{"org":{"logo":"https://remote.example/logo.png"},"doc":{"title":"t"},"certificates":[]}`))
 	if perr == nil || perr.Status != 502 || perr.Code != "resource_download_failed" {
 		t.Fatalf("期望 502/resource_download_failed, 实得 %+v", perr)
 	}
@@ -538,10 +541,9 @@ func TestRun_DownloadFailed502(t *testing.T) {
 	chdirToSeedAssets(t)
 	fd := &fakeDownloader{err: errors.New("boom")}
 	svc := newService(t, fd)
-	rec := newOfflineRecord(t)
-	rec.Dataset = json.RawMessage(`{"org":{"logo":"https://remote.example/logo.png"},"doc":{"title":"t"},"certificates":[]}`)
+	rec, _ := newOfflineRecord(t)
 
-	_, perr := svc.Run(t.Context(), rec)
+	_, perr := svc.Run(t.Context(), rec, json.RawMessage(`{"org":{"logo":"https://remote.example/logo.png"},"doc":{"title":"t"},"certificates":[]}`))
 	if perr == nil || perr.Status != 502 || perr.Code != "resource_download_failed" {
 		t.Fatalf("期望 502/resource_download_failed, 实得 %+v", perr)
 	}
@@ -557,10 +559,9 @@ func TestRun_ResourceSaveFailed(t *testing.T) {
 	}
 	svc := &Service{}
 	svc.rs = resolver.New(resolver.WithCacheRoot(blocked))
-	rec := newOfflineRecord(t)
-	rec.Dataset = json.RawMessage(`{"org":{"logo":"https://remote.example/logo.png"},"doc":{"title":"t"},"certificates":[]}`)
+	rec, _ := newOfflineRecord(t)
 
-	_, perr := svc.Run(t.Context(), rec)
+	_, perr := svc.Run(t.Context(), rec, json.RawMessage(`{"org":{"logo":"https://remote.example/logo.png"},"doc":{"title":"t"},"certificates":[]}`))
 	if perr == nil || perr.Status != 500 || perr.Code != "resource_save_failed" {
 		t.Fatalf("期望 500/resource_save_failed, 实得 %+v", perr)
 	}
@@ -577,9 +578,9 @@ func TestRun_CacheReuseAcrossRuns(t *testing.T) {
 	fd := &fakeDownloader{content: png}
 	svc := newService(t, fd)
 	// 种子全量 dataset(行字段齐),徽标换远程 URL 走假下载器
-	rec := newOfflineRecord(t)
+	rec, _ := newOfflineRecord(t)
 	dataset := map[string]any{}
-	if err := json.Unmarshal(rec.Dataset, &dataset); err != nil {
+	if err := json.Unmarshal(readSeedJSON(t, "dataset.json"), &dataset); err != nil {
 		t.Fatal(err)
 	}
 	dataset["org"].(map[string]any)["logo"] = "https://remote.example/logo.png"
@@ -587,16 +588,15 @@ func TestRun_CacheReuseAcrossRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec.Dataset = raw
 
-	if _, perr := svc.Run(t.Context(), rec); perr != nil {
+	if _, perr := svc.Run(t.Context(), rec, raw); perr != nil {
 		t.Fatalf("首次渲染失败: %s: %s", perr.Code, perr.Message)
 	}
 	first := len(fd.calls)
 	if first == 0 {
 		t.Fatal("首次渲染应发生远程下载")
 	}
-	if _, perr := svc.Run(t.Context(), rec); perr != nil {
+	if _, perr := svc.Run(t.Context(), rec, raw); perr != nil {
 		t.Fatalf("二次渲染失败: %s: %s", perr.Code, perr.Message)
 	}
 	if len(fd.calls) != first {
@@ -613,10 +613,10 @@ func TestRun_CacheReuseAcrossRuns(t *testing.T) {
 func TestRun_InvalidStoredFlowChain(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := newOfflineRecord(t)
+	rec, dataset := newOfflineRecord(t)
 	rec.FlowChain = json.RawMessage(`["fixed"]`)
 
-	_, perr := svc.Run(t.Context(), rec)
+	_, perr := svc.Run(t.Context(), rec, dataset)
 	if perr == nil || perr.Status != 400 || perr.Code != "invalid_json" {
 		t.Fatalf("期望 400/invalid_json, 实得 %+v", perr)
 	}

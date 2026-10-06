@@ -17,23 +17,31 @@ func TestLoadRealSeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load 真实 seed: %v", err)
 	}
-	if content.Name != DefaultTemplateName {
-		t.Fatalf("默认模板名 = %q, 期望 %q", content.Name, DefaultTemplateName)
+	if content.DataSource.Name != DefaultDataSourceName {
+		t.Fatalf("默认数据源名 = %q, 期望 %q", content.DataSource.Name, DefaultDataSourceName)
 	}
-	if len(content.Canvases) != 2 || content.Canvases[0].Name != "主页" || content.Canvases[1].Name != "续页" {
-		t.Fatalf("帧名应为 主页/续页: %+v", content.Canvases)
+	if content.DataSource.Schema == nil || content.DataSource.Data == nil {
+		t.Fatal("seed 必含数据源 schema 与 data(spec §5.2;数据源是独立实体)")
 	}
-	for _, c := range content.Canvases {
+	tmpl := content.Template
+	if tmpl.Name != DefaultTemplateName {
+		t.Fatalf("默认模板名 = %q, 期望 %q", tmpl.Name, DefaultTemplateName)
+	}
+	if len(tmpl.Canvases) != 2 || tmpl.Canvases[0].Name != "主页" || tmpl.Canvases[1].Name != "续页" {
+		t.Fatalf("帧名应为 主页/续页: %+v", tmpl.Canvases)
+	}
+	for _, c := range tmpl.Canvases {
 		if !json.Valid(c.Graph) {
 			t.Fatalf("帧 %s graph 非法 JSON", c.Name)
 		}
 	}
 	var chain []map[string]any
-	if err := json.Unmarshal(content.FlowChain, &chain); err != nil || len(chain) != 2 {
-		t.Fatalf("flowChain 应为两节点数组: %s (%v)", content.FlowChain, err)
+	if err := json.Unmarshal(tmpl.FlowChain, &chain); err != nil || len(chain) != 2 {
+		t.Fatalf("flowChain 应为两节点数组: %s (%v)", tmpl.FlowChain, err)
 	}
-	if content.DatasetSchema == nil || content.Dataset == nil {
-		t.Fatal("seed 必含 datasetSchema 与 dataset(spec §5.2)")
+	// 模板只持引用:绑定 id 由启动序接线,Load 不产引用
+	if tmpl.DataSourceID != nil {
+		t.Fatalf("Load 不得预设 data_source_id: %v", tmpl.DataSourceID)
 	}
 }
 

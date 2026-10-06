@@ -3,6 +3,11 @@
 Go 服务端(go-canvas + image-renderer)+ canvas-web 前端,以「结业证书批量打印页」
 演示**文档级渲染**:一份 dataset × 文档(M 帧)→ 流链配当 → 每页一张 PNG。
 
+**数据源是独立资源**(`datasources` 表 + `/api/datasources` CRUD):模板经
+`dataSourceId` 引用,多模板共享同一份 schema/data——新建模板从数据源库直接绑定,
+另存为单调用引用随行,不再逐模板重录(23 票契约修订);web 侧有独立管理页
+`/datasources`(列表/新建/编辑,25 票)。
+
 契约与验收唯一输入:`.scratch/example-app/spec.md`(工作区)。
 
 ## 布局
@@ -35,7 +40,7 @@ example/scripts/smoke.sh             # BASE 默认 http://localhost:8080
 
 ```sh
 cd example && docker compose up --build   # nginx 发布 :8080,唯一入口
-example/scripts/smoke.sh                  # 对 compose 轨跑 spec §6.2 全 11 断言
+example/scripts/smoke.sh                  # 对 compose 轨跑 spec §6.2 全 12 断言
 ```
 
 - 两服务:`server`(CGO_ENABLED=0 纯 Go 构建 → alpine,WORKDIR=/app 随镜像带 seed/ 与字体)

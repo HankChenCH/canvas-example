@@ -49,3 +49,19 @@ func parseID(raw string) (int64, error) {
 	}
 	return id, nil
 }
+
+// handleDeleteTemplate DELETE /api/templates/{id} → 204 无响应体;id 非整数或
+// 不存在 → 404 template_not_found(spec §2.4 #10,卡片操作修订)。级联清该模板
+// 渲染记录行,产物 PNG 文件保留(keep-all 快照,直链仍可用);数据源实体不受影响
+func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
+		return
+	}
+	if err := s.store.DeleteTemplate(r.Context(), id); err != nil {
+		writeStoreError(w, err, "删除模板失败")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

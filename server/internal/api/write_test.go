@@ -71,9 +71,9 @@ func TestPostTemplate_Minimal201(t *testing.T) {
 	if !ok || id <= float64(seedID) {
 		t.Fatalf("id 应为自增整数且大于种子 id %d: %v", seedID, body["id"])
 	}
-	// POST 载荷不含 dataset(spec §2.4 #3):两数据列 null、flowChain 缺省 null
-	if body["dataset"] != nil || body["datasetSchema"] != nil || body["flowChain"] != nil {
-		t.Fatalf("新模板 dataset/datasetSchema/flowChain 应为 null: %v", body)
+	// POST 载荷缺省未绑数据源(spec §2.4 #3):dataSourceId null、flowChain 缺省 null
+	if body["dataSourceId"] != nil || body["flowChain"] != nil {
+		t.Fatalf("新模板 dataSourceId/flowChain 应为 null: %v", body)
 	}
 	if body["createdAt"] != body["updatedAt"] {
 		t.Fatalf("createdAt 应等于 updatedAt: %v / %v", body["createdAt"], body["updatedAt"])
@@ -155,19 +155,27 @@ func TestPostTemplate_PreflightRejects(t *testing.T) {
 
 // --- PUT /api/templates/{id}(spec §2.4 #5) ---
 
-// TestPutTemplate_PreservesDataset 票面第三条:先 PUT dataset 再 PUT 模板,验证仍在
-func TestPutTemplate_PreservesDataset(t *testing.T) {
+// TestPutTemplate_PreservesBinding 绑定通道先行,再 PUT 模板:引用列不触碰
+// (绑定只经数据源通道变更,spec §2.4 #5)
+func TestPutTemplate_PreservesBinding(t *testing.T) {
 	h, seedID := newTestServer(t)
 	path := fmt.Sprintf("/api/templates/%d", seedID)
 
-	// 先 PUT dataset:合法 schema+data
+	// 先建数据源并绑定到种子模板
 	dsPayload := mustJSONFile(t, map[string]any{
+		"name":   "绑定用数据源",
 		"schema": map[string]any{"type": "object", "properties": map[string]any{"a": map[string]any{"type": "string"}}, "required": []string{"a"}},
 		"data":   map[string]any{"a": "值"},
 	})
-	code, body := doRequest(t, h, http.MethodPut, path+"/dataset", "application/json", dsPayload)
+	code, body := doRequest(t, h, http.MethodPost, "/api/datasources", "application/json", dsPayload)
+	if code != http.StatusCreated {
+		t.Fatalf("POST datasources status = %d, 期望 201(%v)", code, body)
+	}
+	dsID := int64(body["id"].(float64))
+	bindPayload := mustJSONFile(t, map[string]any{"dataSourceId": dsID})
+	code, body = doRequest(t, h, http.MethodPut, path+"/datasource", "application/json", bindPayload)
 	if code != http.StatusOK {
-		t.Fatalf("PUT dataset status = %d, 期望 200(%v)", code, body)
+		t.Fatalf("PUT datasource 绑定 status = %d, 期望 200(%v)", code, body)
 	}
 
 	// 再 PUT 模板:name/canvases/flowChain 整存替换,flowChain 键缺省视同 null
@@ -182,11 +190,8 @@ func TestPutTemplate_PreservesDataset(t *testing.T) {
 	if body["name"] != "改名后的模板" {
 		t.Fatalf("name 应整存替换: %v", body["name"])
 	}
-	if got, ok := body["dataset"].(map[string]any); !ok || got["a"] != "值" {
-		t.Fatalf("dataset 不得被触碰(spec §2.4 #5): %v", body["dataset"])
-	}
-	if body["datasetSchema"] == nil {
-		t.Fatal("datasetSchema 不得被触碰")
+	if got, ok := body["dataSourceId"].(float64); !ok || int64(got) != dsID {
+		t.Fatalf("dataSourceId 不得被触碰(spec §2.4 #5): %v", body["dataSourceId"])
 	}
 	if body["flowChain"] != nil {
 		t.Fatalf("flowChain 键缺省应视同 null: %v", body["flowChain"])
@@ -205,24 +210,66 @@ func TestPutTemplate_NotFound404(t *testing.T) {
 	}
 }
 
-// --- PUT /api/templates/{id}/dataset(spec §2.4 #6) ---
+// --- 数据源独立实体端点(spec §2.4 数据源段) ---
 
-func TestPutDataset_Codes(t *testing.T) {
-	h, seedID := newTestServer(t)
-	path := fmt.Sprintf("/api/templates/%d/dataset", seedID)
+func TestDataSourceCRUD_AndCodes(t *testing.T) {
+	h, _ := newTestServer(t)
 
-	// 合法 → 200 且两列整存替换
+	// 合法 → 201 全量记录
 	dsPayload := mustJSONFile(t, map[string]any{
+		"name":   "冒烟数据源",
 		"schema": map[string]any{"type": "object", "properties": map[string]any{"student": map[string]any{"type": "string"}}, "required": []string{"student"}},
 		"data":   map[string]any{"student": "林晚晴"},
 	})
-	code, body := doRequest(t, h, http.MethodPut, path, "application/json", dsPayload)
-	if code != http.StatusOK {
-		t.Fatalf("合法 dataset status = %d, 期望 200(%v)", code, body)
+	code, body := doRequest(t, h, http.MethodPost, "/api/datasources", "application/json", dsPayload)
+	if code != http.StatusCreated {
+		t.Fatalf("POST datasources status = %d, 期望 201(%v)", code, body)
 	}
-	data, ok := body["dataset"].(map[string]any)
-	if !ok || data["student"] != "林晚晴" {
-		t.Fatalf("dataset 应整存替换: %v", body["dataset"])
+	if body["name"] != "冒烟数据源" || body["schema"] == nil || body["data"] == nil {
+		t.Fatalf("201 应为全量记录: %v", body)
+	}
+	dsID := int64(body["id"].(float64))
+
+	// PUT 更新 → 200 整存替换
+	updPayload := mustJSONFile(t, map[string]any{
+		"name":   "改名数据源",
+		"schema": map[string]any{"type": "object"},
+		"data":   map[string]any{"v": 1},
+	})
+	code, body = doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/datasources/%d", dsID), "application/json", updPayload)
+	if code != http.StatusOK {
+		t.Fatalf("PUT datasources status = %d, 期望 200(%v)", code, body)
+	}
+	if body["name"] != "改名数据源" {
+		t.Fatalf("name 应整存替换: %v", body["name"])
+	}
+
+	// 列表摘要四字段(含引用计数);seed 数据源同表在列,按 id 取自建项断言
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/datasources", nil))
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("列表响应应为数组: %v\n%s", err, rec.Body.String())
+	}
+	if len(list) < 1 {
+		t.Fatalf("列表长度 = %d, 期望 ≥ 1", len(list))
+	}
+	var mine map[string]any
+	for _, item := range list {
+		if int64(item["id"].(float64)) == dsID {
+			mine = item
+		}
+	}
+	if mine == nil {
+		t.Fatalf("列表应含自建数据源 %d: %v", dsID, list)
+	}
+	for _, key := range []string{"id", "name", "templateCount", "updatedAt"} {
+		if _, ok := mine[key]; !ok {
+			t.Fatalf("摘要应含 %s: %v", key, mine)
+		}
+	}
+	if mine["templateCount"].(float64) != 0 {
+		t.Fatalf("零引用 templateCount = %v, 期望 0", mine["templateCount"])
 	}
 
 	// 坏 schema → 400 schema_invalid;不过 schema → 400 dataset_schema_mismatch
@@ -231,39 +278,118 @@ func TestPutDataset_Codes(t *testing.T) {
 		wantCode string
 	}{
 		"schema 本身不合法": {
-			map[string]any{"schema": 42, "data": map[string]any{}},
+			map[string]any{"name": "x", "schema": 42, "data": map[string]any{}},
 			"schema_invalid",
 		},
 		"schema 键缺失": {
-			map[string]any{"data": map[string]any{}},
+			map[string]any{"name": "x", "data": map[string]any{}},
 			"schema_invalid",
 		},
 		"data 不过 schema": {
-			map[string]any{"schema": map[string]any{"type": "object"}, "data": []any{1, 2}},
+			map[string]any{"name": "x", "schema": map[string]any{"type": "object"}, "data": []any{1, 2}},
 			"dataset_schema_mismatch",
 		},
 		"data 键缺失": {
-			map[string]any{"schema": map[string]any{"type": "object"}},
+			map[string]any{"name": "x", "schema": map[string]any{"type": "object"}},
 			"dataset_schema_mismatch",
 		},
 	}
 	for name, tc := range badCases {
-		code, body := doRequest(t, h, http.MethodPut, path, "application/json", mustJSONFile(t, tc.payload))
-		if code != http.StatusBadRequest {
-			t.Fatalf("[%s] status = %d, 期望 400", name, code)
+		code, body := doRequest(t, h, http.MethodPost, "/api/datasources", "application/json", mustJSONFile(t, tc.payload))
+		if code != http.StatusBadRequest || errCode(t, body) != tc.wantCode {
+			t.Fatalf("[%s] = %d/%s, 期望 400/%s", name, code, errCode(t, body), tc.wantCode)
 		}
-		if got := errCode(t, body); got != tc.wantCode {
-			t.Fatalf("[%s] code = %s, 期望 %s", name, got, tc.wantCode)
+		code, body = doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/datasources/%d", dsID), "application/json", mustJSONFile(t, tc.payload))
+		if code != http.StatusBadRequest || errCode(t, body) != tc.wantCode {
+			t.Fatalf("[PUT %s] = %d/%s, 期望 400/%s", name, code, errCode(t, body), tc.wantCode)
+		}
+	}
+
+	// 寻址失败 → 404 data_source_not_found(含非整数 id)
+	for _, path := range []string{"/api/datasources/999", "/api/datasources/abc"} {
+		code, body := doRequest(t, h, http.MethodGet, path, "", nil)
+		if code != http.StatusNotFound || errCode(t, body) != "data_source_not_found" {
+			t.Fatalf("GET %s = %d/%s, 期望 404/data_source_not_found", path, code, errCode(t, body))
 		}
 	}
 }
 
-func TestPutDataset_NotFound404(t *testing.T) {
-	h, _ := newTestServer(t)
-	payload := mustJSONFile(t, map[string]any{"schema": map[string]any{"type": "object"}, "data": map[string]any{}})
-	code, body := doRequest(t, h, http.MethodPut, "/api/templates/999/dataset", "application/json", payload)
+// TestBindTemplateDataSource 绑定通道:合法绑定/解绑/引用不存在/模板不存在
+func TestBindTemplateDataSource(t *testing.T) {
+	h, seedID := newTestServer(t)
+
+	dsPayload := mustJSONFile(t, map[string]any{
+		"name":   "绑定用数据源",
+		"schema": map[string]any{"type": "object"},
+		"data":   map[string]any{"k": "v"},
+	})
+	_, body := doRequest(t, h, http.MethodPost, "/api/datasources", "application/json", dsPayload)
+	dsID := int64(body["id"].(float64))
+
+	// 绑定 → 200 且引用列更新;模板内容不触碰
+	bind := mustJSONFile(t, map[string]any{"dataSourceId": dsID})
+	code, body := doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d/datasource", seedID), "application/json", bind)
+	if code != http.StatusOK {
+		t.Fatalf("绑定 status = %d, 期望 200(%v)", code, body)
+	}
+	if got, ok := body["dataSourceId"].(float64); !ok || int64(got) != dsID {
+		t.Fatalf("绑定后 dataSourceId = %v, 期望 %d", body["dataSourceId"], dsID)
+	}
+
+	// 解绑:null
+	unbind := mustJSONFile(t, map[string]any{"dataSourceId": nil})
+	code, body = doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d/datasource", seedID), "application/json", unbind)
+	if code != http.StatusOK || body["dataSourceId"] != nil {
+		t.Fatalf("解绑 = %d/%v, 期望 200/null", code, body["dataSourceId"])
+	}
+
+	// 引用不存在 → 404 data_source_not_found(绑定态不被改写)
+	badBind := mustJSONFile(t, map[string]any{"dataSourceId": 999})
+	code, body = doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d/datasource", seedID), "application/json", badBind)
+	if code != http.StatusNotFound || errCode(t, body) != "data_source_not_found" {
+		t.Fatalf("绑定不存在 = %d/%s, 期望 404/data_source_not_found", code, errCode(t, body))
+	}
+
+	// 模板不存在 → 404 template_not_found
+	code, body = doRequest(t, h, http.MethodPut, "/api/templates/999/datasource", "application/json", bind)
 	if code != http.StatusNotFound || errCode(t, body) != "template_not_found" {
-		t.Fatalf("status/code = %d/%s, 期望 404/template_not_found", code, errCode(t, body))
+		t.Fatalf("模板寻址失败 = %d/%s, 期望 404/template_not_found", code, errCode(t, body))
+	}
+}
+
+// TestPostTemplate_WithDataSourceId 创建即绑定(另存为单调用路径):引用随建落库;
+// 引用不存在 → 404 data_source_not_found
+func TestPostTemplate_WithDataSourceId(t *testing.T) {
+	h, _ := newTestServer(t)
+	dsPayload := mustJSONFile(t, map[string]any{
+		"name":   "创建绑定用",
+		"schema": map[string]any{"type": "object"},
+		"data":   map[string]any{},
+	})
+	_, body := doRequest(t, h, http.MethodPost, "/api/datasources", "application/json", dsPayload)
+	dsID := int64(body["id"].(float64))
+
+	payload := mustJSONFile(t, map[string]any{
+		"name":         "带绑定的模板",
+		"canvases":     []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"dataSourceId": dsID,
+	})
+	code, body := doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
+	if code != http.StatusCreated {
+		t.Fatalf("POST status = %d, 期望 201(%v)", code, body)
+	}
+	if got, ok := body["dataSourceId"].(float64); !ok || int64(got) != dsID {
+		t.Fatalf("创建应随建绑定: %v, 期望 %d", body["dataSourceId"], dsID)
+	}
+
+	payload = mustJSONFile(t, map[string]any{
+		"name":         "坏引用模板",
+		"canvases":     []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"dataSourceId": 999,
+	})
+	code, body = doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
+	if code != http.StatusNotFound || errCode(t, body) != "data_source_not_found" {
+		t.Fatalf("坏引用 = %d/%s, 期望 404/data_source_not_found", code, errCode(t, body))
 	}
 }
 

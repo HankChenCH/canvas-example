@@ -1,43 +1,77 @@
 <script setup lang="ts">
 /**
- * DataSourceDrawer：数据源抽屉（17 票，spec §4.3 双通道精度锚点①）。
+ * DataSourceDrawer：数据源抽屉（23 票重构：数据源为独立实体、模板持引用，
+ * spec §4.3 三段式）。
  *
- * 一个抽屉、两条保存通道，段间距 + 各自按钮区分：
- * - 数据源段：schema / data 两个 JSON 文本域 + 「保存数据源」钮 → 宿主走
- *   PUT /templates/{id}/dataset；schema_invalid / dataset_schema_mismatch 等由
- *   宿主回显在段内（datasetError）；段内注记「渲染读取已保存的数据集」。
+ * 一个抽屉、三段，段间距 + 各自按钮区分：
+ * - 绑定段：当前绑定展示 + 数据源列表下拉 + 绑定/解绑动作钮 → 宿主走
+ *   PUT /templates/{id}/datasource（引用列整存替换）；绑定列表来自
+ *   GET /datasources 摘要（含 templateCount 共享影响面）。
+ * - 数据源内容段：编辑的是「绑定的数据源实体」——name/schema/data 三个输入
+ *   + 「保存数据源」→ PUT /datasources/{boundId}（影响所有引用它的模板，段内
+ *   注记）；未绑时同三输入 + 「创建并绑定」→ POST /datasources + 绑定。已绑时
+ *   另有「另存为新数据源」（宿主弹名字框 → POST + 重绑，copy-on-write）。
+ *   schema_invalid / dataset_schema_mismatch 等由宿主回显在段内（contentError）。
  * - 流链段：flowChain JSON 文本域 + 「保存流链」钮 → 宿主走文档级 PUT
- *   （canvases 一并整存）；flow_chain_invalid 等编译码由宿主回显在段内
- *   （flowChainError）；段内注记合法形态（paged 至多一个且链尾）。
+ *   （canvases 一并整存）；flow_chain_invalid 等编译码由宿主回显在段内。
  *
- * 状态边界：文本域草稿（defineModel 三连）、段内独立未保存标记、错误文案、
- * 保存在途态全部由宿主持有——本组件纯呈现，不持业务状态（抽屉标记与全局
- * saveState 指示灯分离，宿主自行计算）。Teleport body + 自带令牌块（脱离宿主
- * DOM 子树，HelpDialog/ContextMenu 先例）；非模态，画布保持可交互。
+ * 状态边界：下拉选中项、文本域草稿（defineModel 四连）、段内独立未保存标记、
+ * 错误文案、保存在途态全部由宿主持有——本组件纯呈现，不持业务状态。
+ * Teleport body + 自带令牌块（脱离宿主 DOM 子树，HelpDialog/ContextMenu 先例）；
+ * 非模态，画布保持可交互。
  */
+import { computed } from 'vue'
+
+import type { DataSourceSummary } from '../api'
+
+const selectedBindId = defineModel<number | null>('selectedBindId', { required: true })
+const nameText = defineModel<string>('nameText', { required: true })
 const schemaText = defineModel<string>('schemaText', { required: true })
 const dataText = defineModel<string>('dataText', { required: true })
 const flowChainText = defineModel<string>('flowChainText', { required: true })
 
-defineProps<{
+const props = defineProps<{
     /** 抽屉开合（宿主顶栏「数据源」钮驱动） */
     open: boolean
-    /** 段内独立未保存标记（文本域 vs 载入基线，宿主计算；≠ 全局 saveState） */
-    datasetDirty: boolean
+    /** 绑定段：当前绑定（null = 未绑）与数据源列表摘要 */
+    boundId: number | null
+    boundName: string | null
+    sources: DataSourceSummary[]
+    /** 绑定动作在途与段内错误（PUT /templates/{id}/datasource） */
+    bindSaving: boolean
+    bindError: string | null
+    /** 内容段：独立未保存标记、在途态、错误回显（稳定 code 在前的可读文案） */
+    contentDirty: boolean
+    contentSaving: boolean
+    contentError: string | null
+    /** 流链段：独立未保存标记、在途态（文档级 PUT）、错误回显 */
     flowChainDirty: boolean
-    /** 各自保存通道在途态（数据源段 PUT /dataset；流链段 = 文档级 PUT） */
-    datasetSaving: boolean
     flowChainSaving: boolean
-    /** 段内错误回显：稳定 code 在前的可读文案（spec §2.1 按 code 判定） */
-    datasetError: string | null
     flowChainError: string | null
 }>()
 
 const emit = defineEmits<{
     close: []
-    saveDataset: []
+    /** 绑定/解绑动作：按选中项与当前绑定的差值由宿主发绑定通道 */
+    bind: []
+    /** 内容段保存：已绑 = PUT 实体；未绑 = 创建并绑定 */
+    saveContent: []
+    /** 另存为新数据源（仅已绑可用；宿主弹名字框编排 POST + 重绑） */
+    saveAsNew: []
     saveFlowchain: []
 }>()
+
+/** 下拉值 ↔ 可空 id 桥：'' = 未绑定（null） */
+const selectValue = computed({
+    get: () => (selectedBindId.value === null ? '' : String(selectedBindId.value)),
+    set: (v: string) => {
+        selectedBindId.value = v === '' ? null : Number(v)
+    },
+})
+
+/** 绑定动作钮：选中即当前绑定 → 无变更禁用；选中 null 且当前未绑同此 */
+const bindActionDisabled = computed(() => selectedBindId.value === props.boundId)
+const bindActionLabel = computed(() => (selectedBindId.value === null ? '解绑' : '绑定'))
 </script>
 
 <template>
@@ -50,8 +84,47 @@ const emit = defineEmits<{
                 </button>
             </header>
 
-            <!-- 段一：数据源（schema/data 文本域 + 显式「保存数据源」→ PUT /dataset） -->
-            <section class="cn-dsw__section" data-dataset-section aria-label="数据源">
+            <!-- 段一：绑定（模板持引用——绑定/解绑走 PUT /templates/{id}/datasource） -->
+            <section class="cn-dsw__section" data-bind-section aria-label="数据源绑定">
+                <p class="cn-dsw__note">
+                    数据源是独立资源，模板只保存引用：
+                    <strong data-bound-name>{{ boundId === null ? '未绑定' : `「${boundName}」` }}</strong>
+                    <!-- 25 票：数据源独立管理页入口（离开编辑器时脏文档 confirm 守卫照旧） -->
+                    <RouterLink to="/datasources" class="cn-dsw__link" data-datasource-manage-link>
+                        独立管理页 →
+                    </RouterLink>
+                </p>
+                <label class="cn-dsw__label" for="dsw-bind">数据源列表（括注为引用它的模板数）</label>
+                <select id="dsw-bind" v-model="selectValue" class="cn-dsw__select" data-bind-select aria-label="选择数据源">
+                    <option value="">（未绑定）</option>
+                    <option v-for="s in sources" :key="s.id" :value="String(s.id)">
+                        {{ s.name }}（{{ s.templateCount }} 个模板引用）
+                    </option>
+                </select>
+                <p v-if="bindError" class="cn-dsw__error" data-bind-error>{{ bindError }}</p>
+                <footer class="cn-dsw__footer">
+                    <button
+                        type="button"
+                        class="cn-dsw__save"
+                        data-bind-action
+                        :disabled="bindActionDisabled || bindSaving"
+                        @click="emit('bind')"
+                    >
+                        {{ bindSaving ? '处理中…' : bindActionLabel }}
+                    </button>
+                </footer>
+            </section>
+
+            <!-- 段二：数据源内容（编辑绑定的数据源实体；未绑 = 创建并绑定起笔态） -->
+            <section class="cn-dsw__section" data-dataset-section aria-label="数据源内容">
+                <label class="cn-dsw__label" for="dsw-name">数据源名</label>
+                <input
+                    id="dsw-name"
+                    v-model="nameText"
+                    class="cn-dsw__input"
+                    data-source-name-input
+                    spellcheck="false"
+                />
                 <label class="cn-dsw__label" for="dsw-schema">schema（draft-07 JSON）</label>
                 <textarea
                     id="dsw-schema"
@@ -70,23 +143,41 @@ const emit = defineEmits<{
                     rows="10"
                     spellcheck="false"
                 ></textarea>
-                <p class="cn-dsw__note">渲染读取已保存的数据集——渲染终图以服务端存储态为准，保存前渲染用旧数据。</p>
-                <p v-if="datasetError" class="cn-dsw__error" data-dataset-error>{{ datasetError }}</p>
+                <p class="cn-dsw__note" data-content-note>
+                    <template v-if="boundId !== null">
+                        保存写入数据源实体本身——所有引用它的模板同享（渲染读取已保存的数据集，保存前渲染用旧数据）。
+                    </template>
+                    <template v-else>
+                        未绑定数据源：「创建并绑定」将以此内容新建数据源实体并绑定到本模板。
+                    </template>
+                </p>
+                <p v-if="contentError" class="cn-dsw__error" data-dataset-error>{{ contentError }}</p>
                 <footer class="cn-dsw__footer">
-                    <span v-if="datasetDirty" class="cn-dsw__unsaved" data-dataset-unsaved>● 未保存</span>
+                    <span v-if="contentDirty" class="cn-dsw__unsaved" data-dataset-unsaved>● 未保存</span>
+                    <button
+                        v-if="boundId !== null"
+                        type="button"
+                        class="cn-dsw__ghost"
+                        data-save-as-new
+                        title="以当前草稿内容另存为一个新数据源实体并绑定到本模板（不影响现共享实体）"
+                        :disabled="contentSaving"
+                        @click="emit('saveAsNew')"
+                    >
+                        另存为新数据源
+                    </button>
                     <button
                         type="button"
                         class="cn-dsw__save"
-                        data-save-dataset
-                        :disabled="datasetSaving"
-                        @click="emit('saveDataset')"
+                        data-save-datasource
+                        :disabled="contentSaving"
+                        @click="emit('saveContent')"
                     >
-                        {{ datasetSaving ? '保存中…' : '保存数据源' }}
+                        {{ contentSaving ? '保存中…' : boundId !== null ? '保存数据源' : '创建并绑定' }}
                     </button>
                 </footer>
             </section>
 
-            <!-- 段二：流链（flowChain 文本域 + 「保存流链」→ 文档级 PUT，canvases 一并整存） -->
+            <!-- 段三：流链（flowChain 文本域 + 「保存流链」→ 文档级 PUT，canvases 一并整存） -->
             <section class="cn-dsw__section" data-flowchain-section aria-label="流链">
                 <label class="cn-dsw__label" for="dsw-flowchain">flowChain（FlowChainNode[] JSON；空链填 null）</label>
                 <textarea
@@ -183,7 +274,7 @@ const emit = defineEmits<{
     color: var(--cn-fg);
 }
 
-/* 段间距 + 各自按钮区分（spec §4.3）：段间 border-top 分隔，钮在各段页脚右对齐 */
+/* 段间距 + 各自按钮区分：段间 border-top 分隔，钮在各段页脚右对齐 */
 .cn-dsw__section {
     display: flex;
     flex-direction: column;
@@ -225,11 +316,44 @@ const emit = defineEmits<{
     outline: none;
 }
 
+.cn-dsw__select {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--cn-line);
+    border-radius: 8px;
+    background: var(--cn-bg);
+    color: var(--cn-fg);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.cn-dsw__select:focus {
+    border-color: var(--cn-line-strong);
+    outline: none;
+}
+
 .cn-dsw__note {
     margin: 8px 0 0;
     color: var(--cn-muted);
     font-size: 11px;
     line-height: 1.6;
+}
+
+.cn-dsw__note strong {
+    color: var(--cn-fg-2);
+    font-weight: 600;
+}
+
+/* 25 票：绑定段内独立管理页链接（accent 色，跟随令牌主题） */
+.cn-dsw__link {
+    margin-left: 4px;
+    color: var(--cn-accent);
+    white-space: nowrap;
+}
+
+.cn-dsw__link:hover {
+    filter: brightness(1.15);
 }
 
 .cn-dsw__note code {
@@ -252,20 +376,40 @@ const emit = defineEmits<{
 .cn-dsw__footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 8px;
     margin-top: 10px;
 }
 
-/* 段内独立未保存小标记（spec §4.4）：琥珀色 ● 与全局指示灯同词汇、独立计算 */
+/* 段内独立未保存小标记：琥珀色 ● 与全局指示灯同词汇、独立计算 */
 .cn-dsw__unsaved {
+    margin-right: auto;
     color: #f59e0b;
     font-size: 12px;
     white-space: nowrap;
 }
 
+.cn-dsw__ghost {
+    padding: 5px 12px;
+    border: 1px solid var(--cn-line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cn-fg-2);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.cn-dsw__ghost:hover:not(:disabled) {
+    color: var(--cn-fg);
+    border-color: var(--cn-accent);
+}
+
+.cn-dsw__ghost:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .cn-dsw__save {
-    margin-left: auto;
     padding: 5px 12px;
     border: none;
     border-radius: 8px;

@@ -20,7 +20,17 @@ func openTestStore(t *testing.T) *Store {
 	return st
 }
 
-// seedContent 最小合法模板内容(两帧 + 流链 + 数据源,形状对齐 spec §2.3)
+// seedDataSource 最小合法数据源内容(schema/data 与 spec §2.3 样例同形)
+func seedDataSource() DataSourceContent {
+	return DataSourceContent{
+		Name:   "结业证书批量打印数据源",
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Data:   json.RawMessage(`{"org":{"name":"瀚辰培训中心"}}`),
+	}
+}
+
+// seedContent 最小合法模板内容(两帧 + 流链,形状对齐 spec §2.3);绑定由调用方
+// 经 DataSourceID 接线(模板只持引用)
 func seedContent() TemplateContent {
 	return TemplateContent{
 		Name: "结业证书 · 批量打印页",
@@ -28,24 +38,22 @@ func seedContent() TemplateContent {
 			{Name: "主页", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
 			{Name: "续页", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
 		},
-		FlowChain:     json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`),
-		DatasetSchema: json.RawMessage(`{"type":"object"}`),
-		Dataset:       json.RawMessage(`{"org":{"name":"瀚辰培训中心"}}`),
+		FlowChain: json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`),
 	}
 }
 
-func countTemplates(t *testing.T, st *Store) int {
+func countRows(t *testing.T, st *Store, table string) int {
 	t.Helper()
 	var n int
-	if err := st.db.QueryRow(`SELECT COUNT(*) FROM templates`).Scan(&n); err != nil {
-		t.Fatalf("数模板行: %v", err)
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+		t.Fatalf("数 %s 行: %v", table, err)
 	}
 	return n
 }
 
 func TestOpenCreatesTables(t *testing.T) {
 	st := openTestStore(t)
-	for _, table := range []string{"templates", "renders"} {
+	for _, table := range []string{"datasources", "templates", "renders"} {
 		var name string
 		err := st.db.QueryRow(
 			`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, table,
@@ -53,6 +61,63 @@ func TestOpenCreatesTables(t *testing.T) {
 		if err != nil {
 			t.Fatalf("表 %s 未建: %v", table, err)
 		}
+	}
+}
+
+// TestOpen_SelfHealLegacySchema 旧版库(dataset 内嵌模板形态)启动自愈:重建
+// templates/renders,demo 运行数据由播种补回
+func TestOpen_SelfHealLegacySchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	// 手工造旧版形态:templates 带 dataset/datasetSchema 列、无 data_source_id
+	st, err := Open(dbPath) // 先经新版 Open 建出基线库再降级改列
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`DROP TABLE templates;
+		CREATE TABLE templates (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			name           TEXT NOT NULL,
+			canvases       TEXT NOT NULL,
+			flow_chain     TEXT,
+			dataset_schema TEXT,
+			dataset        TEXT,
+			created_at     TEXT NOT NULL,
+			updated_at     TEXT NOT NULL
+		);`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("旧库自愈打开: %v", err)
+	}
+	defer st2.Close()
+	var hasRef int
+	if err := st2.db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('templates') WHERE name = 'data_source_id'`,
+	).Scan(&hasRef); err != nil || hasRef != 1 {
+		t.Fatalf("templates 应重建为带 data_source_id 引用列: count=%d err=%v", hasRef, err)
+	}
+}
+
+func TestSeedDataSourceIfMissing_GetOrCreate(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	id1, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("首播: %v", err)
+	}
+	// 同名再播:按名取回既有 id,幂等不重插
+	id2, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("重播: %v", err)
+	}
+	if id1 != id2 || countRows(t, st, "datasources") != 1 {
+		t.Fatalf("同名播种应幂等: %d vs %d, rows=%d", id1, id2, countRows(t, st, "datasources"))
 	}
 }
 
@@ -67,7 +132,7 @@ func TestSeedTemplateIfEmpty_InsertsOnce(t *testing.T) {
 	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
 		t.Fatalf("重播: %v", err)
 	}
-	if got := countTemplates(t, st); got != 1 {
+	if got := countRows(t, st, "templates"); got != 1 {
 		t.Fatalf("播种后模板行数 = %d, 期望 1", got)
 	}
 }
@@ -83,7 +148,7 @@ func TestSeedTemplateIfEmpty_NonEmptyTableNoop(t *testing.T) {
 	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
 		t.Fatalf("表非空时播种应静默跳过: %v", err)
 	}
-	if got := countTemplates(t, st); got != 1 {
+	if got := countRows(t, st, "templates"); got != 1 {
 		t.Fatalf("模板行数 = %d, 期望 1(表非空不插)", got)
 	}
 	rec, err := st.GetTemplate(ctx, 1)
@@ -127,7 +192,13 @@ func TestListTemplates_UpdatedAtDesc(t *testing.T) {
 func TestGetTemplate_Roundtrip(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
-	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
+	dsID, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("播种数据源: %v", err)
+	}
+	content := seedContent()
+	content.DataSourceID = &dsID
+	if err := st.SeedTemplateIfEmpty(ctx, content); err != nil {
 		t.Fatalf("播种: %v", err)
 	}
 	rec, err := st.GetTemplate(ctx, 1)
@@ -136,6 +207,9 @@ func TestGetTemplate_Roundtrip(t *testing.T) {
 	}
 	if rec.ID != 1 || rec.Name != "结业证书 · 批量打印页" {
 		t.Fatalf("id/name = %d/%q", rec.ID, rec.Name)
+	}
+	if rec.DataSourceID == nil || *rec.DataSourceID != dsID {
+		t.Fatalf("dataSourceId 应为播种绑定的引用: %v", rec.DataSourceID)
 	}
 	if len(rec.Canvases) != 2 || rec.Canvases[0].Name != "主页" || rec.Canvases[1].Name != "续页" {
 		t.Fatalf("canvases 形状不符: %+v", rec.Canvases)
@@ -161,8 +235,6 @@ func TestGetTemplate_NullColumnsMarshalJSONNull(t *testing.T) {
 	ctx := context.Background()
 	content := seedContent()
 	content.FlowChain = nil
-	content.DatasetSchema = nil
-	content.Dataset = nil
 	if _, err := st.insertTemplate(ctx, content, "2026-10-04T12:00:00Z", "2026-10-04T12:00:00Z"); err != nil {
 		t.Fatalf("插模板: %v", err)
 	}
@@ -174,7 +246,7 @@ func TestGetTemplate_NullColumnsMarshalJSONNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("序列化: %v", err)
 	}
-	for _, key := range []string{`"flowChain":null`, `"datasetSchema":null`, `"dataset":null`} {
+	for _, key := range []string{`"flowChain":null`, `"dataSourceId":null`} {
 		if !strings.Contains(string(b), key) {
 			t.Fatalf("NULL 列应序列化为 JSON null(%s 缺失): %s", key, b)
 		}
@@ -192,15 +264,12 @@ func TestCreateTemplate_AutoIncrementAndTimestamps(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 
-	// POST 载荷不含 dataset(spec §2.4 #3)——创建内容两数据列留空
-	content := seedContent()
-	content.Dataset = nil
-	content.DatasetSchema = nil
-	id1, err := st.CreateTemplate(ctx, content)
+	// POST 载荷缺省未绑(spec §2.4 #3)——引用列留空
+	id1, err := st.CreateTemplate(ctx, seedContent())
 	if err != nil {
 		t.Fatalf("创建模板 1: %v", err)
 	}
-	id2, err := st.CreateTemplate(ctx, content)
+	id2, err := st.CreateTemplate(ctx, seedContent())
 	if err != nil {
 		t.Fatalf("创建模板 2: %v", err)
 	}
@@ -212,9 +281,9 @@ func TestCreateTemplate_AutoIncrementAndTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("回读: %v", err)
 	}
-	// POST 载荷不含 dataset(spec §2.4 #3):落库即 null,createdAt = updatedAt
-	if rec.Dataset != nil || rec.DatasetSchema != nil {
-		t.Fatalf("未带数据源的创建应落 NULL: %v / %v", rec.Dataset, rec.DatasetSchema)
+	// 未带引用的创建落 NULL,createdAt = updatedAt
+	if rec.DataSourceID != nil {
+		t.Fatalf("未绑数据源的创建应落 NULL: %v", rec.DataSourceID)
 	}
 	if rec.CreatedAt == "" || rec.CreatedAt != rec.UpdatedAt {
 		t.Fatalf("createdAt 应等于 updatedAt,实得 %q / %q", rec.CreatedAt, rec.UpdatedAt)
@@ -224,19 +293,19 @@ func TestCreateTemplate_AutoIncrementAndTimestamps(t *testing.T) {
 	}
 }
 
-// TestUpdateTemplateContent_PreservesDataset 整存替换只动 name/canvases/flowChain,
-// 不触碰 dataset/datasetSchema(spec §2.4 #5——12 票票面「先 PUT dataset 再 PUT
-// 模板验证仍在」的存储层口径)
-func TestUpdateTemplateContent_PreservesDataset(t *testing.T) {
+// TestUpdateTemplateContent_PreservesBinding 整存替换只动 name/canvases/flow_chain,
+// 不触碰 data_source_id(绑定只经数据源绑定通道变更,spec §2.4 #5)
+func TestUpdateTemplateContent_PreservesBinding(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
-	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
-		t.Fatalf("播种: %v", err)
+	dsID, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("播种数据源: %v", err)
 	}
-
-	if err := st.UpdateDataset(ctx, 1,
-		json.RawMessage(`{"type":"object"}`), json.RawMessage(`{"kept":true}`)); err != nil {
-		t.Fatalf("先 PUT dataset: %v", err)
+	content := seedContent()
+	content.DataSourceID = &dsID
+	if err := st.SeedTemplateIfEmpty(ctx, content); err != nil {
+		t.Fatalf("播种: %v", err)
 	}
 
 	updated := TemplateContent{
@@ -260,11 +329,8 @@ func TestUpdateTemplateContent_PreservesDataset(t *testing.T) {
 	if rec.FlowChain != nil {
 		t.Fatalf("flowChain 应替换为 NULL: %s", rec.FlowChain)
 	}
-	if rec.DatasetSchema == nil || string(rec.DatasetSchema) != `{"type":"object"}` {
-		t.Fatalf("datasetSchema 不得被触碰: %v", rec.DatasetSchema)
-	}
-	if rec.Dataset == nil || string(rec.Dataset) != `{"kept":true}` {
-		t.Fatalf("dataset 不得被触碰: %v", rec.Dataset)
+	if rec.DataSourceID == nil || *rec.DataSourceID != dsID {
+		t.Fatalf("data_source_id 不得被触碰: %v", rec.DataSourceID)
 	}
 }
 
@@ -275,36 +341,145 @@ func TestUpdateTemplateContent_NotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateDataset_ReplacesBothColumns(t *testing.T) {
+func TestUpdateTemplateDataSource_BindUnbind(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
+	dsID, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("播种数据源: %v", err)
+	}
 	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
-		t.Fatalf("播种: %v", err)
+		t.Fatalf("播种模板: %v", err)
 	}
 
-	if err := st.UpdateDataset(ctx, 1,
-		json.RawMessage(`{"type":"array"}`), json.RawMessage(`[1,2]`)); err != nil {
-		t.Fatalf("更新数据源: %v", err)
+	// 绑定:引用列整存替换,模板内容不触碰
+	if err := st.UpdateTemplateDataSource(ctx, 1, &dsID); err != nil {
+		t.Fatalf("绑定: %v", err)
 	}
-
 	rec, err := st.GetTemplate(ctx, 1)
 	if err != nil {
 		t.Fatalf("回读: %v", err)
 	}
-	if string(rec.DatasetSchema) != `{"type":"array"}` || string(rec.Dataset) != `[1,2]` {
-		t.Fatalf("两列应整存替换: %s / %s", rec.DatasetSchema, rec.Dataset)
+	if rec.DataSourceID == nil || *rec.DataSourceID != dsID {
+		t.Fatalf("绑定后 dataSourceId = %v, 期望 %d", rec.DataSourceID, dsID)
 	}
-	// 未触碰面:模板内容原样
 	if rec.Name != seedContent().Name || len(rec.Canvases) != 2 {
-		t.Fatalf("模板内容不得被触碰: %+v", rec)
+		t.Fatalf("绑定不得触碰模板内容: %+v", rec)
+	}
+
+	// 解绑:null 引用
+	if err := st.UpdateTemplateDataSource(ctx, 1, nil); err != nil {
+		t.Fatalf("解绑: %v", err)
+	}
+	rec, err = st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if rec.DataSourceID != nil {
+		t.Fatalf("解绑后 dataSourceId 应为 null: %v", rec.DataSourceID)
 	}
 }
 
-func TestUpdateDataset_NotFound(t *testing.T) {
+func TestUpdateTemplateDataSource_NotFound(t *testing.T) {
 	st := openTestStore(t)
-	err := st.UpdateDataset(context.Background(), 999, json.RawMessage(`{}`), json.RawMessage(`{}`))
-	if !errors.Is(err, ErrNotFound) {
+	if err := st.UpdateTemplateDataSource(context.Background(), 999, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("期望 ErrNotFound, 实得 %v", err)
+	}
+}
+
+// --- 数据源实体 CRUD ---
+
+func TestDataSourceCRUD(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	dsID, err := st.CreateDataSource(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("创建数据源: %v", err)
+	}
+	rec, err := st.GetDataSource(ctx, dsID)
+	if err != nil {
+		t.Fatalf("取数据源: %v", err)
+	}
+	if rec.Name != seedDataSource().Name || string(rec.Schema) != `{"type":"object"}` {
+		t.Fatalf("数据源记录不符: %+v", rec)
+	}
+	if rec.CreatedAt == "" || rec.CreatedAt != rec.UpdatedAt || !strings.HasSuffix(rec.UpdatedAt, "Z") {
+		t.Fatalf("createdAt = updatedAt 且 RFC3339 UTC,实得 %q / %q", rec.CreatedAt, rec.UpdatedAt)
+	}
+
+	// 整存替换三列
+	if err := st.UpdateDataSource(ctx, dsID, DataSourceContent{
+		Name:   "改名数据源",
+		Schema: json.RawMessage(`{"type":"array"}`),
+		Data:   json.RawMessage(`[1,2]`),
+	}); err != nil {
+		t.Fatalf("更新数据源: %v", err)
+	}
+	rec, err = st.GetDataSource(ctx, dsID)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if rec.Name != "改名数据源" || string(rec.Schema) != `{"type":"array"}` || string(rec.Data) != `[1,2]` {
+		t.Fatalf("三列应整存替换: %+v", rec)
+	}
+}
+
+func TestGetDataSource_NotFound(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := st.GetDataSource(context.Background(), 999); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("期望 ErrDataSourceNotFound, 实得 %v", err)
+	}
+	if err := st.UpdateDataSource(context.Background(), 999, seedDataSource()); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("更新期望 ErrDataSourceNotFound, 实得 %v", err)
+	}
+}
+
+func TestListDataSources_TemplateCount(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	ds1, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds2, err := st.CreateDataSource(ctx, DataSourceContent{
+		Name:   "第二个数据源",
+		Schema: json.RawMessage(`{"type":"object"}`),
+		Data:   json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 引用计数:ds1 被两模板引用,ds2 零引用(LEFT JOIN 补 0)
+	bound := seedContent()
+	bound.DataSourceID = &ds1
+	if err := st.SeedTemplateIfEmpty(ctx, bound); err != nil {
+		t.Fatal(err)
+	}
+	second := seedContent()
+	second.Name = "第二模板"
+	second.DataSourceID = &ds1
+	if _, err := st.CreateTemplate(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := st.ListDataSources(ctx)
+	if err != nil {
+		t.Fatalf("列表: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("列表长度 = %d, 期望 2", len(items))
+	}
+	byID := map[int64]DataSourceSummary{}
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	if byID[ds1].TemplateCount != 2 || byID[ds2].TemplateCount != 0 {
+		t.Fatalf("引用计数不符: %+v", items)
+	}
+	if byID[ds2].Name != "第二个数据源" {
+		t.Fatalf("摘要字段不符: %+v", byID[ds2])
 	}
 }
 
@@ -375,5 +550,61 @@ func TestDeleteRenderRecord_RemovesStub(t *testing.T) {
 	var n int
 	if err := st.db.QueryRow(`SELECT COUNT(*) FROM renders`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("删除后 renders 行数 = %d (%v), 期望 0", n, err)
+	}
+}
+
+// --- DeleteTemplate(卡片操作修订,spec §2.4 #10) ---
+
+// TestDeleteTemplate_CascadesRenderRows 删除模板:行级联清其渲染记录行(其余
+// 模板的渲染记录不受牵连);数据源实体不受影响(独立资源);再删同 id → ErrNotFound
+func TestDeleteTemplate_CascadesRenderRows(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	if _, err := st.SeedDataSourceIfMissing(ctx, seedDataSource()); err != nil {
+		t.Fatalf("播种数据源: %v", err)
+	}
+	idA, err := st.CreateTemplate(ctx, seedContent())
+	if err != nil {
+		t.Fatalf("创建模板 A: %v", err)
+	}
+	idB, err := st.CreateTemplate(ctx, seedContent())
+	if err != nil {
+		t.Fatalf("创建模板 B: %v", err)
+	}
+	recA, err := st.CreateRenderRecord(ctx, idA)
+	if err != nil {
+		t.Fatalf("创建渲染记录 A: %v", err)
+	}
+	if _, err := st.CreateRenderRecord(ctx, idB); err != nil {
+		t.Fatalf("创建渲染记录 B: %v", err)
+	}
+	if err := st.UpdateRenderImages(ctx, recA.ID, []RenderImage{{Frame: 0, Name: "主页", Path: "renders/1/1.png"}}); err != nil {
+		t.Fatalf("回填渲染记录 A: %v", err)
+	}
+
+	if err := st.DeleteTemplate(ctx, idA); err != nil {
+		t.Fatalf("删除模板 A: %v", err)
+	}
+
+	if _, err := st.GetTemplate(ctx, idA); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetTemplate(已删) err = %v, 期望 ErrNotFound", err)
+	}
+	var nA int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM renders WHERE template_id = ?`, idA).Scan(&nA); err != nil || nA != 0 {
+		t.Fatalf("模板 A 渲染记录行 = %d (%v), 期望级联清 0", nA, err)
+	}
+	var nB int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM renders WHERE template_id = ?`, idB).Scan(&nB); err != nil || nB != 1 {
+		t.Fatalf("模板 B 渲染记录行 = %d (%v), 期望不受牵连为 1", nB, err)
+	}
+	sources, err := st.ListDataSources(ctx)
+	if err != nil || len(sources) != 1 || sources[0].TemplateCount != 0 {
+		t.Fatalf("数据源应不受影响(TemplateCount 回落 0): %v %v", sources, err)
+	}
+
+	// 再删同 id:寻址失败 → ErrNotFound(事务回滚,级联面一并撤销)
+	if err := st.DeleteTemplate(ctx, idA); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("再删已删模板 err = %v, 期望 ErrNotFound", err)
 	}
 }
