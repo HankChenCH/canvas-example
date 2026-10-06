@@ -55,6 +55,18 @@ export function canonicalFlowChain(flowChain: unknown): string {
     return JSON.stringify(flowChain ?? null)
 }
 
+/** 尾部追加空白帧工厂（26 票，spec §4.2 增帧）：wire 形
+ *  {canvas:{width,height},layers:[]}，幅面参数化（调用方传追加时活动帧画布宽高，
+ *  文档页幅一致性）；帧名「第 N 帧」（N = 下标 + 1，与 22 票「第 1 帧」同系确定性
+ *  命名；尾部追加时下标 = 追加时帧数，不查重——帧名是显示用非唯一键）。graphJson
+ *  以 canonical 串入槽，与 loadFrameSlots 同缝：decode 顺带验形。 */
+export function blankFrameSlot(width: number, height: number, index: number): FrameSlot {
+    return {
+        name: `第 ${index + 1} 帧`,
+        graphJson: encodeGraphJson(decodeGraph({ canvas: { width, height }, layers: [] })),
+    }
+}
+
 /** 初始基线：各帧取槽位名与 canonical 串，flowChain 归一 canonicalFlowChain */
 export function baselineFromSlots(name: string, slots: readonly FrameSlot[], flowChain: unknown): FrameBaseline {
     return {
@@ -67,7 +79,8 @@ export function baselineFromSlots(name: string, slots: readonly FrameSlot[], flo
 
 /** 文档级 dirty（spec §4.4）：当前帧 ∪ 帧缓冲任一帧（graph 或帧名）∪ flowChain ∪
  *  模板名，任一变更即 dirty。当前帧以活动文档现值（activeGraphJson）比较，其余帧
- *  比槽位；无活动文档时当前帧按槽位兜底（无文档则无现场编辑）。 */
+ *  比槽位；无活动文档时当前帧按槽位兜底（无文档则无现场编辑）。槽位数 ≠ 基线帧数
+ *  即 dirty（26 票尾部增帧；显式长度收紧，不依赖逐槽越界比较的隐式行为）。 */
 export function isDocDirty(params: {
     baseline: FrameBaseline
     slots: readonly FrameSlot[]
@@ -79,6 +92,7 @@ export function isDocDirty(params: {
     const { baseline, slots, activeIndex, activeGraphJson, templateName, flowChain } = params
     if (templateName !== baseline.name) return true
     if (canonicalFlowChain(flowChain) !== baseline.flowChain) return true
+    if (slots.length !== baseline.frames.length || slots.length !== baseline.names.length) return true
     return slots.some((slot, i) => {
         if (slot.name !== baseline.names[i]) return true
         const current = i === activeIndex && activeGraphJson !== null ? activeGraphJson : slot.graphJson

@@ -8,6 +8,7 @@ import type { WireGraph, WireLayerNode } from '@hankchen/canvas-next'
 
 import {
     baselineFromSlots,
+    blankFrameSlot,
     buildSavePayload,
     decodeGraphJson,
     encodeGraphJson,
@@ -162,6 +163,35 @@ describe('baselineFromSlots / isDocDirty（spec §4.4 文档级 dirty 口径）'
         ).toBe(true)
     })
 
+    it('尾部追加新帧 → true：槽位数超基线即 dirty（26 票，显式长度收紧）', () => {
+        const appended: FrameSlot[] = [...slots, blankFrameSlot(100, 100, slots.length)]
+        expect(
+            isDocDirty({
+                baseline,
+                slots: appended,
+                activeIndex: 0,
+                activeGraphJson: slots[0]!.graphJson,
+                templateName: '证书模板',
+                flowChain,
+            }),
+        ).toBe(true)
+    })
+
+    it('追加后保存基线同步（baselineFromSlots 以当帧槽位重建）→ 恢复 false', () => {
+        const appended: FrameSlot[] = [...slots, blankFrameSlot(100, 100, slots.length)]
+        const savedBaseline = baselineFromSlots('证书模板', appended, flowChain)
+        expect(
+            isDocDirty({
+                baseline: savedBaseline,
+                slots: appended,
+                activeIndex: appended.length - 1,
+                activeGraphJson: appended[appended.length - 1]!.graphJson,
+                templateName: '证书模板',
+                flowChain,
+            }),
+        ).toBe(false)
+    })
+
     it('仅帧名重命名（graph 不动）→ true（票面：tab 双击重命名进 dirty）', () => {
         const renamedSlots: FrameSlot[] = [slots[0]!, { ...slots[1]!, name: '续页 · 副页' }]
         expect(
@@ -233,8 +263,29 @@ describe('baselineFromSlots / isDocDirty（spec §4.4 文档级 dirty 口径）'
     })
 })
 
-describe('buildSavePayload（保存 = 全量 PUT：name + 帧缓冲各帧 + flowChain 原样）', () => {
-    it('canvases 从槽位组装、graph 解回 wire 对象、name/flowChain 透传', () => {
+describe('blankFrameSlot（26 票尾部追加空白帧工厂）', () => {
+    it('wire 形 {canvas:{width,height},layers:[]}，帧名「第 N 帧」（N = 下标 + 1）', () => {
+        const slot = blankFrameSlot(794, 1123, 2)
+        expect(slot.name).toBe('第 3 帧')
+        expect(JSON.parse(slot.graphJson)).toEqual({ canvas: { width: 794, height: 1123 }, layers: [] })
+    })
+
+    it('graphJson 为 canonical 串：decode 顺带验形，往返恒等（与 loadFrameSlots 同缝）', () => {
+        const slot = blankFrameSlot(794, 1123, 0)
+        expect(encodeGraphJson(decodeGraphJson(slot.graphJson))).toBe(slot.graphJson)
+    })
+
+    it('幅面参数化：同工厂出任意宽高空层文档', () => {
+        const slot = blankFrameSlot(640, 480, 4)
+        const doc = decodeGraphJson(slot.graphJson)
+        expect(doc.width).toBe(640)
+        expect(doc.height).toBe(480)
+        expect(doc.layers).toEqual([])
+        expect(slot.name).toBe('第 5 帧')
+    })
+})
+
+describe('buildSavePayload（保存 = 全量 PUT：name + 帧缓冲各帧 + flowChain 原样）', () => {    it('canvases 从槽位组装、graph 解回 wire 对象、name/flowChain 透传', () => {
         const slots = loadFrameSlots(seedCanvases())
         const flowChain = [{ frame: 0, mode: 'fixed' }, { frame: 1, mode: 'paged', omitIfEmpty: true }]
         const payload = buildSavePayload({ slots, templateName: '结业证书', flowChain })
@@ -251,5 +302,16 @@ describe('buildSavePayload（保存 = 全量 PUT：name + 帧缓冲各帧 + flow
         const slots = loadFrameSlots(seedCanvases())
         const payload = buildSavePayload({ slots, templateName: 'n', flowChain: null })
         expect(decodeGraph(payload.canvases[0]!.graph)).toEqual(decodeGraphJson(slots[0]!.graphJson))
+    })
+
+    it('追加新帧后载荷 canvases 长 N+1 且含空白新帧，原有帧原样（26 票）', () => {
+        const slots = loadFrameSlots(seedCanvases())
+        const appended: FrameSlot[] = [...slots, blankFrameSlot(794, 1123, slots.length)]
+        const payload = buildSavePayload({ slots: appended, templateName: '证书模板', flowChain: null })
+        expect(payload.canvases).toHaveLength(3)
+        expect(payload.canvases[0]!.name).toBe('主页')
+        expect(payload.canvases[1]!.name).toBe('续页')
+        expect(payload.canvases[2]!.name).toBe('第 3 帧')
+        expect(payload.canvases[2]!.graph).toEqual({ canvas: { width: 794, height: 1123 }, layers: [] })
     })
 })

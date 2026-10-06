@@ -8,10 +8,12 @@
 //     + attachContentBackend + setOverlayPainter + materializer 双订阅
 //     （doc 变更 → materialize；物化状态变更 → invalidate both）
 //   → decodeGraph 逐帧 → openDocument 第 0 帧 → fitToSurface
-// 多帧（spec §4.2，16 票）：画布上方帧 tab 条；切帧即进宿主内存帧缓冲——切出前
-// encodeGraph(editor.store.doc) 快照该帧、换帧 openDocument 重建会话文档（openDocument
-// 不重置 schema，无需重复注入——01 票）；tab 双击重命名（改 canvases[i].name，进 dirty）；
-// 不做增删帧；帧间切换不提示。帧缓冲纯逻辑在 src/editor/frames.ts（TDD 缝）。
+// 多帧（spec §4.2，16 票升级多帧 / 26 票放开尾部增帧）：画布上方帧 tab 条；切帧即进
+// 宿主内存帧缓冲——切出前 encodeGraph(editor.store.doc) 快照该帧、换帧 openDocument
+// 重建会话文档（openDocument 不重置 schema，无需重复注入——01 票）；tab 双击重命名
+// （改 canvases[i].name，进 dirty）；帧 tab 条尾部「＋」钮尾部追加空白帧（「第 N 帧」、
+// 幅面随追加时活动帧、层空，追加即切并进文档级 dirty）；不做删帧/中插/复制（flowChain
+// 按帧下标引用，中插与删除需链重写语义）；帧间切换不提示。帧缓冲纯逻辑在 src/editor/frames.ts（TDD 缝）。
 // 保存面（spec §4.4，16 票文档级口径）：纯手动——按钮 + Ctrl/Cmd+S，无防抖自动保存；
 // 保存 = 全量 PUT（name + 当前帧 ∪ 帧缓冲各帧 + flowChain 原样）；dirty 跟文档级——
 // 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
@@ -102,6 +104,7 @@ import {
 } from '../api'
 import {
     baselineFromSlots,
+    blankFrameSlot,
     buildSavePayload,
     decodeGraphJson,
     encodeGraphJson,
@@ -207,9 +210,9 @@ watch(
     },
 )
 
-// ---- 多帧帧缓冲（spec §4.2，16 票）：宿主内存帧缓冲 = canvases 的宿主镜像，
-// graphJson 以 canonical encode 字符串持有（dirty 比较/保存载荷直接消费字符串）；
-// activeFrame 当前帧下标；不做增删帧。 ----
+// ---- 多帧帧缓冲（spec §4.2，16 票 / 26 票增帧）：宿主内存帧缓冲 = canvases 的宿主
+// 镜像，graphJson 以 canonical encode 字符串持有（dirty 比较/保存载荷直接消费字符串）；
+// activeFrame 当前帧下标；增帧 = 尾部追加（见 appendBlankFrame），不做删帧/中插/复制。 ----
 
 const frameSlots = ref<FrameSlot[]>([])
 const activeFrame = ref(0)
@@ -233,6 +236,24 @@ function switchToFrame(index: number): void {
     const doc = decodeGraphJson(frameSlots.value[index]!.graphJson)
     activeFrame.value = index
     editor.openDocument(doc)
+}
+
+/** 尾部追加空白帧（spec §4.2 增帧，26 票）：追加位置恒为尾部与活动帧位置无关——
+ *  flowChain 节点按帧数组下标引用，尾部追加既有节点下标无一失效（链零改写即仍
+ *  合法；中插/删除会整体位移下标，另票再做）。时序复用 16 票切帧缝：先快照当前帧
+ *  入槽（防丢未保存编辑）→ push 新槽位（「第 N 帧」、幅面 = 追加时活动帧画布宽高、
+ *  层空）→ activeFrame 指向新帧 → openDocument 空白文档（schema 不重置无需注入；
+ *  与活动帧同幅，切帧惯例视口保留不 refit）。dirty 重算与 materialize 由 openDocument
+ *  的 doc 通知顺带驱动（store 契约：openDocument 必发 doc 通知，switchToFrame 同款），
+ *  槽位数超基线在 isDocDirty 长度收紧处成立。 */
+function appendBlankFrame(): void {
+    const doc = editor.store.doc
+    if (!template.value || !doc) return
+    snapshotActiveFrame()
+    const index = frameSlots.value.length
+    frameSlots.value.push(blankFrameSlot(doc.width, doc.height, index))
+    activeFrame.value = index
+    editor.openDocument(decodeGraphJson(frameSlots.value[index]!.graphJson))
 }
 
 // ---- tab 双击重命名（spec §4.2）：改 canvases[i].name（帧缓冲 name 即它）进 dirty；
@@ -1223,8 +1244,10 @@ onBeforeUnmount(() => {
             <LayerPanel :editor="editor" />
             <!-- canvas-area：帧 tab 条（顶）+ canvas-holder（画布覆盖物定位上下文） -->
             <div class="canvas-area">
-                <!-- 帧 tab 条（spec §4.2 多帧，16 票）：画布上方；单击切帧（帧间切换
-                     不提示），双击重命名（改 canvases[i].name，进 dirty）；不做增删帧 -->
+                <!-- 帧 tab 条（spec §4.2 多帧，16 票 / 26 票增帧）：画布上方；单击切帧
+                     （帧间切换不提示），双击重命名（改 canvases[i].name，进 dirty）；
+                     尾部「＋」钮追加空白帧并切为活动帧（普通 button 非 tab 角色——
+                     它不是页签）；不做删帧/中插/复制 -->
                 <div class="frame-tabs" role="tablist" aria-label="文档帧">
                     <div
                         v-for="(slot, i) in frameSlots"
@@ -1256,6 +1279,16 @@ onBeforeUnmount(() => {
                             {{ slot.name || `帧 ${i + 1}` }}
                         </span>
                     </div>
+                    <button
+                        type="button"
+                        class="frame-add"
+                        data-frame-add
+                        aria-label="新增帧"
+                        title="新增帧"
+                        @click="appendBlankFrame"
+                    >
+                        ＋
+                    </button>
                 </div>
                 <div class="canvas-holder">
                     <CanvasSurface class="surface" :editor="editor" @ready="onReady" />
@@ -1653,6 +1686,32 @@ onBeforeUnmount(() => {
     outline: none;
 }
 
+/* 帧尾「＋」钮（26 票增帧）：tab 条尾部普通按钮（非 tab 角色），虚线框示意追加位 */
+.frame-add {
+    flex: none;
+    box-sizing: border-box;
+    width: 26px;
+    height: 26px;
+    margin-left: 4px;
+    padding: 0;
+    border: 1px dashed var(--shell-line-strong);
+    border-radius: 6px;
+    background: transparent;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--shell-fg-3);
+    cursor: pointer;
+}
+
+.frame-add:hover {
+    border-color: var(--shell-accent);
+    color: var(--shell-accent);
+}
+
+.frame-add:focus-visible {
+    border-color: var(--shell-accent);
+    outline: 1px solid var(--shell-accent);
+}
 
 /* canvas-holder：画布与覆盖物（标尺/参考线/对齐浮条）的定位上下文 */
 .canvas-holder {
