@@ -3,8 +3,8 @@
 // 约定：帧缓冲条目的 graphJson 以 canonical encode（decode→encode 往返恒等形态）
 // 的 JSON 字符串持有——dirty 比较与保存载荷直接消费字符串，避免对大 wire 对象
 // 反复 stringify，也保证「切出快照 ↔ 基线」两侧同形不产生伪差异。
-import { decodeGraph, encodeGraph } from '@hankchen/canvas-next'
-import type { Canvas } from '@hankchen/canvas-next'
+import { decodeGraph, encodeGraph } from '@hankchen/canvas'
+import type { Canvas } from '@hankchen/canvas'
 
 import type { TemplateWritePayload } from '../api'
 

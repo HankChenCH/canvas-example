@@ -1,18 +1,15 @@
 # web 多阶段构建(spec §1.4):node:22 + pnpm 构建相 → nginx:alpine 运行相,
-# dist 与 nginx.conf 打入镜像。canvas-web 四包经 pnpm file: 引用且在 context 外——
-# compose additional_contexts 挂进 canvasweb 上下文,构建内按工作区同构布局摆放
-# (/src/example/web + /src/canvas-web),file: 依赖与 style.css @source 的相对路径
-# 原样解析,package.json/锁文件零改动。
+# dist 与 nginx.conf 打入镜像。canvas 四包依赖走发布版本(npm @hankchen/canvas*),
+# pnpm install 自 registry 拉取;editor-vue 发布包内的工具类由宿主 tailwind 扫描
+# 编译(style.css @source 指向 node_modules 内包 dist,见 src/style.css)。
 
 FROM node:22-alpine AS build
 RUN npm install -g pnpm@10
 WORKDIR /src
-COPY --from=canvasweb /packages/ /src/canvas-web/packages/
-# 链接包目录内宿主安装残留的 node_modules(pnpm 符号链接)在镜像内是死链,清掉防干扰
-RUN rm -rf /src/canvas-web/packages/*/node_modules
-COPY web/ /src/example/web/
+COPY web/package.json web/pnpm-lock.yaml /src/example/web/
 WORKDIR /src/example/web
 RUN pnpm install --frozen-lockfile
+COPY web/ /src/example/web/
 RUN pnpm build
 
 FROM nginx:alpine

@@ -4,27 +4,22 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@hankchen/canvas-next': file:../../canvas-web/packages/canvas-next
-  '@hankchen/canvas-next-browser-renderer': file:../../canvas-web/packages/canvas-next-browser-renderer
-  '@hankchen/canvas-next-editor': file:../../canvas-web/packages/canvas-next-editor
-
 importers:
 
   .:
     dependencies:
-      '@hankchen/canvas-next':
-        specifier: file:../../canvas-web/packages/canvas-next
-        version: file:../../canvas-web/packages/canvas-next
-      '@hankchen/canvas-next-browser-renderer':
-        specifier: file:../../canvas-web/packages/canvas-next-browser-renderer
-        version: file:../../canvas-web/packages/canvas-next-browser-renderer
-      '@hankchen/canvas-next-editor':
-        specifier: file:../../canvas-web/packages/canvas-next-editor
-        version: file:../../canvas-web/packages/canvas-next-editor
-      '@hankchen/canvas-next-editor-vue':
-        specifier: file:../../canvas-web/packages/canvas-next-editor-vue
-        version: file:../../canvas-web/packages/canvas-next-editor-vue(vue@3.5.43(typescript@5.9.3))
+      '@hankchen/canvas':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@hankchen/canvas-browser-renderer':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@hankchen/canvas-editor':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@hankchen/canvas-editor-vue':
+        specifier: ^0.1.1
+        version: 0.1.1(vue@3.5.43(typescript@5.9.3))
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)
@@ -76,19 +71,19 @@ packages:
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
 
-  '@hankchen/canvas-next-browser-renderer@file:../../canvas-web/packages/canvas-next-browser-renderer':
-    resolution: {directory: ../../canvas-web/packages/canvas-next-browser-renderer, type: directory}
+  '@hankchen/canvas-browser-renderer@0.1.0':
+    resolution: {integrity: sha512-MYt+uztz03wKitkOZUoWwhJU0ANxj/2Ah1XQGOGkBpWANN4NNoVFY0jbi8a+LchxiZJiWWbZso7vGTPQSgYcPA==}
 
-  '@hankchen/canvas-next-editor-vue@file:../../canvas-web/packages/canvas-next-editor-vue':
-    resolution: {directory: ../../canvas-web/packages/canvas-next-editor-vue, type: directory}
+  '@hankchen/canvas-editor-vue@0.1.1':
+    resolution: {integrity: sha512-SjwqkvK9gjsiJ3N9OgofXD77gImVsJF2pgF3XoLDgvcSX8R5FsqQfG9dWCpQD/QUSEVH7x616XxxY4GHFERTLQ==}
     peerDependencies:
       vue: ^3.5.0
 
-  '@hankchen/canvas-next-editor@file:../../canvas-web/packages/canvas-next-editor':
-    resolution: {directory: ../../canvas-web/packages/canvas-next-editor, type: directory}
+  '@hankchen/canvas-editor@0.1.0':
+    resolution: {integrity: sha512-VKJGpdMP0bEQTRuKdLq+naJPMhm0MKVnmj4ljljKe3plSouXU4ineiMtXeIVhKgaKqqUws7U9v4/fS7N0qpRqw==}
 
-  '@hankchen/canvas-next@file:../../canvas-web/packages/canvas-next':
-    resolution: {directory: ../../canvas-web/packages/canvas-next, type: directory}
+  '@hankchen/canvas@0.1.0':
+    resolution: {integrity: sha512-bPdyA1TcfptqE6yVExqsZZjh9qNQHT3g2M4ecHXMId8/ZQLizUmqUejkwurrTMk+0cY59CD+ubRdjNqM1Z1i4Q==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -902,24 +897,24 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@hankchen/canvas-next-browser-renderer@file:../../canvas-web/packages/canvas-next-browser-renderer':
+  '@hankchen/canvas-browser-renderer@0.1.0':
     dependencies:
-      '@hankchen/canvas-next': file:../../canvas-web/packages/canvas-next
+      '@hankchen/canvas': 0.1.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-next-editor-vue@file:../../canvas-web/packages/canvas-next-editor-vue(vue@3.5.43(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@0.1.1(vue@3.5.43(typescript@5.9.3))':
     dependencies:
-      '@hankchen/canvas-next-editor': file:../../canvas-web/packages/canvas-next-editor
+      '@hankchen/canvas-editor': 0.1.0
       '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)
 
-  '@hankchen/canvas-next-editor@file:../../canvas-web/packages/canvas-next-editor':
+  '@hankchen/canvas-editor@0.1.0':
     dependencies:
-      '@hankchen/canvas-next': file:../../canvas-web/packages/canvas-next
-      '@hankchen/canvas-next-browser-renderer': file:../../canvas-web/packages/canvas-next-browser-renderer
+      '@hankchen/canvas': 0.1.0
+      '@hankchen/canvas-browser-renderer': 0.1.0
       immer: 11.1.21
 
-  '@hankchen/canvas-next@file:../../canvas-web/packages/canvas-next': {}
+  '@hankchen/canvas@0.1.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

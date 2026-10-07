@@ -2,7 +2,7 @@
 // 载荷工厂 + 单调用编排。空白图 = 单帧 A4 竖版 794×1123（与证书场景 seed 同规格）、
 // layers 空、帧名「第 1 帧」——形状与 §6.2 冒烟断言 4 同源（服务端保存预检与前端
 // decodeGraph 双吃）；底图图 = 画布宽高取图片像素宽高、单层 ImageLayer「底图」铺满
-// 画布（wire 逐键同 canvas-next encodeGraph canonical 输出，测试以往返恒等锁死）。
+// 画布（wire 逐键同 @hankchen/canvas encodeGraph canonical 输出，测试以往返恒等锁死）。
 // flowChain 显式 null = 空链 = 纯文档管线（spec §3.1）；不带 dataSourceId（spec
 // §2.4 #3，数据源是独立实体，后续经编辑器抽屉绑定）。与 Vue/DOM 解耦——尺寸解码
 // （createImageBitmap）留宿主，编排消费已解码字节 + 像素尺寸；HTTP 客户端经调用方

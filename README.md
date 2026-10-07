@@ -13,7 +13,7 @@ Go 服务端(go-canvas + image-renderer)+ canvas-web 前端,以「结业证书�
 
 ## 布局
 
-- `server/` — Go HTTP 后端(module `example/server`,go.mod 双 replace 指向 `../go-canvas` 两个本地 module)
+- `server/` — Go HTTP 后端(module `example/server`,依赖走 module proxy:`github.com/HankChenCH/go-canvas` + `image-renderer` v1.0.0)
 - `web/` — canvas-web 宿主编辑器(14 票起)
 - `scripts/smoke.sh` — spec §6.2 curl 冒烟断言(双轨通用)
 - `compose.yaml` + `nginx.conf` + 两 `Dockerfile` — 验收/演示轨(20 票起)
@@ -46,8 +46,7 @@ example/scripts/smoke.sh                  # 对 compose 轨跑 spec §6.2 全 12
 
 - 两服务:`server`(CGO_ENABLED=0 纯 Go 构建 → alpine,WORKDIR=/app 随镜像带 seed/ 与字体)
   + `nginx`(node:22+pnpm 构建 dist → nginx:alpine,静态 + SPA fallback,反代 /api /assets /renders)。
-- 两个本地依赖仓在 build context 之外,经 `additional_contexts` 挂入,镜像内按工作区
-  同构布局摆放(`/src/example/…` + `/src/go-canvas` + `/src/canvas-web`),go.mod replace
-  与 pnpm file: 相对路径原样解析——依赖仓零改动。
+- canvas 依赖全部走发布版本(module proxy `go-canvas` v1.0.0 + npm `@hankchen/canvas*`),
+  镜像构建期自 registry/proxy 拉取,无本地依赖仓接线。
 - 出网注意:机构徽标是唯一外网依赖(picsum);离线演示可把 dataset 的 `org.logo`
   换成自引用 URL(`/assets/u/…`)。

@@ -56,21 +56,21 @@ import {
     applyViewportTransform,
     drawResourceMarkers,
     exportPreviewPng,
-} from '@hankchen/canvas-next-browser-renderer'
-import type { ResourceState } from '@hankchen/canvas-next-browser-renderer'
+} from '@hankchen/canvas-browser-renderer'
+import type { ResourceState } from '@hankchen/canvas-browser-renderer'
 import {
     ARM_CREATE_LAYER_TYPES,
     EditorSession,
     isLockedPath,
     isRootLayerPath,
     rootLayerOf,
-} from '@hankchen/canvas-next-editor'
+} from '@hankchen/canvas-editor'
 import type {
     EditorShortcutAction,
     LayerType,
     OverlayPainter,
     UploadFile,
-} from '@hankchen/canvas-next-editor'
+} from '@hankchen/canvas-editor'
 import {
     ADD_LAYER_MENU,
     ARM_LAYER_CREATE_HINT,
@@ -87,7 +87,7 @@ import {
     useTransientFeedback,
     type CanvasSurfaceReady,
     type DropdownMenuEntry,
-} from '@hankchen/canvas-next-editor-vue'
+} from '@hankchen/canvas-editor-vue'
 import {
     AlignFloatBar,
     CanvasSurface,
@@ -99,7 +99,7 @@ import {
     drawCreateRubberBand,
     drawFindMatches,
     drawSelectionGizmo,
-} from '@hankchen/canvas-next-editor-vue'
+} from '@hankchen/canvas-editor-vue'
 import {
     api,
     ApiError,

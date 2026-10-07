@@ -1,10 +1,10 @@
 // 帧缓冲纯逻辑测试（16 票 TDD 缝）：载入逐帧 canonical 化、文档级 dirty 口径
 // （spec §4.4：当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名）、保存载荷组装。
-// 全部 Node 无 DOM 环境，graph 造数对齐 canvas-next roundtrip 测试的 canonical 形态。
+// 全部 Node 无 DOM 环境，graph 造数对齐 @hankchen/canvas roundtrip 测试的 canonical 形态。
 import { describe, expect, it } from 'vitest'
 
-import { decodeGraph, encodeGraph } from '@hankchen/canvas-next'
-import type { WireGraph, WireLayerNode } from '@hankchen/canvas-next'
+import { decodeGraph, encodeGraph } from '@hankchen/canvas'
+import type { WireGraph, WireLayerNode } from '@hankchen/canvas'
 
 import {
     baselineFromSlots,

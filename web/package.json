@@ -12,10 +12,10 @@
         "typecheck": "vue-tsc --noEmit -p tsconfig.json"
     },
     "dependencies": {
-        "@hankchen/canvas-next": "file:../../canvas-web/packages/canvas-next",
-        "@hankchen/canvas-next-browser-renderer": "file:../../canvas-web/packages/canvas-next-browser-renderer",
-        "@hankchen/canvas-next-editor": "file:../../canvas-web/packages/canvas-next-editor",
-        "@hankchen/canvas-next-editor-vue": "file:../../canvas-web/packages/canvas-next-editor-vue",
+        "@hankchen/canvas": "^0.1.0",
+        "@hankchen/canvas-browser-renderer": "^0.1.0",
+        "@hankchen/canvas-editor": "^0.1.0",
+        "@hankchen/canvas-editor-vue": "^0.1.1",
         "vue": "^3.5.43",
         "vue-router": "^4"
     },
@@ -28,12 +28,5 @@
         "vite": "^8.3.1",
         "vitest": "^5.0.1",
         "vue-tsc": "^3.3.11"
-    },
-    "pnpm": {
-        "overrides": {
-            "@hankchen/canvas-next": "file:../../canvas-web/packages/canvas-next",
-            "@hankchen/canvas-next-browser-renderer": "file:../../canvas-web/packages/canvas-next-browser-renderer",
-            "@hankchen/canvas-next-editor": "file:../../canvas-web/packages/canvas-next-editor"
-        }
     }
 }

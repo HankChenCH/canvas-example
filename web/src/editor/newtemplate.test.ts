@@ -3,7 +3,7 @@
 // 无 DOM 环境。（24 票追加底图快捷建模板：载荷工厂 + 编排同缝测试。）
 import { describe, expect, it } from 'vitest'
 
-import { decodeGraph, encodeGraph } from '@hankchen/canvas-next'
+import { decodeGraph, encodeGraph } from '@hankchen/canvas'
 
 import { ApiError } from '../api'
 import type { TemplateRecord, TemplateWritePayload } from '../api'
