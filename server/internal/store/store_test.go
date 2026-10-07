@@ -608,3 +608,45 @@ func TestDeleteTemplate_CascadesRenderRows(t *testing.T) {
 		t.Fatalf("再删已删模板 err = %v, 期望 ErrNotFound", err)
 	}
 }
+
+// TestDeleteDataSource_GuardsReferences 删除数据源(28 票,spec §2.4 #6e):
+// 零引用删成功且行消失;被模板引用 → ErrDataSourceInUse 且实体原样在
+// (引用不悬空,先解绑再删);不存在 → ErrDataSourceNotFound
+func TestDeleteDataSource_GuardsReferences(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	// 零引用:删除成功且行消失
+	dsID, err := st.CreateDataSource(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("创建数据源: %v", err)
+	}
+	if err := st.DeleteDataSource(ctx, dsID); err != nil {
+		t.Fatalf("删除零引用数据源: %v", err)
+	}
+	if _, err := st.GetDataSource(ctx, dsID); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("已删数据源期望 ErrDataSourceNotFound, 实得 %v", err)
+	}
+
+	// 被引用:拒绝且实体不动
+	dsID, err = st.CreateDataSource(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("重建数据源: %v", err)
+	}
+	bound := seedContent()
+	bound.DataSourceID = &dsID
+	if _, err := st.CreateTemplate(ctx, bound); err != nil {
+		t.Fatalf("创建引用模板: %v", err)
+	}
+	if err := st.DeleteDataSource(ctx, dsID); !errors.Is(err, ErrDataSourceInUse) {
+		t.Fatalf("被引用删除 err = %v, 期望 ErrDataSourceInUse", err)
+	}
+	if _, err := st.GetDataSource(ctx, dsID); err != nil {
+		t.Fatalf("被拒删除后实体应原样在: %v", err)
+	}
+
+	// 不存在 → ErrDataSourceNotFound
+	if err := st.DeleteDataSource(ctx, 999); !errors.Is(err, ErrDataSourceNotFound) {
+		t.Fatalf("删除不存在 err = %v, 期望 ErrDataSourceNotFound", err)
+	}
+}

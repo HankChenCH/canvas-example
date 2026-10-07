@@ -54,6 +54,8 @@ func newServer(st *store.Store, rs *render.Service) http.Handler {
 	mux.HandleFunc("POST /api/datasources", s.handleCreateDataSource)
 	mux.HandleFunc("GET /api/datasources/{id}", s.handleGetDataSource)
 	mux.HandleFunc("PUT /api/datasources/{id}", s.handleUpdateDataSource)
+	// 删除数据源(spec §2.4 #6e,28 票):被模板引用时 409 拒绝,引用不悬空
+	mux.HandleFunc("DELETE /api/datasources/{id}", s.handleDeleteDataSource)
 	mux.HandleFunc("POST /api/assets", s.handleUploadAsset)
 	mux.HandleFunc("POST /api/templates/{id}/render", s.handleRenderTemplate)
 	// 静态前缀(spec §2.1):URL /assets/u/x.png ↔ 磁盘 assets/u/x.png(剥前缀即三合一的相对形态)

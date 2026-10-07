@@ -13,6 +13,9 @@ const (
 	// 数据源寻址(◆;数据源是独立实体,与模板寻址分码)
 	DataSourceNotFound = "data_source_not_found"
 
+	// 数据源删除守卫(◆;spec §2.4 #6e,28 票):仍被模板引用时拒绝删除
+	DataSourceInUse = "data_source_in_use"
+
 	// 解码(FromGraph)
 	UnknownLayerType     = "unknown_layer_type"
 	TemplateRowsConflict = "template_rows_conflict"

@@ -1,16 +1,26 @@
 <script setup lang="ts">
-// 数据源管理列表页（25 票，spec §4.1 /datasources 行）：数据源自 23 票起是独立
-// HTTP 资源，此前 web 侧唯一入口是编辑器抽屉——新建须「进模板 → 未绑『创建并
-// 绑定』或已绑『另存为新』」绕行。本页做独立盘点面：摘要卡片 = name +
-// templateCount + updatedAt（GET /api/datasources 摘要恰这三字段），主区进
-// /datasources/{id} 编辑页，头部「＋ 新建数据源」→ /datasources/new。数据源无
-// DELETE（spec §2.4 契约不做），列表只读盘点、卡片无操作条。
+// 数据源管理列表页（25 票，spec §4.1 /datasources 行；28 票加卡片删除）：
+// 数据源自 23 票起是独立 HTTP 资源，此前 web 侧唯一入口是编辑器抽屉——新建须
+// 「进模板 → 未绑『创建并绑定』或已绑『另存为新』」绕行。本页做独立盘点面：
+// 摘要卡片 = name + templateCount + updatedAt（GET /api/datasources 摘要恰这三
+// 字段），主区进 /datasources/{id} 编辑页，头部「＋ 新建数据源」→ /datasources/new。
+// 卡片操作条「删除」（#6e）：弹确认框 → DELETE /api/datasources/{id} → 204 后
+// 本地移除卡片，失败（含服务端兜底 409 data_source_in_use）稳定码在前在框内
+// 回显可重试；templateCount > 0 时删除钮禁用（引用面卡片 pill 可见，title 注记
+// 先解绑）——引用不悬空。
 import { onMounted, ref } from 'vue'
 
 import { api, formatApiError, type DataSourceSummary } from '../api'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const sources = ref<DataSourceSummary[] | null>(null)
 const errorText = ref<string | null>(null)
+
+// 卡片删除态（28 票）：确认框目标卡、错误文案与在途态由本页持有（组件纯呈现）
+const deleteOpen = ref(false)
+const deleteTarget = ref<DataSourceSummary | null>(null)
+const deleteError = ref<string | null>(null)
+const deleting = ref(false)
 
 onMounted(async () => {
     try {
@@ -19,6 +29,36 @@ onMounted(async () => {
         errorText.value = formatApiError(e)
     }
 })
+
+function openDelete(s: DataSourceSummary): void {
+    deleteTarget.value = s
+    deleteError.value = null
+    deleteOpen.value = true
+}
+
+function closeDelete(): void {
+    deleteOpen.value = false
+    deleteError.value = null
+    deleteTarget.value = null
+}
+
+/** 确认删除：DELETE /datasources/{id} → 204 后本地移除卡片（空表自然落空态）；
+ *  失败文案留在确认框内（稳定码在前），可重试或取消 */
+async function runDelete(): Promise<void> {
+    if (deleting.value || !deleteTarget.value) return
+    deleting.value = true
+    deleteError.value = null
+    const target = deleteTarget.value
+    try {
+        await api.deleteDataSource(target.id)
+        sources.value = (sources.value ?? []).filter((d) => d.id !== target.id)
+        closeDelete()
+    } catch (e) {
+        deleteError.value = formatApiError(e)
+    } finally {
+        deleting.value = false
+    }
+}
 
 function formatUpdatedAt(iso: string): string {
     const t = new Date(iso)
@@ -95,8 +135,8 @@ function riseDelay(index: number): string {
                 </p>
             </div>
 
-            <!-- 盘点卡片（档案卡语言）：金色索引杠 + 引用计数 pill；主区进编辑页
-                 （无操作条——数据源契约无 DELETE） -->
+            <!-- 盘点卡片（档案卡语言）：金色索引杠 + 引用计数 pill；主区进编辑页，
+                 底部操作条「删除」（28 票，#6e——有引用禁用，服务端 409 兜底） -->
             <ul v-else-if="sources" class="mt-8 grid gap-4 sm:grid-cols-2">
                 <li
                     v-for="(s, i) in sources"
@@ -104,7 +144,7 @@ function riseDelay(index: number): string {
                     class="pc-card pc-card--file pc-rise overflow-hidden rounded-xl"
                     :style="{ animationDelay: riseDelay(i) }"
                 >
-                    <RouterLink :to="`/datasources/${s.id}`" class="group block px-5 py-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500/70">
+                    <RouterLink :to="`/datasources/${s.id}`" class="group block px-5 pb-4 pt-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500/70">
                         <div class="flex items-center justify-between gap-3">
                             <span class="font-mono text-[11px] tracking-[0.2em] text-[#e3c37f]/85">{{ indexOf(i) }}</span>
                             <span
@@ -123,6 +163,22 @@ function riseDelay(index: number): string {
                             更新于 {{ formatUpdatedAt(s.updatedAt) }}
                         </div>
                     </RouterLink>
+                    <div class="flex items-center justify-end border-t border-[#1b2740] px-4 py-2.5">
+                        <button
+                            type="button"
+                            data-card-delete
+                            class="rounded-md border border-red-900/60 px-2.5 py-1 text-xs text-red-300 transition-colors hover:border-red-600 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-red-900/60 disabled:hover:bg-transparent"
+                            :disabled="s.templateCount > 0"
+                            :title="
+                                s.templateCount > 0
+                                    ? `被 ${s.templateCount} 个模板引用：先在编辑器解绑（或删除引用模板）后可删除`
+                                    : '删除数据源：schema 与示例数据（data）随之删除，不可恢复'
+                            "
+                            @click="openDelete(s)"
+                        >
+                            删除
+                        </button>
+                    </div>
                 </li>
             </ul>
 
@@ -144,6 +200,21 @@ function riseDelay(index: number): string {
             <footer class="mt-16 border-t border-[#16233c] pt-5">
                 <p class="font-mono text-[11px] tracking-[0.25em] text-zinc-600">CANVAS NEXT · 证书批量生成示例</p>
             </footer>
+
+            <!-- 删除确认框（spec §2.4 #6e，28 票）：错误留在框内可重试，开启聚焦取消钮；
+                 被引用的实体到不了这里（删除钮禁用），服务端 409 data_source_in_use 兜底 -->
+            <ConfirmDialog
+                :open="deleteOpen"
+                :busy="deleting"
+                :error="deleteError"
+                danger
+                title="删除数据源"
+                :note="`删除「${deleteTarget?.name ?? ''}」不可恢复：schema 与示例数据（data）一并删除。引用它的模板不受影响——被引用时删除会被拒绝（先解绑或删除引用模板）。`"
+                confirm-text="删除"
+                confirm-busy-text="删除中…"
+                @confirm="runDelete"
+                @cancel="closeDelete"
+            />
         </div>
     </main>
 </template>

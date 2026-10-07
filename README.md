@@ -6,7 +6,8 @@ Go 服务端(go-canvas + image-renderer)+ canvas-web 前端,以「结业证书�
 **数据源是独立资源**(`datasources` 表 + `/api/datasources` CRUD):模板经
 `dataSourceId` 引用,多模板共享同一份 schema/data——新建模板从数据源库直接绑定,
 另存为单调用引用随行,不再逐模板重录(23 票契约修订);web 侧有独立管理页
-`/datasources`(列表/新建/编辑,25 票)。
+`/datasources`(列表/新建/编辑,25 票;卡片删除,28 票——被模板引用时 409
+`data_source_in_use` 拒绝,引用不悬空)。
 
 契约与验收唯一输入:`.scratch/example-app/spec.md`(工作区)。
 

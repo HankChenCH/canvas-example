@@ -55,7 +55,8 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 	if rec.DataSourceID != nil {
 		ds, err := s.store.GetDataSource(r.Context(), *rec.DataSourceID)
 		if err != nil {
-			// 绑定与渲染间隙的防御面:绑定端点先验存在且数据源无 DELETE,正常不可达
+			// 绑定与渲染间隙的防御面:绑定端点先验存在、数据源删除有引用守卫
+			// (被引用 409,spec §2.4 #6e),正常不可达
 			writeDataSourceStoreError(w, err, "读取数据源失败")
 			return
 		}

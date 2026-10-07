@@ -24,6 +24,10 @@ var ErrNotFound = errors.New("template not found")
 // data_source_not_found(spec §2.4 数据源段)
 var ErrDataSourceNotFound = errors.New("data source not found")
 
+// ErrDataSourceInUse 数据源删除守卫:仍被模板引用(spec §2.4 #6e,28 票——
+// 引用不悬空,先解绑或删模板再删),handler 层映射 409 data_source_in_use
+var ErrDataSourceInUse = errors.New("data source in use")
+
 // Store SQLite 存储。demo 规模下单连接串行化即可,且天然规避 SQLITE_BUSY
 type Store struct {
 	db *sql.DB
@@ -469,6 +473,36 @@ func (s *Store) ListDataSources(ctx context.Context) ([]DataSourceSummary, error
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// DeleteDataSource 删除数据源行(spec §2.4 #6e,28 票)。引用守卫:任一模板
+// data_source_id 引用该实体 → ErrDataSourceInUse,实体不动——先经绑定通道解绑
+// (或删除模板)再删,引用不悬空;不做级联解绑(静默改写引用模板会让其渲染语义
+// 悄然漂移为未绑空壳)。引用判定与删除行同事务,判定与删除间隙不可被绑定钻空。
+// id 不存在 → ErrDataSourceNotFound(回滚)
+func (s *Store) DeleteDataSource(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启数据源删除事务: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // Commit 后为 no-op
+	var refs int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM templates WHERE data_source_id = ?`, id,
+	).Scan(&refs); err != nil {
+		return fmt.Errorf("查数据源 %d 引用: %w", id, err)
+	}
+	if refs > 0 {
+		return ErrDataSourceInUse
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM datasources WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("删除数据源 %d: %w", id, err)
+	}
+	if err := requireRow(res, "删除数据源", id, ErrDataSourceNotFound); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // --- 渲染记录(13 票,spec §2.4 #7)---

@@ -141,6 +141,10 @@ export const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
         }),
+    // DELETE /api/datasources/{id}（spec §2.4 #6e，28 票）：204 无响应体——被模板
+    // 引用时 409 data_source_in_use 拒绝（引用不悬空，先解绑或删模板再删）
+    deleteDataSource: (id: string | number) =>
+        request<null>(`/api/datasources/${id}`, { method: 'DELETE' }),
     // multipart 上传：字段名 file（spec §2.4 #8）；不手写 Content-Type（boundary
     // 归浏览器）；响应 url 前导斜杠形态，原样写 graph spec.src（spec §2.2）
     uploadAsset: (file: { name: string; mime: string; bytes: Uint8Array }) => {

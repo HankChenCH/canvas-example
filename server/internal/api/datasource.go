@@ -1,8 +1,9 @@
 // 数据源独立实体端点(spec §2.4 数据源段):GET/POST /api/datasources、
-// GET/PUT /api/datasources/{id} 与绑定端点 PUT /api/templates/{id}/datasource。
+// GET/PUT/DELETE /api/datasources/{id} 与绑定端点 PUT /api/templates/{id}/datasource。
 // draft-07 完整校验权威在服务端(04 票锚点①):schema 本身不合法 → schema_invalid、
 // data 不过 schema → dataset_schema_mismatch;模板对数据源只持引用,绑定/解绑
-// 走模板侧绑定通道,数据源内容编辑影响所有引用它的模板。
+// 走模板侧绑定通道,数据源内容编辑影响所有引用它的模板;删除有引用守卫
+// (#6e,28 票:被引用 409,引用不悬空)。
 package api
 
 import (
@@ -115,7 +116,7 @@ func (s *Server) handleUpdateDataSource(w http.ResponseWriter, r *http.Request) 
 
 // handleBindTemplateDataSource PUT /api/templates/{id}/datasource → 200 更新后
 // 全量 TemplateRecord:{dataSourceId} 引用列整存替换,null = 解绑;引用存在性
-// 先验(数据源无 DELETE 端点,绑定后引用不悬空)
+// 先验(数据源删除有引用守卫 #6e,绑定后引用不悬空)
 func (s *Server) handleBindTemplateDataSource(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -138,6 +139,26 @@ func (s *Server) handleBindTemplateDataSource(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.respondTemplate(w, r, http.StatusOK, id)
+}
+
+// handleDeleteDataSource DELETE /api/datasources/{id} → 204 无响应体;id 非整数
+// 或不存在 → 404 data_source_not_found;仍被模板引用 → 409 data_source_in_use
+// (spec §2.4 #6e,28 票:引用不悬空——先经绑定通道解绑或删除模板再删)
+func (s *Server) handleDeleteDataSource(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, codes.DataSourceNotFound, "数据源不存在")
+		return
+	}
+	if err := s.store.DeleteDataSource(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrDataSourceInUse) {
+			writeError(w, http.StatusConflict, codes.DataSourceInUse, "数据源仍被模板引用，请先解绑或删除相关模板")
+			return
+		}
+		writeDataSourceStoreError(w, err, "删除数据源失败")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // respondDataSource 数据源写端点统一出口:回读全量记录(POST 201 / PUT 200 同形)
