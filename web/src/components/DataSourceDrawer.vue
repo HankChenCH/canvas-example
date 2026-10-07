@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
  * DataSourceDrawer：数据源抽屉（23 票重构：数据源为独立实体、模板持引用，
- * spec §4.3 三段式）。
+ * spec §4.3 两段式——29 票流链段迁出为独立的流链编辑器 FlowChainDrawer）。
  *
- * 一个抽屉、三段，段间距 + 各自按钮区分：
+ * 一个抽屉、两段，段间距 + 各自按钮区分：
  * - 绑定段：当前绑定展示 + 数据源列表下拉 + 绑定/解绑动作钮 → 宿主走
  *   PUT /templates/{id}/datasource（引用列整存替换）；绑定列表来自
  *   GET /datasources 摘要（含 templateCount 共享影响面）。
@@ -12,10 +12,8 @@
  *   注记）；未绑时同三输入 + 「创建并绑定」→ POST /datasources + 绑定。已绑时
  *   另有「另存为新数据源」（宿主弹名字框 → POST + 重绑，copy-on-write）。
  *   schema_invalid / dataset_schema_mismatch 等由宿主回显在段内（contentError）。
- * - 流链段：flowChain JSON 文本域 + 「保存流链」钮 → 宿主走文档级 PUT
- *   （canvases 一并整存）；flow_chain_invalid 等编译码由宿主回显在段内。
  *
- * 状态边界：下拉选中项、文本域草稿（defineModel 四连）、段内独立未保存标记、
+ * 状态边界：下拉选中项、文本域草稿（defineModel 三连）、段内独立未保存标记、
  * 错误文案、保存在途态全部由宿主持有——本组件纯呈现，不持业务状态。
  * Teleport body + 自带令牌块（脱离宿主 DOM 子树，HelpDialog/ContextMenu 先例）；
  * 非模态，画布保持可交互。
@@ -28,7 +26,6 @@ const selectedBindId = defineModel<number | null>('selectedBindId', { required: 
 const nameText = defineModel<string>('nameText', { required: true })
 const schemaText = defineModel<string>('schemaText', { required: true })
 const dataText = defineModel<string>('dataText', { required: true })
-const flowChainText = defineModel<string>('flowChainText', { required: true })
 
 const props = defineProps<{
     /** 抽屉开合（宿主顶栏「数据源」钮驱动） */
@@ -44,10 +41,6 @@ const props = defineProps<{
     contentDirty: boolean
     contentSaving: boolean
     contentError: string | null
-    /** 流链段：独立未保存标记、在途态（文档级 PUT）、错误回显 */
-    flowChainDirty: boolean
-    flowChainSaving: boolean
-    flowChainError: string | null
 }>()
 
 const emit = defineEmits<{
@@ -58,7 +51,6 @@ const emit = defineEmits<{
     saveContent: []
     /** 另存为新数据源（仅已绑可用；宿主弹名字框编排 POST + 重绑） */
     saveAsNew: []
-    saveFlowchain: []
 }>()
 
 /** 下拉值 ↔ 可空 id 桥：'' = 未绑定（null） */
@@ -173,37 +165,6 @@ const bindActionLabel = computed(() => (selectedBindId.value === null ? '解绑'
                         @click="emit('saveContent')"
                     >
                         {{ contentSaving ? '保存中…' : boundId !== null ? '保存数据源' : '创建并绑定' }}
-                    </button>
-                </footer>
-            </section>
-
-            <!-- 段三：流链（flowChain 文本域 + 「保存流链」→ 文档级 PUT，canvases 一并整存） -->
-            <section class="cn-dsw__section" data-flowchain-section aria-label="流链">
-                <label class="cn-dsw__label" for="dsw-flowchain">flowChain（FlowChainNode[] JSON；空链填 null）</label>
-                <textarea
-                    id="dsw-flowchain"
-                    v-model="flowChainText"
-                    class="cn-dsw__input"
-                    data-flowchain-input
-                    rows="6"
-                    spellcheck="false"
-                ></textarea>
-                <p class="cn-dsw__note">
-                    合法形态：节点为封闭 4 键 <code>{ frame, mode, quota?, omitIfEmpty? }</code
-                    >，frame 为帧下标（0 起）、mode ∈ fixed｜paged、quota 仅 fixed 合法；paged 至多一个且必须在链尾；
-                    空链（null）= 不经流链逐帧全量填充。保存走文档级通道，各帧内容一并整存。
-                </p>
-                <p v-if="flowChainError" class="cn-dsw__error" data-flowchain-error>{{ flowChainError }}</p>
-                <footer class="cn-dsw__footer">
-                    <span v-if="flowChainDirty" class="cn-dsw__unsaved" data-flowchain-unsaved>● 未保存</span>
-                    <button
-                        type="button"
-                        class="cn-dsw__save"
-                        data-save-flowchain
-                        :disabled="flowChainSaving"
-                        @click="emit('saveFlowchain')"
-                    >
-                        {{ flowChainSaving ? '保存中…' : '保存流链' }}
                     </button>
                 </footer>
             </section>

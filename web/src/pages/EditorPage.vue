@@ -20,14 +20,20 @@
 // 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
 // onBeforeRouteLeave confirm + 页签关闭 beforeunload 双保险；保存成功归 clean、基线
 // 同步本次发送各帧。
-// 数据源抽屉（spec §4.3 三段式，23 票重构：数据源为独立实体、模板持引用）：
-// 绑定段（数据源列表下拉 + 绑定/解绑 → PUT /templates/{id}/datasource，引用列
-// 整存替换）、内容段（编辑绑定的数据源实体——name/schema/data + 「保存数据源」
-// → PUT /datasources/{id}，共享实体影响所有引用模板；未绑时「创建并绑定」→
-// POST + 绑定；已绑另有「另存为新数据源」→ 弹名字框 POST + 重绑）、流链段
-// （flowChain 文本域 +「保存流链」→ 文档级 PUT，canvases 一并整存，flow_chain_
-// invalid 等编译码段内回显）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混
-// 全局指示灯；数据源实体与绑定均不进全局 dirty 口径，flowChain 草稿进（spec §4.4）。
+// 数据源抽屉（spec §4.3 两段式，23 票重构：数据源为独立实体、模板持引用；
+// 29 票流链段迁出）：绑定段（数据源列表下拉 + 绑定/解绑 → PUT
+// /templates/{id}/datasource，引用列整存替换）、内容段（编辑绑定的数据源实体
+// ——name/schema/data + 「保存数据源」→ PUT /datasources/{id}，共享实体影响
+// 所有引用模板；未绑时「创建并绑定」→ POST + 绑定；已绑另有「另存为新数据源」
+// → 弹名字框 POST + 重绑）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混
+// 全局指示灯；数据源实体与绑定均不进全局 dirty 口径（spec §4.4）。
+// 流链编辑器（spec §4.2，29 票）：帧 tab 条「流链」钮开合 FlowChainDrawer——
+// 流链按帧下标引用、与帧强相关，不再寄居数据源抽屉。结构化帧列表（每帧一行：
+// 不在链/fixed/paged 三选 + quota + omitIfEmpty）取代 JSON 文本域，草稿真值源 =
+// 结构化条目数组（src/editor/flowchain.ts 纯逻辑，TDD 缝），wire 链在保存/比较时
+// 派生；本地校验（双 paged/paged 链尾/模板表/rowsPath）只做 UI 拦截面（保存禁用
+// + 行内报错），权威仍在服务端保存预检；「保存流链」与顶栏保存是同一文档级 PUT
+// 通道，flow_chain_invalid 等编译码在编辑器段内回显；流链草稿进全局 dirty 口径。
 // 另存为（spec §4.5，23 票改单调用）：弹名字输入 → POST /templates（name +
 // canvases + flowChain + dataSourceId 引用随行，副本与原模板引用同一数据源实体）
 // → 成功后会话延续式重绑（dirty 基线重置为新模板）+ router.replace('/editor/<newId>')
@@ -107,24 +113,34 @@ import {
     baselineFromSlots,
     blankFrameSlot,
     buildSavePayload,
+    canonicalFlowChain,
     decodeGraphJson,
     encodeGraphJson,
     isDocDirty,
     loadFrameSlots,
-    rewriteFlowChainForDeletion,
     type FrameBaseline,
     type FrameSlot,
 } from '../editor/frames'
 import {
+    appendFrameToDraft,
+    deleteFrameFromDraft,
+    draftFromFlowChain,
+    flowChainFromDraft,
+    frameTableInfo,
+    validateFlowChainDraft,
+    type ChainRole,
+    type FlowChainDraft,
+    type FrameChainFrameInfo,
+} from '../editor/flowchain'
+import {
     dataSourceDraftPayload,
     isBindingChange,
     isSegmentDirty,
-    parseJsonDraft,
-    prettyJsonText,
     sourceDraftBaseline,
 } from '../editor/datasource'
 import { sanitizeFileBase } from '../editor/render'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
+import FlowChainDrawer from '../components/FlowChainDrawer.vue'
 import RenderResultDrawer from '../components/RenderResultDrawer.vue'
 import NamePromptDialog from '../components/NamePromptDialog.vue'
 
@@ -165,9 +181,11 @@ async function loadTemplate(id: string): Promise<void> {
             if (seq !== loadSeq) return
             applyBoundSource(source)
         }
-        // 抽屉流链文本域初值 = 模板记录 flowChain 的 pretty 文本（spec §4.3），基线同步打点
-        flowChainBaselineText = prettyJsonText(record.flowChain)
-        flowChainText.value = flowChainBaselineText
+        // 流链编辑器草稿初值 = 模板记录 flowChain 的结构化归一（spec §4.2，29 票）；
+        // 基线取同一归一口径的派生链——结构化编辑的归一（丢键/宽容键）不产生伪 dirty
+        flowChainDraft.value = draftFromFlowChain(record.flowChain, record.canvases.length)
+        const normalizedChain = flowChainFromDraft(flowChainDraft.value)
+        flowChainBaselineChain.value = normalizedChain
         // 帧缓冲载入（spec §4.2「decodeGraph 逐帧」）：逐帧解码即验 + canonical 化，
         // 基线与帧缓冲同形；任一帧解码失败 = 载入错误面（16 票）
         try {
@@ -176,7 +194,7 @@ async function loadTemplate(id: string): Promise<void> {
             errorText.value = e instanceof Error ? e.message : String(e)
             return
         }
-        savedBaseline = baselineFromSlots(record.name, frameSlots.value, record.flowChain)
+        savedBaseline = baselineFromSlots(record.name, frameSlots.value, normalizedChain)
         activeFrame.value = 0
         template.value = record
         templateName.value = record.name
@@ -255,44 +273,40 @@ function appendBlankFrame(): void {
     snapshotActiveFrame()
     const index = frameSlots.value.length
     frameSlots.value.push(blankFrameSlot(doc.width, doc.height, index))
+    flowChainDraft.value = appendFrameToDraft(flowChainDraft.value)
     activeFrame.value = index
     editor.openDocument(decodeGraphJson(frameSlots.value[index]!.graphJson))
 }
 
-// ---- 删帧（spec §4.2 删帧，27 票）：flowChain 按帧下标引用，删除即链重写——
-// 被删帧节点丢弃、其后节点下标减一、删至空链归一 null；重写权威缝与保存同源
-// （服务端保存预检照常校验）。中插/复制仍不做。 ----
+// ---- 删帧（spec §4.2 删帧，27 票 / 29 票结构化承接）：flowChain 按帧下标引用，
+// 删除即链重写——被删帧条目剔除、其余条目下标自动前移（结构化草稿的 splice 语义，
+// 升序与 paged 链尾由数组结构保持）；草稿恒为合法结构，无解析失败分支。
+// 中插/复制仍不做。 ----
 
 /** 删帧确认文案（title 单点，确认框同口径） */
 const DELETE_FRAME_TITLE =
-    '删除该帧：其后各帧下标前移，流链随帧下标重写（被删帧若在链内，其节点丢弃）；该帧内容删除后不可恢复'
+    '删除该帧：其后各帧下标前移，流链随帧下标重写（被删帧若在链内，其条目剔除）；该帧内容删除后不可恢复'
 
-/** 删帧入口：唯一帧不可删（canvases 空是非法态）；流链草稿解析守卫前置（坏 JSON
- *  就地拒绝、不劳用户确认白跑）；confirm 前置即防误删（帧级操作不进撤销历史，
- *  宿主态同 16/26 票边界） */
+/** 删帧入口：唯一帧不可删（canvases 空是非法态）；confirm 前置即防误删（帧级操作
+ *  不进撤销历史，宿主态同 16/26 票边界） */
 function confirmDeleteFrame(index: number): void {
     if (frameSlots.value.length <= 1) return
-    const flowDraft = parseJsonDraft(flowChainText.value)
-    if (!flowDraft.ok) {
-        docNote.value = '删除失败：流链 JSON 解析失败（在数据源抽屉内修复或还原后再删帧）'
-        return
-    }
     const name = frameSlots.value[index]?.name || `帧 ${index + 1}`
     if (!window.confirm(`删除帧「${name}」？${DELETE_FRAME_TITLE.replace('删除该帧：', '')}`)) return
-    deleteFrame(index, flowDraft.value)
+    deleteFrame(index)
 }
 
-/** 删帧执行：先快照当前帧入槽（防丢未保存编辑）→ splice 删槽位 → 重写流链草稿
- *  文本（watch 顺带清段内错误 + 计入 dirty）→ 活动帧重定向（删活动帧之前的前移
- *  一位；删活动帧的取同位、末位越界缩一；命中活动帧变化才 openDocument 重建会话
- *  文档，schema 不重置、视口保留不 refit）→ 显式 syncDirty（删活动帧之后的帧不产生
- *  文档事件，槽位数变化需手动触发重算）。链值取入口已解析的草稿（真值源，17 票）。 */
-function deleteFrame(index: number, chain: unknown): void {
+/** 删帧执行：先快照当前帧入槽（防丢未保存编辑）→ splice 删槽位 → 流链草稿同步
+ *  剔除条目（watch 顺带清编辑器错误 + 计入 dirty）→ 活动帧重定向（删活动帧之前的
+ *  前移一位；删活动帧的取同位、末位越界缩一；命中活动帧变化才 openDocument 重建
+ *  会话文档，schema 不重置、视口保留不 refit）→ 显式 syncDirty（删活动帧之后的帧
+ *  不产生文档事件，槽位数变化需手动触发重算）。 */
+function deleteFrame(index: number): void {
     if (!template.value || frameSlots.value.length <= 1) return
     if (renamingFrame.value !== null) cancelFrameRename()
     if (editor.store.doc) snapshotActiveFrame()
     frameSlots.value.splice(index, 1)
-    flowChainText.value = prettyJsonText(rewriteFlowChainForDeletion(chain, index))
+    flowChainDraft.value = deleteFrameFromDraft(flowChainDraft.value, index)
     const wasActive = index === activeFrame.value
     const beforeActive = index < activeFrame.value
     if (beforeActive) {
@@ -344,18 +358,41 @@ function cancelFrameRename(): void {
     renamingFrame.value = null
 }
 
-// ---- 数据源抽屉（spec §4.3 三段式，23 票：数据源为独立实体、模板持引用）。
+// ---- 数据源抽屉（spec §4.3 两段式，23 票：数据源为独立实体、模板持引用）。
 // 段内独立未保存标记 = 文本域 vs 载入基线（spec §4.4，不混全局 saveState 指示灯）
 // ——数据源实体与绑定都不在全局 dirty 口径（独立通道即时落库），抽屉开着改全局
-// 仍 clean；flowChain 草稿在全局口径内，文本变更经 syncDirty 计入。各段保存成功
-// 后基线同步本次发送文本。 ----
+// 仍 clean。各段保存成功后基线同步本次发送文本。 ----
 
 const drawerOpen = ref(false)
-// 空链文本域初值（spec §3.1：空链与 null 同义，抽屉内以 null 字面表达）
-const EMPTY_DRAFT_TEXT = 'null'
-const flowChainText = ref(EMPTY_DRAFT_TEXT)
-let flowChainBaselineText = EMPTY_DRAFT_TEXT
-const flowChainSegmentDirty = computed(() => isSegmentDirty(flowChainText.value, flowChainBaselineText))
+
+// ---- 流链编辑器（spec §4.2，29 票）：帧 tab 条「流链」钮开合 FlowChainDrawer。
+// 草稿真值源 = 结构化条目数组（条目下标 = 帧下标，增删帧同步维护），wire 链只在
+// 保存载荷与 dirty 比较时派生（flowChainDerived）；段内基线 = 载入（或保存成功）
+// 时的派生链，独立未保存标记与全局指示灯分离——草稿本身在全局 dirty 口径内
+// （spec §4.4，经 syncDirty 计入）。本地校验只是 UI 拦截面（保存禁用 + 行内报错），
+// 权威仍在服务端保存预检（spec §3.4）。 ----
+
+const flowChainDrawerOpen = ref(false)
+const flowChainDraft = ref<FlowChainDraft>([])
+const flowChainBaselineChain = shallowRef<unknown>(null)
+const flowChainDerived = computed(() => flowChainFromDraft(flowChainDraft.value))
+const flowChainSegmentDirty = computed(
+    () => canonicalFlowChain(flowChainDerived.value) !== canonicalFlowChain(flowChainBaselineChain.value),
+)
+// 帧摘要（编辑器行首帧名 + rowsPath 提示/表校验输入）：graphJson 取帧缓冲现值
+// （含未保存编辑，提示与校验跟着现场走）
+const flowChainFrames = computed<FrameChainFrameInfo[]>(() =>
+    frameSlots.value.map((slot, i) => ({ name: slot.name || `帧 ${i + 1}`, table: frameTableInfo(slot.graphJson) })),
+)
+const flowChainLocalErrors = computed(() => validateFlowChainDraft(flowChainDraft.value, flowChainFrames.value))
+// 链上帧下标集合（tab 角标）——链上帧数徽标直用 .size
+const onChainFrames = computed(() => {
+    const set = new Set<number>()
+    flowChainDraft.value.forEach((entry, i) => {
+        if (entry.role !== 'off') set.add(i)
+    })
+    return set
+})
 
 // 绑定段：数据源列表摘要（抽屉打开时刷新）+ 选中项草稿。列表错误不影响其余段。
 const sources = ref<DataSourceSummary[]>([])
@@ -401,9 +438,9 @@ watch(drawerOpen, async (open) => {
     }
 })
 
-// 段内错误随再编辑清空（陈旧错误误导）；流链草稿文本同时计入全局 dirty 口径
+// 段内错误随再编辑清空（陈旧错误误导）；流链草稿变更计入全局 dirty 口径
 const flowChainError = ref<string | null>(null)
-watch(flowChainText, () => {
+watch(flowChainDraft, () => {
     flowChainError.value = null
     syncDirty()
 })
@@ -688,13 +725,8 @@ function computeDirty(): void {
         isDirty.value = false
         return
     }
-    // flowChain 现值 = 抽屉流链草稿的解析值（spec §4.4 口径含 flowChain，17 票）；
-    // 半成品文本（解析失败）视同已改动占住 dirty，直到修复或还原
-    const flowDraft = parseJsonDraft(flowChainText.value)
-    if (!flowDraft.ok) {
-        isDirty.value = true
-        return
-    }
+    // flowChain 现值 = 流链编辑器草稿的派生链（spec §4.4 口径含 flowChain，29 票
+    // 结构化草稿恒可序列化，无半成品占位分支）
     const doc = editor.store.doc
     isDirty.value = isDocDirty({
         baseline: savedBaseline,
@@ -702,7 +734,7 @@ function computeDirty(): void {
         activeIndex: activeFrame.value,
         activeGraphJson: doc ? encodeGraphJson(doc) : null,
         templateName: templateName.value,
-        flowChain: flowDraft.value,
+        flowChain: flowChainDerived.value,
     })
 }
 
@@ -723,27 +755,25 @@ const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档
 
 /** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义，spec §4.4 文档级口径）：当前帧
  *  快照并入帧缓冲（与切出同一条缝）→ 载荷 = name + 帧缓冲各帧 + flowChain。
- *  flowChain 以抽屉流链草稿的解析值为准随载荷整存（17 票）——「保存流链」与
- *  顶栏保存是同一条文档级通道，区别只在错误回显面（段内 vs 状态栏），解析失败
- *  则任何文档级保存都无载荷可发，就地回显流链段并终止。基线 = 本次发送字节，
- *  保存期间的继续编辑保持 dirty。 */
+ *  flowChain 以流链编辑器草稿的派生链为准随载荷整存（29 票）——「保存流链」与
+ *  顶栏保存是同一条文档级通道，区别只在错误回显面（编辑器段内 vs 状态栏）；本地
+ *  校验不过不发货（顶栏入口就地提示，编辑器入口保存钮已禁用）。基线 = 本次发送
+ *  字节，保存期间的继续编辑保持 dirty。 */
 async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
     const record = template.value
     if (!record || !editor.store.doc || saving.value) return
-    const flowDraft = parseJsonDraft(flowChainText.value)
-    if (!flowDraft.ok) {
-        flowChainError.value = `flowChain JSON 解析失败：${flowDraft.message}`
-        if (origin === 'topbar') docNote.value = '保存失败：流链 JSON 解析失败（在数据源抽屉内修复或还原后再保存）'
+    if (flowChainLocalErrors.value.length > 0) {
+        if (origin === 'topbar') docNote.value = '保存失败：流链未通过本地校验（打开帧条「流链」编辑器修复后再保存）'
         return
     }
     snapshotActiveFrame()
     const sentName = templateName.value
     const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
-    const sentFlowChainText = flowChainText.value
+    const sentChain = flowChainDerived.value
     const payload = buildSavePayload({
         slots: sentSlots,
         templateName: sentName,
-        flowChain: flowDraft.value,
+        flowChain: sentChain,
     })
     saving.value = true
     docNote.value = '保存中…'
@@ -752,16 +782,16 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
         template.value = updated
         // 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），保存期间的
         // 继续编辑保持 dirty
-        savedBaseline = baselineFromSlots(sentName, sentSlots, flowDraft.value)
-        // 流链草稿已随本次文档级 PUT 落库：段基线同步发送文本，段内标记归灭
-        flowChainBaselineText = sentFlowChainText
+        savedBaseline = baselineFromSlots(sentName, sentSlots, sentChain)
+        // 流链已随本次文档级 PUT 落库：段基线同步派生链，段内标记归灭
+        flowChainBaselineChain.value = sentChain
         flowChainError.value = null
         computeDirty()
         docNote.value = '已保存到服务端'
     } catch (e) {
         const text = formatApiError(e)
         docNote.value = `保存失败：${text}`
-        // flow_chain_invalid 等编译码在流链段内回显（spec §4.3）
+        // flow_chain_invalid 等编译码在流链编辑器段内回显（spec §4.2，29 票）
         if (origin === 'flowchain') flowChainError.value = text
     } finally {
         saving.value = false
@@ -773,9 +803,36 @@ function saveTemplate(): void {
     void runDocumentSave('topbar')
 }
 
-/** 抽屉流链段「保存流链」入口：同一文档级通道，错误段内回显（spec §4.3） */
+/** 流链编辑器「保存流链」入口：同一文档级通道，错误段内回显（spec §4.2，29 票） */
 function saveFlowChain(): void {
     void runDocumentSave('flowchain')
+}
+
+// ---- 流链编辑器三事件（29 票）：草稿不可变更新（ref 整体替换触发 watch——
+// 错误清空 + dirty 防抖），quota 交编辑器钳制后的非负整数（null = 不携带） ----
+
+function setFrameChainRole(index: number, role: ChainRole): void {
+    const next = [...flowChainDraft.value]
+    const entry = next[index]
+    if (!entry) return
+    next[index] = { ...entry, role, quota: role === 'fixed' ? entry.quota : null }
+    flowChainDraft.value = next
+}
+
+function setFrameChainQuota(index: number, quota: number | null): void {
+    const next = [...flowChainDraft.value]
+    const entry = next[index]
+    if (!entry) return
+    next[index] = { ...entry, quota }
+    flowChainDraft.value = next
+}
+
+function setFrameChainOmitIfEmpty(index: number, value: boolean): void {
+    const next = [...flowChainDraft.value]
+    const entry = next[index]
+    if (!entry) return
+    next[index] = { ...entry, omitIfEmpty: value }
+    flowChainDraft.value = next
 }
 
 // ---- 另存为（spec §4.5，23 票改单调用：副本引用同一数据源实体，不再复制）：
@@ -816,9 +873,8 @@ async function runSaveAs(): Promise<void> {
         saveAsError.value = '副本名不能为空'
         return
     }
-    const flowDraft = parseJsonDraft(flowChainText.value)
-    if (!flowDraft.ok) {
-        saveAsError.value = `flowChain JSON 解析失败：${flowDraft.message}（在数据源抽屉内修复或还原后再另存）`
+    if (flowChainLocalErrors.value.length > 0) {
+        saveAsError.value = '流链未通过本地校验（在流链编辑器内修复后再另存）'
         return
     }
     saveAsSaving.value = true
@@ -830,20 +886,20 @@ async function runSaveAs(): Promise<void> {
         snapshotActiveFrame()
         const sentName = name
         const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
-        const sentFlowChainText = flowChainText.value
+        const sentChain = flowChainDerived.value
         const newRecord = await api.createTemplate({
-            ...buildSavePayload({ slots: sentSlots, templateName: sentName, flowChain: flowDraft.value }),
+            ...buildSavePayload({ slots: sentSlots, templateName: sentName, flowChain: sentChain }),
             dataSourceId: record.dataSourceId,
         })
         // ---- 成功：会话延续式重绑（spec §4.5）----
         template.value = newRecord
         // dirty 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），与保存
         // 同缝；另存期间的继续编辑保持 dirty
-        savedBaseline = baselineFromSlots(sentName, sentSlots, flowDraft.value)
+        savedBaseline = baselineFromSlots(sentName, sentSlots, sentChain)
         templateName.value = sentName
-        // 抽屉基线：流链已随 POST 落库 → 基线同步发送文本（段内标记归灭）；数据源
-        // 实体未动（引用随行），内容段基线与文本域保持
-        flowChainBaselineText = sentFlowChainText
+        // 流链编辑器基线：流链已随 POST 落库 → 段基线同步派生链（段内标记归灭）；
+        // 数据源实体未动（引用随行），内容段基线与文本域保持
+        flowChainBaselineChain.value = sentChain
         flowChainError.value = null
         computeDirty()
         saveAsOpen.value = false
@@ -1171,7 +1227,7 @@ onBeforeUnmount(() => {
                     type="button"
                     class="ghost"
                     data-open-datasource
-                    title="数据源抽屉：绑定独立数据源实体、编辑其 schema/data、流链（各自独立保存通道）"
+                    title="数据源抽屉：绑定独立数据源实体、编辑其 schema/data（各自独立保存通道）"
                     @click="drawerOpen = !drawerOpen"
                 >
                     数据源
@@ -1294,20 +1350,21 @@ onBeforeUnmount(() => {
             <LayerPanel :editor="editor" />
             <!-- canvas-area：帧 tab 条（顶）+ canvas-holder（画布覆盖物定位上下文） -->
             <div class="canvas-area">
-                <!-- 帧 tab 条（spec §4.2 多帧，16 票 / 26 票增帧 / 27 票删帧）：画布上方；
-                     单击切帧（帧间切换不提示），双击重命名（改 canvases[i].name，进 dirty）；
-                     尾部「＋」钮追加空白帧并切为活动帧（普通 button 非 tab 角色——它不是
-                     页签）；tab hover「✕」删帧（confirm 前置、链下标重写，唯一帧不出现）；
-                     不做中插/复制 -->
+                <!-- 帧 tab 条（spec §4.2 多帧，16 票 / 26 票增帧 / 27 票删帧 / 29 票流链
+                     入口）：画布上方；单击切帧（帧间切换不提示），双击重命名（改
+                     canvases[i].name，进 dirty）；尾部「＋」钮追加空白帧并切为活动帧
+                     （普通 button 非 tab 角色——它不是页签）；tab hover「✕」删帧
+                     （confirm 前置、链草稿条目剔除，唯一帧不出现）；链上帧 tab 带角标；
+                     最右「流链」钮开合流链编辑器；不做中插/复制 -->
                 <div class="frame-tabs" role="tablist" aria-label="文档帧">
                     <div
                         v-for="(slot, i) in frameSlots"
                         :key="i"
                         class="frame-tab"
-                        :class="{ 'is-active': i === activeFrame }"
+                        :class="{ 'is-active': i === activeFrame, 'is-on-chain': onChainFrames.has(i) }"
                         role="tab"
                         :aria-selected="i === activeFrame"
-                        :title="`帧 ${i + 1}：${slot.name || '（未命名）'}`"
+                        :title="`帧 ${i + 1}：${slot.name || '（未命名）'}${onChainFrames.has(i) ? '（流链）' : ''}`"
                         :data-frame-tab="i"
                         @click="switchToFrame(i)"
                         @dblclick="beginFrameRename(i)"
@@ -1356,6 +1413,18 @@ onBeforeUnmount(() => {
                     >
                         ＋
                     </button>
+                    <!-- 流链入口（29 票，spec §4.2 流链编辑器）：流链按帧下标引用，
+                         入口贴帧序列；徽标 = 链上帧数（空链不显示） -->
+                    <button
+                        type="button"
+                        class="frame-chain"
+                        data-open-flowchain
+                        aria-label="流链"
+                        title="流链（行流分配）：声明各帧如何消费数据行"
+                        @click="flowChainDrawerOpen = !flowChainDrawerOpen"
+                    >
+                        流链<span v-if="onChainFrames.size > 0" class="frame-chain-badge" data-flowchain-badge>{{ onChainFrames.size }}</span>
+                    </button>
                 </div>
                 <div class="canvas-holder">
                     <CanvasSurface class="surface" :editor="editor" @ready="onReady" />
@@ -1395,15 +1464,14 @@ onBeforeUnmount(() => {
         <!-- 快捷键帮助面板：⌘/ 与状态栏「快捷键」入口随组件与桥自带，宿主零键位代码 -->
         <HelpDialog />
 
-        <!-- 数据源抽屉（spec §4.3 三段式，23 票）：绑定/内容/流链三段，文本域草稿
-             与段内错误/标记状态全由宿主持有，组件纯呈现；段内独立标记与全局保存态
-             指示灯分离 -->
+        <!-- 数据源抽屉（spec §4.3 两段式，23 票重构 / 29 票流链段迁出）：绑定/内容
+             两段，文本域草稿与段内错误/标记状态全由宿主持有，组件纯呈现；段内独立
+             标记与全局保存态指示灯分离 -->
         <DataSourceDrawer
             v-model:selected-bind-id="selectedBindId"
             v-model:name-text="nameText"
             v-model:schema-text="schemaText"
             v-model:data-text="dataText"
-            v-model:flow-chain-text="flowChainText"
             :open="drawerOpen"
             :bound-id="template?.dataSourceId ?? null"
             :bound-name="boundSource?.name ?? null"
@@ -1413,14 +1481,28 @@ onBeforeUnmount(() => {
             :content-dirty="contentDirty"
             :content-saving="contentSaving"
             :content-error="contentError"
-            :flow-chain-dirty="flowChainSegmentDirty"
-            :flow-chain-saving="saving"
-            :flow-chain-error="flowChainError"
             @close="drawerOpen = false"
             @bind="runBind"
             @save-content="saveContent"
             @save-as-new="openSaveAsNew"
-            @save-flowchain="saveFlowChain"
+        />
+
+        <!-- 流链编辑器（spec §4.2，29 票）：帧 tab 条「流链」钮开合；结构化帧列表
+             纯呈现，草稿/本地校验/服务端错误/独立未保存标记全由宿主持有；保存流链
+             走文档级 PUT 同一通道（canvases 一并整存） -->
+        <FlowChainDrawer
+            :open="flowChainDrawerOpen"
+            :frames="flowChainFrames"
+            :draft="flowChainDraft"
+            :errors="flowChainLocalErrors"
+            :error="flowChainError"
+            :dirty="flowChainSegmentDirty"
+            :saving="saving"
+            @close="flowChainDrawerOpen = false"
+            @save="saveFlowChain"
+            @set-role="setFrameChainRole"
+            @set-quota="setFrameChainQuota"
+            @set-omit-if-empty="setFrameChainOmitIfEmpty"
         />
 
         <!-- 另存为弹窗（spec §4.5 单调用随行引用，18 票组件、23 票文案修订）：
@@ -1807,6 +1889,58 @@ onBeforeUnmount(() => {
 .frame-add:focus-visible {
     border-color: var(--shell-accent);
     outline: 1px solid var(--shell-accent);
+}
+
+/* 链上帧角标（29 票）：帧名左侧小圆点，呼应流链编辑器的行角色 */
+.frame-tab.is-on-chain .frame-tab-label::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--shell-accent);
+    vertical-align: 2px;
+}
+
+/* 帧尾「流链」钮（29 票流链编辑器入口）：与「＋」同排的实边框钮，徽标显链上帧数 */
+.frame-chain {
+    flex: none;
+    box-sizing: border-box;
+    height: 26px;
+    margin-left: 6px;
+    padding: 0 10px;
+    border: 1px solid var(--shell-line-strong);
+    border-radius: 6px;
+    background: transparent;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--shell-fg-3);
+    cursor: pointer;
+}
+
+.frame-chain:hover {
+    border-color: var(--shell-accent);
+    color: var(--shell-accent);
+}
+
+.frame-chain:focus-visible {
+    border-color: var(--shell-accent);
+    outline: 1px solid var(--shell-accent);
+}
+
+.frame-chain-badge {
+    display: inline-block;
+    min-width: 14px;
+    margin-left: 5px;
+    padding: 1px 4px;
+    border-radius: 7px;
+    background: var(--shell-accent);
+    color: var(--shell-on-accent);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
 }
 
 /* canvas-holder：画布与覆盖物（标尺/参考线/对齐浮条）的定位上下文 */

@@ -14,7 +14,6 @@ import {
     encodeGraphJson,
     isDocDirty,
     loadFrameSlots,
-    rewriteFlowChainForDeletion,
     type FrameSlot,
 } from './frames'
 
@@ -261,46 +260,6 @@ describe('baselineFromSlots / isDocDirty（spec §4.4 文档级 dirty 口径）'
                 flowChain: undefined,
             }),
         ).toBe(false)
-    })
-})
-
-describe('rewriteFlowChainForDeletion（27 票删帧链重写）', () => {
-    it('丢弃被删帧节点、其后节点下标前移、之前节点与其余键原样保留', () => {
-        const chain = [
-            { frame: 0, mode: 'fixed' },
-            { frame: 1, mode: 'fixed', quota: 3 },
-            { frame: 2, mode: 'paged', omitIfEmpty: true },
-        ]
-        expect(rewriteFlowChainForDeletion(chain, 1)).toEqual([
-            { frame: 0, mode: 'fixed' },
-            { frame: 1, mode: 'paged', omitIfEmpty: true },
-        ])
-    })
-
-    it('删链外帧：无节点引用被删下标时节点原样（尾部追加帧直接可删）', () => {
-        const chain = [{ frame: 0, mode: 'fixed' }, { frame: 1, mode: 'paged' }]
-        expect(rewriteFlowChainForDeletion(chain, 2)).toEqual(chain)
-    })
-
-    it('删首帧：其后节点全部前移，paged 保持链尾（合法链入 → 合法链出）', () => {
-        const chain = [
-            { frame: 0, mode: 'fixed' },
-            { frame: 1, mode: 'fixed' },
-            { frame: 2, mode: 'paged', omitIfEmpty: true },
-        ]
-        expect(rewriteFlowChainForDeletion(chain, 0)).toEqual([
-            { frame: 0, mode: 'fixed' },
-            { frame: 1, mode: 'paged', omitIfEmpty: true },
-        ])
-    })
-
-    it('删至空链归一 null（空链与 null 同义，spec §3.1，canonicalFlowChain 口径）', () => {
-        expect(rewriteFlowChainForDeletion([{ frame: 0, mode: 'fixed' }], 0)).toBeNull()
-    })
-
-    it('null/undefined 链原样返回（空链无节点可动）', () => {
-        expect(rewriteFlowChainForDeletion(null, 0)).toBeNull()
-        expect(rewriteFlowChainForDeletion(undefined, 3)).toBeUndefined()
     })
 })
 
