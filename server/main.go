@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hankchen/go-canvas/image-renderer/typography"
+	"github.com/HankChenCH/go-canvas/image-renderer/typography"
 
 	"example/server/internal/api"
 	"example/server/internal/seed"

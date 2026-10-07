@@ -3,13 +3,13 @@ module example/server
 go 1.25.0
 
 // 本地两个 module(与 fixtures/validate/go.mod 同形):核心 module + 位图后端嵌套 module
-replace github.com/hankchen/go-canvas => ../../go-canvas
+replace github.com/HankChenCH/go-canvas => ../../go-canvas
 
-replace github.com/hankchen/go-canvas/image-renderer => ../../go-canvas/image-renderer
+replace github.com/HankChenCH/go-canvas/image-renderer => ../../go-canvas/image-renderer
 
 require (
-	github.com/hankchen/go-canvas v0.0.0-00010101000000-000000000000
-	github.com/hankchen/go-canvas/image-renderer v0.0.0-00010101000000-000000000000
+	github.com/HankChenCH/go-canvas v0.0.0-00010101000000-000000000000
+	github.com/HankChenCH/go-canvas/image-renderer v0.0.0-00010101000000-000000000000
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	modernc.org/sqlite v1.55.0
 )
