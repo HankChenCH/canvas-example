@@ -18,8 +18,8 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
       '@hankchen/canvas-editor-vue':
-        specifier: ^0.1.1
-        version: 0.1.1(vue@3.5.43(typescript@5.9.3))
+        specifier: ^0.1.3
+        version: 0.1.3(vue@3.5.43(typescript@5.9.3))
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)
@@ -74,8 +74,8 @@ packages:
   '@hankchen/canvas-browser-renderer@0.1.0':
     resolution: {integrity: sha512-MYt+uztz03wKitkOZUoWwhJU0ANxj/2Ah1XQGOGkBpWANN4NNoVFY0jbi8a+LchxiZJiWWbZso7vGTPQSgYcPA==}
 
-  '@hankchen/canvas-editor-vue@0.1.1':
-    resolution: {integrity: sha512-SjwqkvK9gjsiJ3N9OgofXD77gImVsJF2pgF3XoLDgvcSX8R5FsqQfG9dWCpQD/QUSEVH7x616XxxY4GHFERTLQ==}
+  '@hankchen/canvas-editor-vue@0.1.3':
+    resolution: {integrity: sha512-AG0OagFwsixNUmIDlX3wDCmxWqcNg4rj93aeS2UDafC8a+E18+Us2g8NeeFawsfc3hdIBJm5bjaSUonwpTZ3Rw==}
     peerDependencies:
       vue: ^3.5.0
 
@@ -902,7 +902,7 @@ snapshots:
       '@hankchen/canvas': 0.1.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-editor-vue@0.1.1(vue@3.5.43(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@0.1.3(vue@3.5.43(typescript@5.9.3))':
     dependencies:
       '@hankchen/canvas-editor': 0.1.0
       '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
