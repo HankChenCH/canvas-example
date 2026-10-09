@@ -7,6 +7,8 @@
 #
 # 出网注意(spec §5.3):机构徽标是唯一外网依赖(picsum),容器需出网;离线演示可把
 # dataset 中 org.logo 换成自引用 URL(/assets/u/…)。
+# 对外端口由 .env 的 CANVAS_EXAMPLE_PORT 决定(默认 8080),compose 自动读同目录 .env;
+# .env 不入 git,首次使用从 .env.example 拷贝。
 services:
   server:
     build:
@@ -22,6 +24,6 @@ services:
       context: .
       dockerfile: web/Dockerfile
     ports:
-      - "8080:80"
+      - "${CANVAS_EXAMPLE_PORT:-8080}:80"
     depends_on:
       - server

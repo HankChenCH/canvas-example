@@ -8,3 +8,6 @@ server/assets/
 # web(14 票起)
 web/node_modules/
 web/dist/
+
+# 本机端口等环境配置(compose 读),不入库;模板见 .env.example
+.env

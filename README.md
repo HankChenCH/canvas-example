@@ -39,6 +39,9 @@ docker compose up --build    # 构建期从 npm / go module proxy 拉发布依�
 # → http://localhost:8080 (nginx 唯一入口:静态前端 + 反代 /api /assets /renders)
 ```
 
+对外端口可配置:拷贝 `.env.example` 为 `.env` 改 `CANVAS_EXAMPLE_PORT`(`.env` 不入 git);
+改了端口记得让 smoke 跟随:`bash scripts/smoke.sh http://localhost:<端口>`。
+
 功能验收脚本(13 组 curl 断言,对任何轨道通用):
 
 ```sh
