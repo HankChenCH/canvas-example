@@ -15,11 +15,11 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
       '@hankchen/canvas-editor':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.1.1
+        version: 0.1.1
       '@hankchen/canvas-editor-vue':
-        specifier: ^0.1.3
-        version: 0.1.3(vue@3.5.43(typescript@5.9.3))
+        specifier: ^0.1.4
+        version: 0.1.4(vue@3.5.43(typescript@5.9.3))
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)
@@ -74,13 +74,13 @@ packages:
   '@hankchen/canvas-browser-renderer@0.1.0':
     resolution: {integrity: sha512-MYt+uztz03wKitkOZUoWwhJU0ANxj/2Ah1XQGOGkBpWANN4NNoVFY0jbi8a+LchxiZJiWWbZso7vGTPQSgYcPA==}
 
-  '@hankchen/canvas-editor-vue@0.1.3':
-    resolution: {integrity: sha512-AG0OagFwsixNUmIDlX3wDCmxWqcNg4rj93aeS2UDafC8a+E18+Us2g8NeeFawsfc3hdIBJm5bjaSUonwpTZ3Rw==}
+  '@hankchen/canvas-editor-vue@0.1.4':
+    resolution: {integrity: sha512-9G3TcQ4o+nKK4xZr8nK1Y2zSOqauK5sAJmJ1HyzdlN4thfq9J2A6Y+/upRstDz8ieS5FfqAlh/aJKGThUMVC/Q==}
     peerDependencies:
       vue: ^3.5.0
 
-  '@hankchen/canvas-editor@0.1.0':
-    resolution: {integrity: sha512-VKJGpdMP0bEQTRuKdLq+naJPMhm0MKVnmj4ljljKe3plSouXU4ineiMtXeIVhKgaKqqUws7U9v4/fS7N0qpRqw==}
+  '@hankchen/canvas-editor@0.1.1':
+    resolution: {integrity: sha512-RxlJnWBG0I8ChzgFBbwCKGUA7ZjLyvHYwy+4EmVCM5D8H0xQ1itGvcUyKh8YqtPVRa8qa+tsXL+2Y0I9JfYlFg==}
 
   '@hankchen/canvas@0.1.0':
     resolution: {integrity: sha512-bPdyA1TcfptqE6yVExqsZZjh9qNQHT3g2M4ecHXMId8/ZQLizUmqUejkwurrTMk+0cY59CD+ubRdjNqM1Z1i4Q==}
@@ -902,13 +902,13 @@ snapshots:
       '@hankchen/canvas': 0.1.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-editor-vue@0.1.3(vue@3.5.43(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@0.1.4(vue@3.5.43(typescript@5.9.3))':
     dependencies:
-      '@hankchen/canvas-editor': 0.1.0
+      '@hankchen/canvas-editor': 0.1.1
       '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)
 
-  '@hankchen/canvas-editor@0.1.0':
+  '@hankchen/canvas-editor@0.1.1':
     dependencies:
       '@hankchen/canvas': 0.1.0
       '@hankchen/canvas-browser-renderer': 0.1.0
