@@ -18,6 +18,13 @@ services:
     # 监听 :8080 固定、无配置面(spec §1.4)
     expose:
       - "8080"
+    # 运行时数据挂 named volume,活在容器生命周期之外:否则 up --build 重建容器
+    # 时可写层被丢弃,SQLite/上传资产/渲染产物全部丢失。.cache/ 是物化缓存,
+    # 丢了自建,不挂。
+    volumes:
+      - server-data:/app/data
+      - server-uploads:/app/assets/u
+      - server-renders:/app/renders
 
   nginx:
     build:
@@ -27,3 +34,8 @@ services:
       - "${CANVAS_EXAMPLE_PORT:-8080}:80"
     depends_on:
       - server
+
+volumes:
+  server-data:
+  server-uploads:
+  server-renders:
