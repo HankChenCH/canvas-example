@@ -94,8 +94,19 @@ export interface RenderRecord {
     images: RenderImage[]
 }
 
+/** 字体清单条目（GET /api/fonts）：与编辑器内核 FontCatalogEntry 同构——
+ *  清单 ≠ 物化，ref 是 https 字体直链（TTF/OTF），预览 FontFace 与服务端
+ *  渲染端远程物化各自按引用拉取 */
+export interface FontInfo {
+    label: string
+    ref: string
+}
+
 export const api = {
     listTemplates: () => request<TemplateSummary[]>('/api/templates'),
+    // GET /api/fonts：字体清单白名单（seed/fonts.json 只读下发）；失败由调用方
+    // 容忍（清单不可得时编辑器字体字段退化手输）
+    listFonts: () => request<FontInfo[]>('/api/fonts'),
     getTemplate: (id: string | number) => request<TemplateRecord>(`/api/templates/${id}`),
     // POST /api/templates（spec §2.4 #3）：保存即预检，不过 400 打回不落库；
     // 201 全量记录（含随建绑定）

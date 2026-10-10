@@ -25,23 +25,27 @@ type errorEnvelope struct {
 	Error errDetail `json:"error"`
 }
 
-// Server 组装路由;store 为唯一持久化依赖,render 承载渲染管线
+// Server 组装路由;store 为唯一持久化依赖,render 承载渲染管线,
+// fonts 为字体清单只读快照(seed/fonts.json,网络字体方案)
 type Server struct {
 	store  *store.Store
 	render *render.Service
+	fonts  []FontEntry
 }
 
 // New 组装完整 HTTP handler:/api 路由 + /assets /renders FileServer 直服,
 // 外层统一套请求体上限。运行约定 CWD = example/server,静态根按 CWD 解析。
-func New(st *store.Store) http.Handler {
-	return newServer(st, render.NewService())
+// fonts 为字体清单(网络字体直链白名单,nil = 未配置,端点回空数组)
+func New(st *store.Store, fonts []FontEntry) http.Handler {
+	return newServer(st, render.NewService(), fonts)
 }
 
-// newServer 注入渲染服务(测试可替换管线依赖)
-func newServer(st *store.Store, rs *render.Service) http.Handler {
-	s := &Server{store: st, render: rs}
+// newServer 注入渲染服务与字体清单(测试可替换管线依赖)
+func newServer(st *store.Store, rs *render.Service, fonts []FontEntry) http.Handler {
+	s := &Server{store: st, render: rs, fonts: fonts}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/fonts", s.handleListFonts)
 	mux.HandleFunc("GET /api/templates", s.handleListTemplates)
 	mux.HandleFunc("GET /api/templates/{id}", s.handleGetTemplate)
 	mux.HandleFunc("POST /api/templates", s.handleCreateTemplate)

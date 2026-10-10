@@ -1,0 +1,9 @@
+[
+  { "label": "思源黑体 Regular", "ref": "https://cdn.jsdelivr.net/gh/adobe-fonts/source-han-sans@release/SubsetOTF/CN/SourceHanSansCN-Regular.otf" },
+  { "label": "思源黑体 Bold", "ref": "https://cdn.jsdelivr.net/gh/adobe-fonts/source-han-sans@release/SubsetOTF/CN/SourceHanSansCN-Bold.otf" },
+  { "label": "思源宋体 Regular", "ref": "https://cdn.jsdelivr.net/gh/adobe-fonts/source-han-serif@release/SubsetOTF/CN/SourceHanSerifCN-Regular.otf" },
+  { "label": "霞鹜文楷 Regular", "ref": "https://cdn.jsdelivr.net/gh/lxgw/LxgwWenKai@v1.510/fonts/TTF/LXGWWenKai-Regular.ttf" },
+  { "label": "马善政楷书", "ref": "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/mashanzheng/MaShanZheng-Regular.ttf" },
+  { "label": "站酷庆科黄油体", "ref": "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/zcoolqingkehuangyou/ZCOOLQingKeHuangYou-Regular.ttf" },
+  { "label": "得意黑", "ref": "https://cdn.jsdelivr.net/npm/@fontpkg/smiley-sans@2.0.4/SmileySans-Oblique.ttf" }
+]

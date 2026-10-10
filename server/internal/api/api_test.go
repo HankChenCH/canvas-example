@@ -49,7 +49,7 @@ func newTestServer(t *testing.T) (http.Handler, int64) {
 	if err != nil || len(items) == 0 {
 		t.Fatalf("取种子 id: %v", err)
 	}
-	return New(st), items[0].ID
+	return New(st, nil), items[0].ID
 }
 
 // doJSON GET 请求并解析响应 JSON
@@ -175,7 +175,7 @@ func TestStaticFileServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	h := New(st)
+	h := New(st, nil)
 
 	root := t.TempDir()
 	t.Chdir(root)
@@ -207,7 +207,7 @@ func TestEmptyListReturnsArray(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	rec := httptest.NewRecorder()
-	New(st).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/templates", nil))
+	New(st, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/templates", nil))
 	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
 		t.Fatalf("空表响应 = %s, 期望 []", body)
 	}

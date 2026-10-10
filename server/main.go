@@ -72,9 +72,18 @@ func run() error {
 		return err
 	}
 
+	// 字体清单(网络字体方案):seed/fonts.json {label, ref} 白名单只读下发,
+	// 文件缺失容忍(空清单,编辑器字体字段退化手输);JSON 病态属部署错误,
+	// 与 seed 装载同款 fail-fast。清单 ≠ 物化:ref 为 https 字体直链,预览
+	// (FontFace)与渲染端(resolver 远程物化)各自按需拉取
+	fonts, err := api.LoadFonts(filepath.Join("seed", "fonts.json"))
+	if err != nil {
+		return fmt.Errorf("字体清单装载失败(seed/fonts.json): %w", err)
+	}
+
 	srv := &http.Server{
 		Addr:              listenAddr,
-		Handler:           api.New(st),
+		Handler:           api.New(st, fonts),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	cwd, _ := os.Getwd()

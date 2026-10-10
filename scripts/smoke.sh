@@ -6,7 +6,7 @@
 # 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效;
 # 12(卡片操作修订)DELETE /api/templates/{id}:204 + 渲染记录级联清 + 产物文件保留;
 # 13(28 票)DELETE /api/datasources/{id}:被引用 409 data_source_in_use → 解绑 →
-# 204 → 404 闭环。
+# 204 → 404 闭环;14(网络字体方案)GET /api/fonts:清单白名单 {label, ref} 直链。
 # 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
 # 注意:断言 3/8 依赖种子模板仍绑种子数据源(3 页容量数学)——UI 里重绑/改数据源
 # 后会失真,属预期;重置运行库复跑:停服删 server/data/app.db 重启(播种自动补回)。
@@ -334,4 +334,12 @@ expect_error GET "/api/datasources/$DS2" application/json /dev/null 404 data_sou
 expect_error DELETE "/api/datasources/$DS2" application/json /dev/null 404 data_source_not_found
 expect_error DELETE "/api/datasources/abc" application/json /dev/null 404 data_source_not_found
 
-echo "smoke: 断言 1–13 全绿 (BASE=$BASE)"
+# ---- 断言 14(网络字体方案):GET /api/fonts —— seed/fonts.json 白名单只读下发,
+# 条目 {label, ref} 且 ref 为 https 直链(清单 ≠ 物化,服务端不下发字体字节) ----
+
+echo "== 14/14 GET /api/fonts(字体清单白名单) =="
+get /api/fonts "$TMP/fonts.json"
+assert_json "$TMP/fonts.json" 'isinstance(d, list) and len(d) >= 1'
+assert_json "$TMP/fonts.json" 'all(set(f.keys()) == {"label", "ref"} and f["label"] and f["ref"].startswith("https://") for f in d)'
+
+echo "smoke: 断言 1–14 全绿 (BASE=$BASE)"

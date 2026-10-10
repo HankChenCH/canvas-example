@@ -47,7 +47,7 @@
 // 参考，以终图为准」——导出 vs 终图词汇直接做进 UI。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import {
@@ -67,6 +67,7 @@ import {
 } from '@hankchen/canvas-editor'
 import type {
     EditorShortcutAction,
+    FontCatalogEntry,
     LayerType,
     OverlayPainter,
     UploadFile,
@@ -75,6 +76,7 @@ import {
     ADD_LAYER_MENU,
     ARM_LAYER_CREATE_HINT,
     DropdownMenu,
+    FONT_PICKER_KEY,
     HelpDialog,
     StatusBar,
     detectShortcutPlatform,
@@ -87,6 +89,7 @@ import {
     useTransientFeedback,
     type CanvasSurfaceReady,
     type DropdownMenuEntry,
+    type FontPickerContext,
 } from '@hankchen/canvas-editor-vue'
 import {
     AlignFloatBar,
@@ -452,9 +455,9 @@ watch(selectedBindId, () => {
 })
 
 // ---- 会话（spec §4.2 接线序第 1 步）：fitMargin 48 与 playground 同款；上传注入
-// 点接 POST /api/assets（响应 url 前导斜杠形态，原样写入 graph spec.src）。
-// 字体清单：demo 不做字体上传，FONT_PICKER_KEY 不 provide（spec §4.2）；
-// 文本度量不注入（票面构造参数口径），预览断行为参考、终图以服务端为准。 ----
+// 点接 POST /api/assets（响应 url 前导斜杠形态，原样写入 graph spec.src；扩展名
+// 白名单不校验内容类型，字体文件同样可传）。文本度量不注入（票面构造参数口径），
+// 预览断行为参考、终图以服务端为准。 ----
 
 /** 上传注入点：本机字节 → 服务端资源 URL（multipart 字段 file，spec §2.4 #8） */
 async function uploadAssetToServer(file: UploadFile): Promise<string> {
@@ -467,6 +470,29 @@ const editor = new EditorSession({
     fitMargin: 48,
     uploadHandler: uploadAssetToServer,
 })
+
+// 字体清单（网络字体方案）：GET /api/fonts 下发 {label, ref} 白名单（seed/
+// fonts.json，中文开源字体直链）→ 内核 FontCatalog addCustom 补录（同引用去重）
+// → FONT_PICKER_KEY 注入缝让文字图层字体字段渲染下拉。清单 ≠ 物化：预览
+// FontFace 与服务端渲染（远程物化进 .cache/）各自按 ref 拉取。拉取失败不阻塞
+// 编辑器——下拉退化为「内置默认 + 本机上传」（手输文本框只属未接缝宿主的
+// 兼容形态，本页恒接缝，上传通道不受清单影响）
+api.listFonts()
+    .then((fonts) => {
+        for (const font of fonts) editor.fontCatalog.addCustom(font)
+    })
+    .catch(() => {})
+
+/** 清单响应式桥：上传追加的字体经 catalog 订阅实时进下拉（playground 同款） */
+const fontCatalogEntries = ref<readonly FontCatalogEntry[]>(editor.fontCatalog.entries)
+const unsubscribeFontCatalog = editor.fontCatalog.subscribe((entries) => {
+    fontCatalogEntries.value = entries
+})
+provide(FONT_PICKER_KEY, {
+    entries: fontCatalogEntries,
+    canUpload: editor.canUpload,
+    uploadFont: (file) => editor.uploadFont(file),
+} satisfies FontPickerContext)
 
 const { canUndo, canRedo } = useHistory(editor)
 // 快捷键注册表（撤销/重做/复制/粘贴/画拉建层/查找/标尺…）由内核统一接键盘；
@@ -1176,6 +1202,7 @@ onBeforeUnmount(() => {
     unsubscribeAssets?.()
     unsubscribeDoc?.()
     unsubscribeToolbarReads()
+    unsubscribeFontCatalog()
     editor.dispose()
 })
 </script>
