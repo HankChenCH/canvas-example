@@ -164,9 +164,12 @@ import {
 } from '../editor/datasource'
 import { sanitizeFileBase } from '../editor/render'
 import { runPublishFlow, versionBadgeOf } from '../editor/publish'
+import { planRevertSession } from '../editor/revert'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
 import FlowChainDrawer from '../components/FlowChainDrawer.vue'
 import RenderResultDrawer from '../components/RenderResultDrawer.vue'
+import VersionHistoryDrawer from '../components/VersionHistoryDrawer.vue'
 import NamePromptDialog from '../components/NamePromptDialog.vue'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
@@ -1027,6 +1030,88 @@ async function runPublish(): Promise<void> {
     }
 }
 
+// ---- 版本历史抽屉与回滚（template-draft-publish 批 B ③，spec §6 / 票 04）：顶栏
+//      「版本」钮开合 VersionHistoryDrawer（复用抽屉模式，宿主持有全部状态）；行内
+//      回滚 → ConfirmDialog（spec 定死文案）→ POST revert 拿全量记录 → planRevertSession
+//      成算 → 会话替换（见 runRevert 详注）。 ----
+
+const versionDrawerOpen = ref(false)
+
+const revertOpen = ref(false)
+const revertTarget = ref<TemplateVersionSummary | null>(null)
+const revertError = ref<string | null>(null)
+const reverting = ref(false)
+
+/** 确认框文案（spec §6 定死句式，N = 目标版本号） */
+const revertNote = computed(() =>
+    revertTarget.value === null
+        ? '将用历史版本的内容覆盖当前草稿；未保存的修改将丢失'
+        : `将用版本 ${revertTarget.value.version} 的内容覆盖当前草稿；未保存的修改将丢失`,
+)
+
+/** 行内回滚入口：弹确认框（服务端零守卫，确认交互在前端——票 04） */
+function openRevert(v: TemplateVersionSummary): void {
+    revertTarget.value = v
+    revertError.value = null
+    revertOpen.value = true
+}
+
+function closeRevert(): void {
+    revertOpen.value = false
+    revertError.value = null
+    revertTarget.value = null
+}
+
+/** 回滚执行（spec §5 / 票 04，批 B ③）：POST revert 200 回全量模板记录（与
+ *  GET /templates/{id} 同形，无需二次 GET），拿记录做**会话替换**——会话延续式
+ *  （另存为先例，不整页重载、内容后端已就绪走 openFrameDocument 重开当前帧）：
+ *  - template/模板名/帧槽/活动帧归 0 整体切换；savedBaseline = plan.baseline
+ *    （**dirty 基线重置为新内容**——回滚后立即归 clean，与 loadTemplate/另存为
+ *    同口径；继续编辑才再 dirty，满意后发布成新版本，版本线线性）；
+ *  - 流链草稿与段基线同步重置（plan.flowChainDraft / plan.normalizedChain）；
+ *  - **工程数据零特殊处理**（spec §5）：frameStates 不动——悬空帧键由宽容读丢弃
+ *    （pickFrameStates 精神），幸存同名帧参考线原样保留（best-effort），flush
+ *    载荷按现役帧名组装自愈；
+ *  - 数据源绑定：revert 不碰绑定列（dataSourceId 理论不变），仍按全量记录如实
+ *    重取/重注 schema（applyBoundSource 同入口，与 loadTemplate 同口径）；
+ *  - 徽标/版本列表刷新 + docNote 反馈「已回滚到 vN」。
+ *  成算先行：planRevertSession 任一帧解码失败抛错时会话零变更，错误留在确认框内
+ *  可重试/取消；API 失败同样框内回显。 */
+async function runRevert(): Promise<void> {
+    const record = template.value
+    const target = revertTarget.value
+    if (!record || !target || reverting.value) return
+    reverting.value = true
+    try {
+        const updated = await api.revertTemplate(record.id, target.version)
+        // 会话替换前先成算（解码失败 → 原会话零变更）
+        const plan = planRevertSession(updated)
+        template.value = updated
+        templateName.value = updated.name
+        frameSlots.value = plan.slots
+        activeFrame.value = 0
+        savedBaseline = plan.baseline
+        flowChainDraft.value = plan.flowChainDraft
+        flowChainBaselineChain.value = plan.normalizedChain
+        flowChainError.value = null
+        // 数据源绑定按全量记录如实重注（applyBoundSource 同入口）
+        if (updated.dataSourceId === null) {
+            applyBoundSource(null)
+        } else {
+            applyBoundSource(await api.getDataSource(updated.dataSourceId))
+        }
+        revertOpen.value = false
+        openFrameDocument()
+        await refreshVersions()
+        revertTarget.value = null
+        docNote.value = `已回滚到 v${target.version}`
+    } catch (e) {
+        revertError.value = formatApiError(e)
+    } finally {
+        reverting.value = false
+    }
+}
+
 // ---- 流链编辑器三事件（29 票）：草稿不可变更新（ref 整体替换触发 watch——
 // 错误清空 + dirty 防抖），quota 交编辑器钳制后的非负整数（null = 不携带） ----
 
@@ -1294,7 +1379,7 @@ function isImeComposing(event: KeyboardEvent): boolean {
 /** 键盘：仅 Ctrl/Cmd+S（保存是宿主职责，不入内核注册表）。文本编辑中键盘路由
  *  进 textarea，保存不抢；其余快捷键已由 useShortcuts 统一处理。 */
 function onKeydown(event: KeyboardEvent): void {
-    if (saveAsOpen.value || saveAsNewOpen.value) return // 名字弹窗模态持有键盘（Enter/Esc 由弹窗自理）
+    if (saveAsOpen.value || saveAsNewOpen.value || revertOpen.value) return // 名字/确认弹窗模态持有键盘（Enter/Esc 由弹窗自理）
     if (editor.store.ui.editing !== null) return
     const mod = event.ctrlKey || event.metaKey
     if (mod && !event.shiftKey && event.key.toLowerCase() === 's') {
@@ -1487,6 +1572,17 @@ onBeforeUnmount(() => {
                 <span v-if="versionBadgeLabel" class="version-badge" data-version-badge title="版本徽标：最新已发布版本（「未发布」= 空版本史；发布/回滚后自动刷新）">
                     {{ versionBadgeLabel }}
                 </span>
+                <!-- 版本历史（template-draft-publish 批 B ③，spec §6）：开合抽屉——
+                     版本号 + 发布时间 + 行内回滚（ConfirmDialog 二次确认） -->
+                <button
+                    type="button"
+                    class="ghost"
+                    data-open-versions
+                    title="版本历史：已发布版本列表与回滚入口"
+                    @click="versionDrawerOpen = !versionDrawerOpen"
+                >
+                    版本
+                </button>
                 <button
                     type="button"
                     class="ghost"
@@ -1781,6 +1877,32 @@ onBeforeUnmount(() => {
             confirm-busy-text="创建中…"
             @confirm="runSaveAsNew"
             @cancel="closeSaveAsNew"
+        />
+
+        <!-- 版本历史抽屉（template-draft-publish 批 B ③，spec §6）：版本列表纯呈现，
+             回滚确认/在途/错误全由宿主持有；行内回滚 → ConfirmDialog → 会话替换 -->
+        <VersionHistoryDrawer
+            :open="versionDrawerOpen"
+            :versions="versions ?? []"
+            :reverting="reverting"
+            :reverting-version="revertTarget?.version ?? null"
+            @close="versionDrawerOpen = false"
+            @revert="openRevert"
+        />
+
+        <!-- 回滚确认框（spec §6 定死文案；服务端零守卫，确认交互在前端——票 04）：
+             错误留在框内可重试/取消，会话替换只在确认后发生 -->
+        <ConfirmDialog
+            :open="revertOpen"
+            :busy="reverting"
+            :error="revertError"
+            danger
+            title="回滚到历史版本"
+            :note="revertNote"
+            confirm-text="回滚"
+            confirm-busy-text="回滚中…"
+            @confirm="runRevert"
+            @cancel="closeRevert"
         />
 
         <!-- 渲染结果抽屉（spec §4.6，19 票）：记录/开合/模板名（下载建议名）由宿主
