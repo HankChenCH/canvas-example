@@ -1095,8 +1095,11 @@ async function runRevert(): Promise<void> {
     reverting.value = true
     try {
         const updated = await api.revertTemplate(record.id, target.version)
-        // 会话替换前先成算（解码失败 → 原会话零变更）
+        // 成算先行（全有或全无）：planRevertSession 任一帧解码失败、数据源实体重取
+        // 失败都发生在任何会话变更之前——失败时原会话零变更，错误留在确认框内
         const plan = planRevertSession(updated)
+        const source = updated.dataSourceId === null ? null : await api.getDataSource(updated.dataSourceId)
+        // ---- 会话替换（同步赋值段，以上均成功后才执行）----
         template.value = updated
         templateName.value = updated.name
         frameSlots.value = plan.slots
@@ -1105,12 +1108,8 @@ async function runRevert(): Promise<void> {
         flowChainDraft.value = plan.flowChainDraft
         flowChainBaselineChain.value = plan.normalizedChain
         flowChainError.value = null
-        // 数据源绑定按全量记录如实重注（applyBoundSource 同入口）
-        if (updated.dataSourceId === null) {
-            applyBoundSource(null)
-        } else {
-            applyBoundSource(await api.getDataSource(updated.dataSourceId))
-        }
+        // 数据源绑定按全量记录如实重注 schema（applyBoundSource 同入口）
+        applyBoundSource(source)
         revertOpen.value = false
         openFrameDocument()
         await refreshVersions()
