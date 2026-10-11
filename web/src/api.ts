@@ -101,12 +101,42 @@ export interface RenderImage {
     url: string
 }
 
-/** RenderRecord 响应（spec §2.3/§2.4 #7）：201 渲染一跳的落库记录 */
+/** RenderRecord 响应（spec §2.3/§2.4 #7）：201 渲染一跳的落库记录。version =
+ *  渲染所用发布版本（tdp spec §4 渲染选版）；null = "draft" 哨兵渲染或版本化
+ *  前的旧行（诚实语义，不造假数据） */
 export interface RenderRecord {
     id: number
     templateId: number
+    version: number | null
     createdAt: string
     images: RenderImage[]
+}
+
+/** 版本摘要条目（tdp spec §3，GET /api/templates/{id}/versions）：轻量列表不吐
+ *  canvases 载荷，version 降序（最新在前）；**空数组 = 未发布**——发布态永远是
+ *  推导态非存储态（徽标/下拉据此推导） */
+export interface TemplateVersionSummary {
+    version: number
+    createdAt: string
+}
+
+/** POST …/publish 响应（tdp spec §3）：201 新版本 / 200 duplicate:true（草稿列
+ *  与最新版本字节相等，幂等跳过不产生新版本行）——两种形态都算发布成功 */
+export interface PublishResult {
+    version: number
+    createdAt: string
+    /** true = 内容与最新版本一致，跳过重复发布 */
+    duplicate?: boolean
+}
+
+/** GET …/versions/{version} 单版本全量（tdp spec §3，回滚与未来预览消费）：快照
+ *  粒度 = 文档整体（canvases + flowChain）；data_source_id 是绑定不是内容，不进
+ *  快照（渲染时取当前绑定） */
+export interface TemplateVersionRecord {
+    version: number
+    canvases: { name: string; graph: unknown }[]
+    flowChain: unknown
+    createdAt: string
 }
 
 /** 字体清单条目（GET /api/fonts）：与编辑器内核 FontCatalogEntry 同构——
@@ -206,11 +236,45 @@ export const api = {
         form.append('file', new Blob([file.bytes.slice()], { type: file.mime || 'application/octet-stream' }), file.name)
         return request<{ url: string }>('/api/assets', { method: 'POST', body: form })
     },
-    // POST /api/templates/{id}/render（spec §2.4 #7）：无 body——渲染始终以服务端
-    // 存储态为准（模板 + 所引数据源），dirty 时结果对应已保存版本（spec §4.6）；30s
-    // deadline 由服务端控制，前端不另设超时
-    renderTemplate: (id: string | number) =>
-        request<RenderRecord>(`/api/templates/${id}/render`, { method: 'POST' }),
+    // POST /api/templates/{id}/render（spec §2.4 #7 / tdp spec §4 渲染选版）：可选
+    // body {version}——缺省 = 最新已发布版本（从未发布 409 template_unpublished）；
+    // 正整数 = 指定历史版本（不存在 404 version_not_found）；哨兵 "draft" = 渲染
+    // 草稿列现值（编辑器预览专用，票 03 契约修订）。无 opts 保持无 body POST
+    // （列表页批量渲染零改路径）。30s deadline 由服务端控制，前端不另设超时
+    renderTemplate: (id: string | number, opts?: { version?: number | 'draft' }) =>
+        request<RenderRecord>(
+            `/api/templates/${id}/render`,
+            opts?.version === undefined
+                ? { method: 'POST' }
+                : {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ version: opts.version }),
+                  },
+        ),
+    // POST /api/templates/{id}/publish（tdp spec §3 发布）：无 body，把草稿列固化
+    // 为新版本（201）；草稿与最新版本字节相等 → 200 duplicate:true 幂等跳过；图
+    // 病态 422 invalid_graph（preflight 守门，不产生版本行）；模板不存在 404
+    publishTemplate: (id: string | number) =>
+        request<PublishResult>(`/api/templates/${id}/publish`, { method: 'POST' }),
+    // GET /api/templates/{id}/versions（tdp spec §3 版本读家族）：轻量列表（version
+    // 降序，最新在前），空数组 = 未发布；调用方容忍失败（徽标/下拉退化，不阻塞主流程）
+    listTemplateVersions: (id: string | number) =>
+        request<TemplateVersionSummary[]>(`/api/templates/${id}/versions`),
+    // GET /api/templates/{id}/versions/{version}（tdp spec §3）：单版本全量快照
+    // （回滚消费；预览/对比归后续工作）；404 version_not_found
+    getTemplateVersion: (id: string | number, version: number) =>
+        request<TemplateVersionRecord>(`/api/templates/${id}/versions/${version}`),
+    // POST /api/templates/{id}/revert（tdp spec §5 回滚）：body {version}，服务端
+    // 单事务原子复制版本内容回草稿列；200 回全量模板记录（与 GET /templates/{id}
+    // 同形，含 editorState）——编辑器拿到即会话替换，无需二次 GET；404
+    // version_not_found。版本线线性：回滚永不产生新版本
+    revertTemplate: (id: string | number, version: number) =>
+        request<TemplateRecord>(`/api/templates/${id}/revert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version }),
+        }),
 }
 
 // 页面错误回显统一格式：稳定 code 在前（spec §2.1 按 code 判定语义），网络层
