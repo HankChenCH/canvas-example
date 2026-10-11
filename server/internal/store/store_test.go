@@ -53,7 +53,7 @@ func countRows(t *testing.T, st *Store, table string) int {
 
 func TestOpenCreatesTables(t *testing.T) {
 	st := openTestStore(t)
-	for _, table := range []string{"datasources", "templates", "renders"} {
+	for _, table := range []string{"datasources", "templates", "renders", "template_versions"} {
 		var name string
 		err := st.db.QueryRow(
 			`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, table,

@@ -66,6 +66,14 @@ func run() error {
 		return err
 	}
 
+	// 存量版本回填(模板草稿-发布-版本化,spec §2):凡零版本行的模板,现草稿列
+	// 原样固化为 v1;谓词幂等重跑 no-op。时序在 seed 之后——seed 模板同享 v1
+	if n, err := st.BackfillTemplateVersionsV1(context.Background()); err != nil {
+		return err
+	} else if n > 0 {
+		log.Printf("存量模板版本回填: %d 个模板固化为 v1", n)
+	}
+
 	// 字体启动探针(spec §2.7):失败 fail-fast 拒绝启动——内置点阵仅覆盖
 	// ASCII,静默降级中文必成方块,故不降级
 	if err := probeFont(fontPath); err != nil {

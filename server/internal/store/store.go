@@ -89,6 +89,19 @@ CREATE TABLE IF NOT EXISTS renders (
 	template_id INTEGER NOT NULL,
 	images      TEXT NOT NULL,
 	created_at  TEXT NOT NULL
+);
+-- 模板版本史(模板草稿-发布-版本化,spec §2):快照 = canvases+flow_chain 文档
+-- 整体,data_source_id 是绑定不进快照;版本行 INSERT-only 永无 UPDATE,版本号
+-- 每模板自增从 1 起(store 层事务内 MAX+1 计算,UNIQUE 兜底);新建模板空版本
+-- 史起步,存量由 BackfillTemplateVersionsV1 回填 v1
+CREATE TABLE IF NOT EXISTS template_versions (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	template_id INTEGER NOT NULL,
+	version     INTEGER NOT NULL,
+	canvases    TEXT NOT NULL,
+	flow_chain  TEXT,
+	created_at  TEXT NOT NULL,
+	UNIQUE (template_id, version)
 );`
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("建表: %w", err)
@@ -342,11 +355,12 @@ func (s *Store) UpdateTemplateEditorState(ctx context.Context, id int64, state j
 	return requireRow(res, "更新模板工程数据", id, ErrNotFound)
 }
 
-// DeleteTemplate 删除模板行并级联清其渲染记录行(无渲染历史端点,模板删后
-// 记录行不可达);渲染产物 PNG 文件保留——keep-all 快照语义,/renders 直链仍可用。
+// DeleteTemplate 删除模板行并级联清其渲染记录行与版本史行(无渲染历史端点,
+// 模板删后记录行不可达;版本是模板私有子行,随模板消亡,无 409 守卫——spec §2
+// 删除级联);渲染产物 PNG 文件保留——keep-all 快照语义,/renders 直链仍可用。
 // 数据源实体不受影响(独立资源,引用随模板行整行消失,不悬空)。
-// 事务保证级联面原子:先删 renders 再删 templates,id 不存在 → ErrNotFound
-// (回滚,已执行的级联删除一并撤销)
+// 事务保证级联面原子:先删 renders 与 template_versions 再删 templates,
+// id 不存在 → ErrNotFound(回滚,已执行的级联删除一并撤销)
 func (s *Store) DeleteTemplate(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -355,6 +369,9 @@ func (s *Store) DeleteTemplate(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }() // Commit 后为 no-op
 	if _, err := tx.ExecContext(ctx, `DELETE FROM renders WHERE template_id = ?`, id); err != nil {
 		return fmt.Errorf("级联删除模板 %d 渲染记录: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM template_versions WHERE template_id = ?`, id); err != nil {
+		return fmt.Errorf("级联删除模板 %d 版本行: %w", id, err)
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM templates WHERE id = ?`, id)
 	if err != nil {
