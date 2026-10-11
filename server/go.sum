@@ -1,5 +1,5 @@
-github.com/HankChenCH/go-canvas v1.0.0 h1:Ajef8ILyazFAoeqEa9TAZOyNwtFL/Z7ZKQVBOt8q5fg=
-github.com/HankChenCH/go-canvas v1.0.0/go.mod h1:mGvhfKWEgjm6cF6UMtRuBpFQpRLEVDMCUt0vrQwEIQ0=
+github.com/HankChenCH/go-canvas v1.1.0 h1:N8qbsfp09DMTpUTQqArFbbGYebSsHdh2AH06yGhjYto=
+github.com/HankChenCH/go-canvas v1.1.0/go.mod h1:mGvhfKWEgjm6cF6UMtRuBpFQpRLEVDMCUt0vrQwEIQ0=
 github.com/HankChenCH/go-canvas/image-renderer v1.0.0 h1:fzzFRmid+AAlMb2IWXJ7JSIDnR2MeIzQ7yIRRokoSlM=
 github.com/HankChenCH/go-canvas/image-renderer v1.0.0/go.mod h1:zVvI3SZ6CDZ+vNZLGEWoffzHUlM89yfv/cl76dUxwAs=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

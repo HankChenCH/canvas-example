@@ -3,7 +3,7 @@ module example/server
 go 1.25.0
 
 require (
-	github.com/HankChenCH/go-canvas v1.0.0
+	github.com/HankChenCH/go-canvas v1.1.0
 	github.com/HankChenCH/go-canvas/image-renderer v1.0.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	modernc.org/sqlite v1.55.0
