@@ -39,12 +39,23 @@
 // → 成功后会话延续式重绑（dirty 基线重置为新模板）+ router.replace('/editor/<newId>')
 // 不重走载入——App.vue 去 :key 后 editor→editor 参数级导航复用本页实例，路由 id
 // 与会话脱钩的导航走防御性重载兜底；中途失败错误归因弹窗内回显，不重绑不导航。
-// 渲染终图（spec §4.6，19 票）：顶栏「渲染终图」→ POST /templates/{id}/render
-// （无 body，存储态为准——dirty 可渲染，结果对应已保存版本）；等待期按钮禁用，
+// 渲染终图（spec §4.6，19 票 / tdp 批 B ④ draft 哨兵）：顶栏「渲染终图」→ POST
+// /templates/{id}/render（body {version:"draft"}——编辑器是草稿世界，预览渲草稿列
+// 现值，发布不被预览倒逼；缺省语义 = 最新已发布归列表页）；等待期按钮禁用，
 // 30s deadline 服务端控制、前端不另设超时；失败错误体（稳定码在前）走状态栏
 // 反馈段回显；成功自动打开结果抽屉（RenderResultDrawer，只显本次会话最近一次）。
 // 与预览导出并存：导出预览图钮保留（文案含「预览图」），抽屉注明「预览仅断行
 // 参考，以终图为准」——导出 vs 终图词汇直接做进 UI。
+// 发布与版本（template-draft-publish 批 B ②③，spec §6 / 票 02-05）：顶栏「发布」
+// 钮 + 轻量版本徽标（未发布/vN，数据 = 载入取一次 GET /versions，发布/回滚后刷
+// 新，失败容忍徽标隐藏）——发布编排在 src/editor/publish.ts 纯逻辑（dirty 自动
+// 先走保存流成功后 publish，一次动作；保存流不变：编辑器永远打开草稿、保存 =
+// 现有 PUT、发布是保存后的显式固化，自动促存是编排便利非「发布即保存」合并）；
+// 顶栏「版本」钮开合 VersionHistoryDrawer（版本史 = 发布史），行内回滚 →
+// ConfirmDialog（spec 定死文案）→ POST revert 全量记录 → src/editor/revert.ts
+// planRevertSession 成算 → 会话延续式替换（dirty 基线重置为新内容即归 clean、
+// 流链草稿与基线重置、工程数据零特殊处理——悬空帧键宽容读丢弃、幸存同名帧
+// 参考线原样保留；spec §5），徽标/版本列表刷新 + docNote 反馈。
 // 工程数据（project-data spec §6，工单 04/05）：编辑器状态随模板聚合持久化——宿主
 // 拼装快照 TemplateEditorStateSnapshot（schemaVersion + frames[帧名切片] + prefs），
 // 切片/常量从内核导入、宿主只拼装不解释。首载宽容恢复（null/悬空帧键 = 全默认态
@@ -1344,11 +1355,15 @@ async function runSaveAsNew(): Promise<void> {
     }
 }
 
-// ---- 渲染终图（spec §4.6，19 票）：顶栏触发 POST /templates/{id}/render（无
-// body）——渲染始终以服务端存储态为准（模板 + dataset），dirty 时可渲染、结果
-// 对应已保存版本（抽屉注记说明）。等待期按钮禁用；30s deadline 服务端控制，
-// 前端不另设超时；失败错误体 {error:{code,message}} 以稳定码在前回显状态栏反
-// 馈段；成功自动打开结果抽屉，lastRender 整体替换 = 只显本次会话最近一次。 ----
+// ---- 渲染终图（spec §4.6，19 票 / template-draft-publish 批 B ④ draft 哨兵，票 03
+// 契约修订）：顶栏触发 POST /templates/{id}/render（body {version:"draft"}）——
+// 编辑器是草稿世界，预览是编辑辅助：渲染草稿列现值，发布不被预览倒逼（缺省语义
+// 已改为最新已发布，编辑器预览若沿用缺省会变成预览已发布版而非草稿）。dirty 可
+// 渲染（草稿现值即编辑所见）；等待期按钮禁用，30s deadline 服务端控制，前端不另
+// 设超时；失败错误体（稳定码在前）走状态栏反馈段回显；成功自动打开结果抽屉
+// （RenderResultDrawer，只显本次会话最近一次）。与预览导出并存：导出预览图钮保留
+// （文案含「预览图」），抽屉注明「预览仅断行参考，以终图为准」——导出 vs 终图
+// 词汇直接做进 UI。 ----
 
 const rendering = ref(false)
 const renderDrawerOpen = ref(false)
@@ -1358,12 +1373,12 @@ async function runRender(): Promise<void> {
     const record = template.value
     if (!record || rendering.value) return
     rendering.value = true
-    docNote.value = '渲染终图中…（以服务端存储态为准，结果对应已保存版本）'
+    docNote.value = '渲染草稿中…（编辑器预览渲草稿列现值；发布版本请走列表页缺省渲染 = 最新已发布）'
     try {
-        const result = await api.renderTemplate(record.id)
+        const result = await api.renderTemplate(record.id, { version: 'draft' })
         lastRender.value = result
         renderDrawerOpen.value = true
-        docNote.value = `渲染完成，共 ${result.images.length} 页`
+        docNote.value = `渲染完成，共 ${result.images.length} 页（草稿现值）`
     } catch (e) {
         docNote.value = `渲染失败：${formatApiError(e)}`
     } finally {
@@ -1518,8 +1533,8 @@ onBeforeUnmount(() => {
          工作台 / 状态栏），页面零滚动 -->
     <main v-else class="stage">
         <!-- 顶栏（spec §4.1）：← 返回列表｜模板名可编辑（内容进 dirty 口径）｜
-             保存态｜保存 / 另存为（18 票）/ 渲染终图（19 票）/ 导出预览图（预览
-             与终图并存，spec §4.6） -->
+             保存态｜保存 / 发布 + 版本徽标（tdp 批 B ②）/ 版本（批 B ③）/ 另存为
+             （18 票）/ 渲染终图（19 票，draft 哨兵）/ 导出预览图（预览与终图并存） -->
         <header class="topbar" aria-label="编辑器顶栏">
             <div class="topbar-doc">
                 <RouterLink to="/" class="back-link" data-back-link>← 返回列表</RouterLink>
@@ -1593,13 +1608,14 @@ onBeforeUnmount(() => {
                 >
                     另存为
                 </button>
-                <!-- 渲染终图（spec §4.6，19 票）：POST /render 无 body，存储态为准；
-                     等待期禁用（30s deadline 服务端控制，前端不另设超时） -->
+                <!-- 渲染终图（spec §4.6，19 票 / 批 B ④ draft 哨兵）：{version:"draft"}
+                     渲染草稿列现值（编辑器是草稿世界，发布不被预览倒逼）；等待期禁用
+                     （30s deadline 服务端控制，前端不另设超时） -->
                 <button
                     type="button"
                     class="ghost"
                     data-render-final
-                    title="渲染终图：服务端渲染已保存版本（模板 + 数据集，dirty 时结果对应已保存版本）；服务端 30s 上限，完成自动打开结果抽屉"
+                    title="渲染终图：渲染当前草稿内容（version=draft 哨兵——预览是编辑辅助，发布不被预览倒逼；已发布版本请走列表页渲染）；服务端 30s 上限，完成自动打开结果抽屉"
                     :disabled="rendering"
                     @click="runRender"
                 >
