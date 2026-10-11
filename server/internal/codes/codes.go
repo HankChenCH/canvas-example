@@ -51,4 +51,11 @@ const (
 	// 服务端自有(◆)
 	RenderOutputWriteFailed = "render_output_write_failed"
 	InternalError           = "internal_error"
+
+	// 模板版本化(◆;模板草稿-发布-版本化 spec §3/§4):发布守门 422、渲染缺省
+	// 从未发布 409(状态冲突型,对齐 data_source_in_use)、版本寻址失败 404
+	// (对齐 template_not_found 模式)
+	InvalidGraph        = "invalid_graph"
+	TemplateUnpublished = "template_unpublished"
+	VersionNotFound     = "version_not_found"
 )

@@ -4,12 +4,19 @@
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080(compose 轨验收口径)。
 # 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
 # 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效;
-# 12(卡片操作修订)DELETE /api/templates/{id}:204 + 渲染记录级联清 + 产物文件保留;
+# 12(卡片操作修订 + 版本化)DELETE /api/templates/{id}:渲染前先 publish(缺省
+# 渲染语义 = 最新已发布,未发布 409,spec §4);204 + 渲染记录级联清 + 版本行
+# 级联清 + 产物文件保留;
 # 13(28 票)DELETE /api/datasources/{id}:被引用 409 data_source_in_use → 解绑 →
-# 204 → 404 闭环;14(网络字体方案)GET /api/fonts:清单白名单 {label, ref} 直链。
+# 204 → 404 闭环;14(网络字体方案)GET /api/fonts:清单白名单 {label, ref} 直链;
+# 15 版本化轨(模板草稿-发布-版本化,spec §7 九断言):publish 201 v2 / 重复
+# publish 200 duplicate / GET versions / 无 body 渲染 = 最新已发布带 version 字段 /
+# 显式选版 / draft 哨兵 / 未发布 409 / version_not_found 404 / revert 内容一致。
 # 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
 # 注意:断言 3/8 依赖种子模板仍绑种子数据源(3 页容量数学)——UI 里重绑/改数据源
-# 后会失真,属预期;重置运行库复跑:停服删 server/data/app.db 重启(播种自动补回)。
+# 后会失真,属预期;版本化轨断言依赖重置运行库(存量回填使 seed 持 v1,本轨首发
+# publish 拿 v2;发布幂等断言在复跑时变 duplicate),重置:停服删 server/data/app.db
+# 重启(播种自动补回)。
 set -eu
 
 BASE="${1:-http://localhost:8080}"
@@ -283,6 +290,12 @@ _status=$(request POST /api/templates application/json "$TMP/t3.json" "$TMP/t3-r
 T3="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/t3-resp.json")"
 echo "   T3=$T3"
 
+# 先发布 T3(publish v1):缺省渲染语义 = 最新已发布(明示 breaking change),
+# 未发布模板渲染 409——渲染断言前先固化 v1,顺带覆盖新模板 publish v1 路径
+_status=$(request POST "/api/templates/$T3/publish" application/json /dev/null "$TMP/t3-pub.json")
+[ "$_status" = "201" ] || die "POST publish(T3) 期望 201,实得 $_status"
+assert_json "$TMP/t3-pub.json" "d['version'] == 1 and isinstance(d['createdAt'], str)"
+
 # 先渲染一次:造渲染记录行 + 落盘产物(单帧空链直通 1 页,无外网依赖)
 _status=$(request POST "/api/templates/$T3/render" application/json /dev/null "$TMP/render3.json")
 [ "$_status" = "201" ] || die "删除前渲染期望 201,实得 $_status"
@@ -292,8 +305,10 @@ _status=$(curl -sS -o "$TMP/del.out" -w '%{http_code}' -X DELETE "$BASE/api/temp
 [ "$_status" = "204" ] || die "DELETE /api/templates/$T3 期望 204,实得 $_status"
 if [ -s "$TMP/del.out" ]; then die "DELETE 响应体应为空"; fi
 
-# 模板行与渲染记录行级联清:GET/render 寻址 404;产物文件保留直链仍服务
+# 模板行与渲染记录行级联清:GET/render 寻址 404;版本行随模板级联清(versions
+# 寻址随模板消失,事务级联细节由 store 单测钉死);产物文件保留直链仍服务
 expect_error GET "/api/templates/$T3" application/json /dev/null 404 template_not_found
+expect_error GET "/api/templates/$T3/versions" application/json /dev/null 404 template_not_found
 expect_error POST "/api/templates/$T3/render" application/json /dev/null 404 template_not_found
 _ct="$(curl -fsS -o /dev/null -w '%{content_type}' "$BASE$RENDER3_URL")" || die "已删模板产物 GET $RENDER3_URL 失败"
 [ "$_ct" = "image/png" ] || die "已删模板产物 Content-Type = $_ct, 期望 image/png"
@@ -342,4 +357,91 @@ get /api/fonts "$TMP/fonts.json"
 assert_json "$TMP/fonts.json" 'isinstance(d, list) and len(d) >= 1'
 assert_json "$TMP/fonts.json" 'all(set(f.keys()) == {"label", "ref"} and f["label"] and f["ref"].startswith("https://") for f in d)'
 
-echo "smoke: 断言 1–14 全绿 (BASE=$BASE)"
+# ---- 断言 15 版本化轨(模板草稿-发布-版本化,spec §7 九断言):基于 SEED_ID。
+# 前置:重置运行库后存量回填使 seed 持 v1(草稿列文本原样固化),本轨首发
+# publish 产生 v2;复跑不重置时 (1) 变 200 duplicate,依赖重置(见头部注记) ----
+
+echo "== 15/15 版本化轨:publish / versions / 渲染选版 / revert(spec §7 九断言) =="
+
+# (1) publish 201 → v2(seed 经回填已有 v1);201 新版本不带 duplicate 键
+_status=$(request POST "/api/templates/$SEED_ID/publish" application/json /dev/null "$TMP/pub1.json")
+[ "$_status" = "201" ] || die "publish(SEED) 期望 201,实得 $_status"
+assert_json "$TMP/pub1.json" "d['version'] == 2 and isinstance(d['createdAt'], str) and 'duplicate' not in d"
+PUB1_CREATED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["createdAt"])' "$TMP/pub1.json")"
+
+# (2) 重复 publish 200 duplicate:true(草稿与 v2 字节相等,幂等跳过,createdAt 沿用)
+_status=$(request POST "/api/templates/$SEED_ID/publish" application/json /dev/null "$TMP/pub2.json")
+[ "$_status" = "200" ] || die "重复 publish 期望 200,实得 $_status"
+assert_json "$TMP/pub2.json" "d['version'] == 2 and d['duplicate'] is True and d['createdAt'] == '$PUB1_CREATED'"
+
+# (3) GET versions 含 v1/v2,version 降序,轻量两字段(不吐 canvases)
+get "/api/templates/$SEED_ID/versions" "$TMP/versions.json"
+assert_json "$TMP/versions.json" '[v["version"] for v in d] == [2, 1]'
+assert_json "$TMP/versions.json" "all(set(v.keys()) == {'version', 'createdAt'} for v in d)"
+
+# (4) 无 body 渲染 = 最新已发布 v2,渲染记录带 version 字段(明示 breaking change)
+_status=$(request POST "/api/templates/$SEED_ID/render" application/json /dev/null "$TMP/render-latest.json")
+[ "$_status" = "201" ] || die "无 body 渲染期望 201,实得 $_status"
+assert_json "$TMP/render-latest.json" "d['version'] == 2 and len(d['images']) == 3"
+
+# (5) {"version":1} 显式渲染历史版本,记录 version = 1
+cat > "$TMP/render-v1-req.json" <<'EOF'
+{"version":1}
+EOF
+_status=$(request POST "/api/templates/$SEED_ID/render" application/json "$TMP/render-v1-req.json" "$TMP/render-v1.json")
+[ "$_status" = "201" ] || die "显式 v1 渲染期望 201,实得 $_status"
+assert_json "$TMP/render-v1.json" "d['version'] == 1"
+
+# (6) {"version":"draft"} 哨兵渲染草稿列现值,记录 version null(未对应发布版本)
+cat > "$TMP/render-draft-req.json" <<'EOF'
+{"version":"draft"}
+EOF
+_status=$(request POST "/api/templates/$SEED_ID/render" application/json "$TMP/render-draft-req.json" "$TMP/render-draft.json")
+[ "$_status" = "201" ] || die "draft 哨兵渲染期望 201,实得 $_status"
+assert_json "$TMP/render-draft.json" "d['version'] is None and len(d['images']) == 3"
+
+# (7) 新建未发布模板渲染 409 template_unpublished(状态冲突型)
+cat > "$TMP/t4.json" <<'EOF'
+{"name":"冒烟未发布模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
+EOF
+_status=$(request POST /api/templates application/json "$TMP/t4.json" "$TMP/t4-resp.json")
+[ "$_status" = "201" ] || die "POST /api/templates(未发布渲染用)期望 201,实得 $_status"
+T4="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/t4-resp.json")"
+echo "   T4=$T4"
+expect_error POST "/api/templates/$T4/render" application/json /dev/null 409 template_unpublished
+
+# (8) {"version":99} 指定不存在的版本 → 404 version_not_found
+cat > "$TMP/render-99-req.json" <<'EOF'
+{"version":99}
+EOF
+expect_error POST "/api/templates/$SEED_ID/render" application/json "$TMP/render-99-req.json" 404 version_not_found
+
+# (9) revert 后 GET /templates/{id} 的 canvases 与目标版本一致(版本线线性,
+# 回滚不造版):先改写 seed 草稿,再 revert v1,全量记录内容与 v1 版本行对齐
+get "/api/templates/$SEED_ID/versions/1" "$TMP/v1-full.json"
+cat > "$TMP/seed-rewrite.json" <<'EOF'
+{"name":"结业证书 · 批量打印页","canvases":[{"name":"冒烟草稿改写帧","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}],"flowChain":null}
+EOF
+_status=$(request PUT "/api/templates/$SEED_ID" application/json "$TMP/seed-rewrite.json" "$TMP/seed-rewritten.json")
+[ "$_status" = "200" ] || die "改写 seed 草稿期望 200,实得 $_status"
+cat > "$TMP/revert-req.json" <<'EOF'
+{"version":1}
+EOF
+_status=$(request POST "/api/templates/$SEED_ID/revert" application/json "$TMP/revert-req.json" "$TMP/revert-resp.json")
+[ "$_status" = "200" ] || die "revert v1 期望 200,实得 $_status"
+get "/api/templates/$SEED_ID" "$TMP/seed-after-revert.json"
+python3 - "$TMP/v1-full.json" "$TMP/seed-after-revert.json" <<'PYEOF'
+import json, sys
+v1 = json.load(open(sys.argv[1], encoding="utf-8"))
+cur = json.load(open(sys.argv[2], encoding="utf-8"))
+assert cur["canvases"] == v1["canvases"], \
+    "revert 后 canvases 应与版本 1 一致:\n%s\nvs\n%s" % (
+        json.dumps(cur["canvases"], ensure_ascii=False)[:400],
+        json.dumps(v1["canvases"], ensure_ascii=False)[:400])
+assert cur["flowChain"] == v1["flowChain"], "revert 后 flowChain 应与版本 1 一致"
+print("   revert 内容一致断言通过")
+PYEOF
+get "/api/templates/$SEED_ID/versions" "$TMP/versions-after-revert.json"
+assert_json "$TMP/versions-after-revert.json" '[v["version"] for v in d] == [2, 1]'
+
+echo "smoke: 断言 1–14 + 版本化轨 9 断言全绿 (BASE=$BASE)"
