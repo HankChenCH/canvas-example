@@ -51,6 +51,9 @@ func newServer(st *store.Store, rs *render.Service, fonts []FontEntry) http.Hand
 	mux.HandleFunc("POST /api/templates", s.handleCreateTemplate)
 	mux.HandleFunc("PUT /api/templates/{id}", s.handleUpdateTemplate)
 	mux.HandleFunc("PUT /api/templates/{id}/datasource", s.handleBindTemplateDataSource)
+	// 工程数据写分道(工程 spec §4):编辑器状态快照原样整存替换,读合并复用
+	// GET /api/templates/{id} 全量记录
+	mux.HandleFunc("PUT /api/templates/{id}/editor-state", s.handleUpdateTemplateEditorState)
 	// 删除模板(spec §2.4 #10,卡片操作修订):级联清渲染记录行,产物文件保留
 	mux.HandleFunc("DELETE /api/templates/{id}", s.handleDeleteTemplate)
 	// 数据源是独立实体(spec §2.4 数据源段):自有 CRUD,模板经绑定端点持引用

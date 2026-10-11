@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS templates (
 	canvases       TEXT NOT NULL,
 	flow_chain     TEXT,
 	data_source_id INTEGER,
+	editor_state   TEXT,
 	created_at     TEXT NOT NULL,
 	updated_at     TEXT NOT NULL
 );
@@ -92,17 +93,40 @@ CREATE TABLE IF NOT EXISTS renders (
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("建表: %w", err)
 	}
+	if err := s.ensureTemplateEditorStateColumn(); err != nil {
+		return err
+	}
 	return nil
 }
 
-// hasLegacyTemplateTable templates 表存在但无 data_source_id 列 = 旧版形态
-func (s *Store) hasLegacyTemplateTable() (bool, error) {
+// ensureTemplateEditorStateColumn 幂等补列(工程数据通道,spec §2/§8):上一版
+// 建的 templates 表缺 editor_state 列时 ALTER TABLE 补上——PRAGMA table_info
+// 探测先例同款(hasLegacyTemplateTable),远轻于重建表;旧行 NULL = 空快照 =
+// 全默认态,既有数据无损。重复启动探测命中即跳过
+func (s *Store) ensureTemplateEditorStateColumn() error {
+	hasTable, columns, err := s.templateColumns()
+	if err != nil {
+		return err
+	}
+	if !hasTable || columns["editor_state"] {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE templates ADD COLUMN editor_state TEXT`); err != nil {
+		return fmt.Errorf("补 templates.editor_state 列: %w", err)
+	}
+	log.Printf("templates 表补 editor_state 列(工程数据通道,旧行 NULL = 空快照)")
+	return nil
+}
+
+// templateColumns PRAGMA table_info(templates) 列清单(hasLegacyTemplateTable
+// 与 ensureTemplateEditorStateColumn 共用);表不存在时 hasTable = false
+func (s *Store) templateColumns() (hasTable bool, columns map[string]bool, err error) {
 	rows, err := s.db.Query(`PRAGMA table_info(templates)`)
 	if err != nil {
-		return false, fmt.Errorf("探测 templates 表: %w", err)
+		return false, nil, fmt.Errorf("探测 templates 表: %w", err)
 	}
 	defer rows.Close()
-	hasTable, hasRef := false, false
+	columns = map[string]bool{}
 	for rows.Next() {
 		hasTable = true
 		var cid int
@@ -111,16 +135,23 @@ func (s *Store) hasLegacyTemplateTable() (bool, error) {
 		var dflt any
 		var pk int
 		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			return false, fmt.Errorf("读 templates 列: %w", err)
+			return false, nil, fmt.Errorf("读 templates 列: %w", err)
 		}
-		if name == "data_source_id" {
-			hasRef = true
-		}
+		columns[name] = true
 	}
 	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("遍历 templates 列: %w", err)
+		return false, nil, fmt.Errorf("遍历 templates 列: %w", err)
 	}
-	return hasTable && !hasRef, nil
+	return hasTable, columns, nil
+}
+
+// hasLegacyTemplateTable templates 表存在但无 data_source_id 列 = 旧版形态
+func (s *Store) hasLegacyTemplateTable() (bool, error) {
+	hasTable, columns, err := s.templateColumns()
+	if err != nil {
+		return false, err
+	}
+	return hasTable && !columns["data_source_id"], nil
 }
 
 // CanvasEntry 单画布条目:name = 帧名,graph = 单画布 graph(spec §2.3)
@@ -166,13 +197,15 @@ type TemplateContent struct {
 }
 
 // TemplateRecord 全量模板记录,即 HTTP 响应形状(spec §2.3):
-// dataSourceId 为引用列(null = 未绑数据源)
+// dataSourceId 为引用列(null = 未绑数据源);editorState 为工程数据快照
+// 原样字节(null = 从未保存 = 全默认态,spec §4),服务端零校验
 type TemplateRecord struct {
 	ID           int64           `json:"id"`
 	Name         string          `json:"name"`
 	Canvases     []CanvasEntry   `json:"canvases"`
 	FlowChain    json.RawMessage `json:"flowChain"`
 	DataSourceID *int64          `json:"dataSourceId"`
+	EditorState  json.RawMessage `json:"editorState"`
 	CreatedAt    string          `json:"createdAt"`
 	UpdatedAt    string          `json:"updatedAt"`
 }
@@ -293,6 +326,22 @@ func (s *Store) UpdateTemplateDataSource(ctx context.Context, id int64, dataSour
 	return requireRow(res, "更新模板数据源绑定", id, ErrNotFound)
 }
 
+// UpdateTemplateEditorState 整列替换 editor_state(工程数据写分道,spec §4):
+// 载荷 json.RawMessage 原样进出、零校验(唯一消费方是内核恢复端,宽容读权威
+// 在那边);null = 空 = 归 SQL NULL。不触碰 name/canvases/flow_chain/
+// data_source_id/updated_at——拖参考线不污染「最近编辑」排序。并发整列替换即
+// last-write-wins(单用户应用,明示接受)。id 不存在 → ErrNotFound
+func (s *Store) UpdateTemplateEditorState(ctx context.Context, id int64, state json.RawMessage) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE templates SET editor_state = ? WHERE id = ?`,
+		nullableText(state), id,
+	)
+	if err != nil {
+		return fmt.Errorf("更新模板 %d 工程数据: %w", id, err)
+	}
+	return requireRow(res, "更新模板工程数据", id, ErrNotFound)
+}
+
 // DeleteTemplate 删除模板行并级联清其渲染记录行(无渲染历史端点,模板删后
 // 记录行不可达);渲染产物 PNG 文件保留——keep-all 快照语义,/renders 直链仍可用。
 // 数据源实体不受影响(独立资源,引用随模板行整行消失,不悬空)。
@@ -369,10 +418,11 @@ func (s *Store) GetTemplate(ctx context.Context, id int64) (*TemplateRecord, err
 	var rec TemplateRecord
 	var canvases, flowChain sql.NullString
 	var dataSourceID sql.NullInt64
+	var editorState sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, canvases, flow_chain, data_source_id, created_at, updated_at
+		`SELECT id, name, canvases, flow_chain, data_source_id, editor_state, created_at, updated_at
 		 FROM templates WHERE id = ?`, id,
-	).Scan(&rec.ID, &rec.Name, &canvases, &flowChain, &dataSourceID, &rec.CreatedAt, &rec.UpdatedAt)
+	).Scan(&rec.ID, &rec.Name, &canvases, &flowChain, &dataSourceID, &editorState, &rec.CreatedAt, &rec.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -383,6 +433,7 @@ func (s *Store) GetTemplate(ctx context.Context, id int64) (*TemplateRecord, err
 		return nil, fmt.Errorf("解析模板 %d canvases: %w", id, err)
 	}
 	rec.FlowChain = rawOrNull(flowChain)
+	rec.EditorState = rawOrNull(editorState)
 	if dataSourceID.Valid {
 		rec.DataSourceID = &dataSourceID.Int64
 	}

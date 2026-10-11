@@ -387,6 +387,213 @@ func TestUpdateTemplateDataSource_NotFound(t *testing.T) {
 	}
 }
 
+// --- 工程数据通道(editor_state 列,工程 spec §2/§4/§8) ---
+
+// TestOpen_EnsureEditorStateColumn 幂等补列迁移:上一版形态库(带 data_source_id、
+// 缺 editor_state)启动自动补列,既有数据无损、旧行 NULL = 空快照;重复启动
+// 不重复迁移
+func TestOpen_EnsureEditorStateColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+	// 手工造上一版形态:templates 缺 editor_state,含一行既有数据
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`DROP TABLE templates;
+		CREATE TABLE templates (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			name           TEXT NOT NULL,
+			canvases       TEXT NOT NULL,
+			flow_chain     TEXT,
+			data_source_id INTEGER,
+			created_at     TEXT NOT NULL,
+			updated_at     TEXT NOT NULL
+		);
+		INSERT INTO templates (name, canvases, flow_chain, created_at, updated_at)
+			VALUES ('既有模板', '[]', NULL, '2026-10-04T12:00:00Z', '2026-10-04T12:00:00Z');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("补列迁移打开: %v", err)
+	}
+	var n int
+	if err := st2.db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('templates') WHERE name = 'editor_state'`,
+	).Scan(&n); err != nil || n != 1 {
+		st2.Close()
+		t.Fatalf("templates 应补出 editor_state 列: count=%d err=%v", n, err)
+	}
+	rec, err := st2.GetTemplate(context.Background(), 1)
+	if err != nil {
+		st2.Close()
+		t.Fatalf("既有行应无损: %v", err)
+	}
+	if rec.Name != "既有模板" || rec.EditorState != nil {
+		st2.Close()
+		t.Fatalf("既有行应保留且 editor_state 为 NULL(空快照): %+v", rec)
+	}
+	if err := st2.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 重复启动:迁移幂等,不报错不重复补列
+	st3, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("重复启动: %v", err)
+	}
+	defer st3.Close()
+	if rec, err := st3.GetTemplate(context.Background(), 1); err != nil || rec.Name != "既有模板" {
+		t.Fatalf("重复启动后既有行应原样在: %+v %v", rec, err)
+	}
+}
+
+// TestGetTemplate_EditorStateNullDefault 从未保存工程数据的模板 editor_state 为
+// NULL,响应序列化为 "editorState":null(全默认态,spec §4)
+func TestGetTemplate_EditorStateNullDefault(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := st.CreateTemplate(ctx, seedContent()); err != nil {
+		t.Fatalf("创建模板: %v", err)
+	}
+	rec, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("取模板: %v", err)
+	}
+	if rec.EditorState != nil {
+		t.Fatalf("未保存状态应为 nil: %s", rec.EditorState)
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("序列化: %v", err)
+	}
+	if !strings.Contains(string(b), `"editorState":null`) {
+		t.Fatalf("NULL 列应序列化为 \"editorState\":null: %s", b)
+	}
+}
+
+// TestUpdateTemplateEditorState_LWW 写分道整列替换:载荷原样字节存取,后写覆盖
+// 先写;name/canvases/flow_chain/data_source_id/created_at/updated_at 一概不动
+// (拖参考线不污染「最近编辑」排序,spec §4)
+func TestUpdateTemplateEditorState_LWW(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	dsID, err := st.SeedDataSourceIfMissing(ctx, seedDataSource())
+	if err != nil {
+		t.Fatalf("播种数据源: %v", err)
+	}
+	content := seedContent()
+	content.DataSourceID = &dsID
+	if err := st.SeedTemplateIfEmpty(ctx, content); err != nil {
+		t.Fatalf("播种模板: %v", err)
+	}
+	before, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("取模板: %v", err)
+	}
+
+	snapshotA := json.RawMessage(`{"schemaVersion": 1, "frames": {"主页": {"guides": [{"id": "g1", "orientation": "vertical", "position": 120}], "lockedPaths": ["主页#标题"]}}, "prefs": {"rulersVisible": true}}`)
+	if err := st.UpdateTemplateEditorState(ctx, 1, snapshotA); err != nil {
+		t.Fatalf("首次写状态: %v", err)
+	}
+	afterA, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if string(afterA.EditorState) != string(snapshotA) {
+		t.Fatalf("载荷应原样字节透传: %s", afterA.EditorState)
+	}
+	if afterA.Name != before.Name || afterA.CreatedAt != before.CreatedAt || afterA.UpdatedAt != before.UpdatedAt {
+		t.Fatalf("状态写入不得触碰 name/时间戳: %+v vs %+v", afterA, before)
+	}
+	if len(afterA.Canvases) != len(before.Canvases) || string(afterA.FlowChain) != string(before.FlowChain) || afterA.DataSourceID == nil || *afterA.DataSourceID != dsID {
+		t.Fatalf("状态写入不得触碰 canvases/flowChain/dataSourceId: %+v vs %+v", afterA, before)
+	}
+
+	// LWW:后写整列覆盖先写
+	snapshotB := json.RawMessage(`{"schemaVersion":1,"frames":{},"prefs":{"anchorExpanded":true}}`)
+	if err := st.UpdateTemplateEditorState(ctx, 1, snapshotB); err != nil {
+		t.Fatalf("覆盖写状态: %v", err)
+	}
+	afterB, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if string(afterB.EditorState) != string(snapshotB) {
+		t.Fatalf("后写应整列覆盖先写: %s", afterB.EditorState)
+	}
+	if afterB.UpdatedAt != before.UpdatedAt {
+		t.Fatalf("状态写入不得刷新 updatedAt: %q vs %q", afterB.UpdatedAt, before.UpdatedAt)
+	}
+}
+
+// TestUpdateTemplateEditorState_EmptyIsNULL 空 RawMessage 归 SQL NULL(nil =
+// 从未保存 = 全默认态);null 字面量的归一在 handler 层(normalizeNullJSON,
+// 与 flowChain 同款)
+func TestUpdateTemplateEditorState_EmptyIsNULL(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if _, err := st.CreateTemplate(ctx, seedContent()); err != nil {
+		t.Fatalf("创建模板: %v", err)
+	}
+	snapshot := json.RawMessage(`{"schemaVersion":1,"frames":{},"prefs":{}}`)
+	if err := st.UpdateTemplateEditorState(ctx, 1, snapshot); err != nil {
+		t.Fatalf("写状态: %v", err)
+	}
+	if err := st.UpdateTemplateEditorState(ctx, 1, nil); err != nil {
+		t.Fatalf("写空: %v", err)
+	}
+	rec, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if rec.EditorState != nil {
+		t.Fatalf("空载荷应归 SQL NULL: %s", rec.EditorState)
+	}
+}
+
+func TestUpdateTemplateEditorState_NotFound(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.UpdateTemplateEditorState(context.Background(), 999, json.RawMessage(`{}`)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("期望 ErrNotFound, 实得 %v", err)
+	}
+}
+
+// TestUpdateTemplateContent_PreservesEditorState 内容保存只动 name/canvases/
+// flow_chain 与 updatedAt,不冲掉 editor_state(写分道互不越界,spec §4)
+func TestUpdateTemplateContent_PreservesEditorState(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	if err := st.SeedTemplateIfEmpty(ctx, seedContent()); err != nil {
+		t.Fatalf("播种: %v", err)
+	}
+	snapshot := json.RawMessage(`{"schemaVersion":1,"frames":{},"prefs":{}}`)
+	if err := st.UpdateTemplateEditorState(ctx, 1, snapshot); err != nil {
+		t.Fatalf("写状态: %v", err)
+	}
+
+	if err := st.UpdateTemplateContent(ctx, 1, TemplateContent{
+		Name:     "改名后的模板",
+		Canvases: []CanvasEntry{{Name: "新帧", Graph: json.RawMessage(`{"canvas":{"width":100,"height":100},"layers":[]}`)}},
+	}); err != nil {
+		t.Fatalf("更新内容: %v", err)
+	}
+	rec, err := st.GetTemplate(ctx, 1)
+	if err != nil {
+		t.Fatalf("回读: %v", err)
+	}
+	if rec.Name != "改名后的模板" || len(rec.Canvases) != 1 {
+		t.Fatalf("内容应整存替换: %+v", rec)
+	}
+	if string(rec.EditorState) != string(snapshot) {
+		t.Fatalf("内容保存不得冲掉 editor_state: %s", rec.EditorState)
+	}
+}
+
 // --- 数据源实体 CRUD ---
 
 func TestDataSourceCRUD(t *testing.T) {
