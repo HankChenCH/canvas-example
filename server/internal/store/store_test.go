@@ -699,7 +699,7 @@ func TestCreateRenderRecord_StubRow(t *testing.T) {
 		t.Fatalf("播种: %v", err)
 	}
 
-	rec, err := st.CreateRenderRecord(ctx, 1)
+	rec, err := st.CreateRenderRecord(ctx, 1, nil)
 	if err != nil {
 		t.Fatalf("创建渲染记录: %v", err)
 	}
@@ -717,7 +717,7 @@ func TestCreateRenderRecord_StubRow(t *testing.T) {
 func TestUpdateRenderImages_Roundtrip(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
-	rec, err := st.CreateRenderRecord(ctx, 1)
+	rec, err := st.CreateRenderRecord(ctx, 1, nil)
 	if err != nil {
 		t.Fatalf("创建渲染记录: %v", err)
 	}
@@ -747,7 +747,7 @@ func TestUpdateRenderImages_Roundtrip(t *testing.T) {
 func TestDeleteRenderRecord_RemovesStub(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
-	rec, err := st.CreateRenderRecord(ctx, 1)
+	rec, err := st.CreateRenderRecord(ctx, 1, nil)
 	if err != nil {
 		t.Fatalf("创建渲染记录: %v", err)
 	}
@@ -779,11 +779,11 @@ func TestDeleteTemplate_CascadesRenderRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建模板 B: %v", err)
 	}
-	recA, err := st.CreateRenderRecord(ctx, idA)
+	recA, err := st.CreateRenderRecord(ctx, idA, nil)
 	if err != nil {
 		t.Fatalf("创建渲染记录 A: %v", err)
 	}
-	if _, err := st.CreateRenderRecord(ctx, idB); err != nil {
+	if _, err := st.CreateRenderRecord(ctx, idB, nil); err != nil {
 		t.Fatalf("创建渲染记录 B: %v", err)
 	}
 	if err := st.UpdateRenderImages(ctx, recA.ID, []RenderImage{{Frame: 0, Name: "主页", Path: "renders/1/1.png"}}); err != nil {

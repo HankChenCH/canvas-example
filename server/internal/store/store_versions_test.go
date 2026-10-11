@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -510,5 +511,91 @@ func TestDeleteTemplate_CascadesVersionRows(t *testing.T) {
 	var nB int
 	if err := st.db.QueryRow(`SELECT COUNT(*) FROM template_versions WHERE template_id = ?`, idB).Scan(&nB); err != nil || nB != 1 {
 		t.Fatalf("模板 B 版本行 = %d (%v), 期望不受牵连为 1", nB, err)
+	}
+}
+
+// --- renders.version 溯源列(工单 04,spec §4 渲染选版) ---
+
+// TestOpen_EnsureRenderVersionColumn renders 表幂等补列:上一版形态库缺 version
+// 列时 ALTER TABLE 补上,旧行 NULL = 版本化前渲染(诚实语义,不造假数据);
+// 重复启动不重复迁移
+func TestOpen_EnsureRenderVersionColumn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "migrate.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 手工降级:去掉 version 列(重建 renders 表,塞一行旧行态数据)
+	if _, err := st.db.Exec(`DROP TABLE renders;
+		CREATE TABLE renders (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			template_id INTEGER NOT NULL,
+			images      TEXT NOT NULL,
+			created_at  TEXT NOT NULL
+		);
+		INSERT INTO renders (template_id, images, created_at) VALUES (1, '[]', '2026-01-01T00:00:00Z');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("补列迁移打开: %v", err)
+	}
+	defer st2.Close()
+	var hasVersion int
+	if err := st2.db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('renders') WHERE name = 'version'`,
+	).Scan(&hasVersion); err != nil || hasVersion != 1 {
+		t.Fatalf("renders 应补出 version 列: count=%d err=%v", hasVersion, err)
+	}
+	// 旧行原样保留,version NULL(版本化前渲染)
+	var v any
+	if err := st2.db.QueryRow(`SELECT version FROM renders WHERE id = 1`).Scan(&v); err != nil || v != nil {
+		t.Fatalf("旧行应保留且 version NULL: %v (%v)", v, err)
+	}
+}
+
+// TestCreateRenderRecord_VersionColumn 渲染记录版本溯源:新行必填渲染所用版本,
+// draft 渲染(nil)记 NULL——未对应任何发布版本的诚实语义;JSON 序列化 null
+// 透传(无 omitempty)
+func TestCreateRenderRecord_VersionColumn(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	v := int64(2)
+
+	rec, err := st.CreateRenderRecord(ctx, 1, &v)
+	if err != nil {
+		t.Fatalf("创建带版本渲染记录: %v", err)
+	}
+	if rec.Version == nil || *rec.Version != 2 {
+		t.Fatalf("记录应携带版本 2: %v", rec.Version)
+	}
+	var stored any
+	if err := st.db.QueryRow(`SELECT version FROM renders WHERE id = ?`, rec.ID).Scan(&stored); err != nil || stored != int64(2) {
+		t.Fatalf("version 列应存 2: %v (%v)", stored, err)
+	}
+
+	draftRec, err := st.CreateRenderRecord(ctx, 1, nil)
+	if err != nil {
+		t.Fatalf("创建 draft 渲染记录: %v", err)
+	}
+	if draftRec.Version != nil {
+		t.Fatalf("draft 渲染版本应为 nil: %v", draftRec.Version)
+	}
+	var storedDraft any
+	if err := st.db.QueryRow(`SELECT version FROM renders WHERE id = ?`, draftRec.ID).Scan(&storedDraft); err != nil || storedDraft != nil {
+		t.Fatalf("draft 渲染 version 列应为 NULL: %v (%v)", storedDraft, err)
+	}
+
+	// JSON 序列化:null 透传(响应侧 null = 未对应发布版本)
+	b, err := json.Marshal(draftRec)
+	if err != nil {
+		t.Fatalf("序列化: %v", err)
+	}
+	if !strings.Contains(string(b), `"version":null`) {
+		t.Fatalf("draft 渲染应序列化 \"version\":null(无 omitempty): %s", b)
 	}
 }
