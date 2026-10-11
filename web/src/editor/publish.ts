@@ -24,6 +24,18 @@ export function versionBadgeOf(versions: readonly TemplateVersionSummary[]): str
     return latest === null ? '未发布' : `v${latest}`
 }
 
+/** 版本列表三态（评审修复 F1，spec §6）：徽标与抽屉共用的列表语义面——
+ *  unknown = 列表未知（未加载或拉取失败，与徽标 v-if 退化同源的语义）；与空数组
+ *  （unpublished = 未发布推导态，spec §3）语义分家：「不知道发没发过」不得冒充
+ *  「没发过」。抽屉纯呈现，态判定单点在此（TDD 缝）。 */
+export type VersionListState = 'unknown' | 'unpublished' | 'ready'
+
+/** 版本抽屉列表态判定：null → unknown，空数组 → unpublished，非空 → ready */
+export function versionListState(versions: readonly TemplateVersionSummary[] | null): VersionListState {
+    if (versions === null) return 'unknown'
+    return versions.length === 0 ? 'unpublished' : 'ready'
+}
+
 export interface PublishFlowDeps {
     /** 文档级 dirty 现值（编排入口须先 computeDirty 同步即时比较——防抖窗口内的
      *  最近编辑也要计入，路由守卫同款口径） */

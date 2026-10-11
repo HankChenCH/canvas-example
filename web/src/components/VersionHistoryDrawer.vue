@@ -4,21 +4,27 @@
  *
  * 版本史 = 发布史（版本线线性：发布把草稿固化为新版本，回滚把历史版本内容复制回
  * 草稿、永不造版）：列出已发布版本（版本号 + 发布时间，version 降序由服务端保证；
- * 空列表 = 未发布，给行动指引空态），行内「回滚」钮 → 宿主弹 ConfirmDialog 二次
- * 确认（服务端零守卫，票 04：覆盖目标 = 最后保存的草稿）。
+ * 空列表 = 未发布推导态，给行动指引空态；null = 列表未知（未加载或拉取失败）显
+ * 「版本列表不可用」——未知 ≠ 未发布，不假显「尚未发布过版本」，评审修复 F1），
+ * 行内「回滚」钮 → 宿主弹 ConfirmDialog 二次确认（服务端零守卫，票 04：覆盖目标
+ * = 最后保存的草稿）。
  *
- * 状态边界：版本列表、回滚确认目标、错误与在途态全由宿主持有——本组件纯呈现
- * （FlowChainDrawer/DataSourceDrawer 先例：Teleport body + 自带令牌块，非模态，
- * 画布保持可交互）。明示不做（票 05 图级 Q3）：历史版本预览、版本对比、版本
- * 删除/重命名、发布备注——UI 只露版本号 + 时间 + 动作。
+ * 状态边界：版本列表（含未知态）、回滚确认目标、错误与在途态全由宿主持有——本
+ * 组件纯呈现（FlowChainDrawer/DataSourceDrawer 先例：Teleport body + 自带令牌块，
+ * 非模态，画布保持可交互）。明示不做（票 05 图级 Q3）：历史版本预览、版本对比、
+ * 版本删除/重命名、发布备注——UI 只露版本号 + 时间 + 动作。
  */
-import type { TemplateVersionSummary } from '../api'
+import { computed } from 'vue'
 
-defineProps<{
+import type { TemplateVersionSummary } from '../api'
+import { formatTimestamp } from '../editor/format'
+import { versionListState } from '../editor/publish'
+
+const props = defineProps<{
     /** 抽屉开合（顶栏「版本」钮驱动） */
     open: boolean
-    /** 版本列表（version 降序；空 = 未发布） */
-    versions: readonly TemplateVersionSummary[]
+    /** 版本列表（version 降序；null = 未知/未加载或拉取失败，≠ 未发布；空数组 = 未发布） */
+    versions: readonly TemplateVersionSummary[] | null
     /** 回滚在途（行内钮禁用） */
     reverting: boolean
     /** 在途回滚目标版本（该行显「回滚中…」，null = 无在途） */
@@ -31,11 +37,10 @@ const emit = defineEmits<{
     revert: [version: TemplateVersionSummary]
 }>()
 
-/** 发布时间本地化（RFC3339 UTC → zh-CN；解析失败原样回显） */
-function formatCreatedAt(iso: string): string {
-    const t = new Date(iso)
-    return Number.isNaN(t.getTime()) ? iso : t.toLocaleString('zh-CN', { hour12: false })
-}
+/** 列表态分支（versionListState 纯逻辑单测钉死三态：unknown/unpublished/ready） */
+const listState = computed(() => versionListState(props.versions))
+/** 行迭代（ready 态专用；unknown/unpublished 不可达，?? [] 仅类型面收窄） */
+const rows = computed(() => props.versions ?? [])
 </script>
 
 <template>
@@ -53,26 +58,34 @@ function formatCreatedAt(iso: string): string {
                     版本史即发布史：发布把草稿固化为新版本；回滚把历史版本内容复制回草稿（不产生新版本），确认后当前草稿被覆盖。
                 </p>
 
+                <!-- 列表未知：null = 未加载或拉取失败（≠ 未发布，不撒谎——评审修复
+                     F1）；发布/回滚成功或重进编辑器后列表随宿主刷新恢复 -->
+                <p v-if="listState === 'unknown'" class="cn-vhd__empty" data-version-unavailable>
+                    版本列表不可用（拉取失败或尚未加载）——重进编辑器，或在发布/回滚成功后自动恢复。
+                </p>
+
                 <!-- 空态：空 versions = 未发布（推导态，spec §3），给行动指引 -->
-                <p v-if="versions.length === 0" class="cn-vhd__empty" data-version-empty>
+                <p v-else-if="listState === 'unpublished'" class="cn-vhd__empty" data-version-empty>
                     尚未发布过版本——顶栏「发布」把当前草稿固化为 v1。
                 </p>
 
                 <!-- 版本行：版本号 + 发布时间 + 行内回滚（version 降序，最新在前） -->
-                <div v-for="v in versions" :key="v.version" class="cn-vhd__row" :data-version-row="v.version">
-                    <span class="cn-vhd__version">v{{ v.version }}</span>
-                    <span class="cn-vhd__time">发布于 {{ formatCreatedAt(v.createdAt) }}</span>
-                    <button
-                        type="button"
-                        class="cn-vhd__revert"
-                        data-version-revert
-                        :disabled="reverting"
-                        :title="`回滚到 v${v.version}：把该版本内容复制回草稿（覆盖当前草稿，需确认）`"
-                        @click="emit('revert', v)"
-                    >
-                        {{ reverting && revertingVersion === v.version ? '回滚中…' : '回滚' }}
-                    </button>
-                </div>
+                <template v-else>
+                    <div v-for="v in rows" :key="v.version" class="cn-vhd__row" :data-version-row="v.version">
+                        <span class="cn-vhd__version">v{{ v.version }}</span>
+                        <span class="cn-vhd__time">发布于 {{ formatTimestamp(v.createdAt) }}</span>
+                        <button
+                            type="button"
+                            class="cn-vhd__revert"
+                            data-version-revert
+                            :disabled="reverting"
+                            :title="`回滚到 v${v.version}：把该版本内容复制回草稿（覆盖当前草稿，需确认）`"
+                            @click="emit('revert', v)"
+                        >
+                            {{ reverting && revertingVersion === v.version ? '回滚中…' : '回滚' }}
+                        </button>
+                    </div>
+                </template>
             </section>
         </aside>
     </Teleport>

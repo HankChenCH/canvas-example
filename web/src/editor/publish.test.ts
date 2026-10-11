@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ApiError, type PublishResult, type TemplateVersionSummary } from '../api'
 
-import { latestVersionOf, runPublishFlow, versionBadgeOf } from './publish'
+import { latestVersionOf, runPublishFlow, versionBadgeOf, versionListState } from './publish'
 
 const version = (n: number): TemplateVersionSummary => ({ version: n, createdAt: `2026-10-1${n}` })
 
@@ -23,6 +23,17 @@ describe('versionBadgeOf / latestVersionOf（版本徽标推导，spec §3「空
 
     it('单版本即该版本', () => {
         expect(versionBadgeOf([version(1)])).toBe('v1')
+    })
+})
+
+describe('versionListState（版本抽屉列表态：未知 ≠ 未发布，评审修复 F1）', () => {
+    it('null → unknown：列表未加载或拉取失败，不得冒充「尚未发布过版本」', () => {
+        expect(versionListState(null)).toBe('unknown')
+    })
+
+    it('空数组 → unpublished（未发布推导态，spec §3）；非空 → ready', () => {
+        expect(versionListState([])).toBe('unpublished')
+        expect(versionListState([version(1)])).toBe('ready')
     })
 })
 

@@ -11,6 +11,7 @@
 import { onMounted, ref } from 'vue'
 
 import { api, formatApiError, type DataSourceSummary } from '../api'
+import { formatTimestamp } from '../editor/format'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const sources = ref<DataSourceSummary[] | null>(null)
@@ -58,11 +59,6 @@ async function runDelete(): Promise<void> {
     } finally {
         deleting.value = false
     }
-}
-
-function formatUpdatedAt(iso: string): string {
-    const t = new Date(iso)
-    return Number.isNaN(t.getTime()) ? iso : t.toLocaleString('zh-CN', { hour12: false })
 }
 
 // ── 档案卡纯呈现辅助（登记处语言：索引杠 / 进场 stagger）──
@@ -160,7 +156,7 @@ function riseDelay(index: number): string {
                         </div>
                         <div class="mt-2 truncate text-[15px] font-medium text-zinc-100 transition-colors group-hover:text-sky-300">{{ s.name }}</div>
                         <div class="mt-1 font-mono text-[11px] text-zinc-500">
-                            更新于 {{ formatUpdatedAt(s.updatedAt) }}
+                            更新于 {{ formatTimestamp(s.updatedAt) }}
                         </div>
                     </RouterLink>
                     <div class="flex items-center justify-end border-t border-[#1b2740] px-4 py-2.5">

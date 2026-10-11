@@ -993,16 +993,19 @@ function saveFlowChain(): void {
 // ---- 发布与版本徽标（template-draft-publish 批 B ②，spec §6）：顶栏「发布」
 //      按钮 + 轻量徽标（「未发布」/「vN」）。徽标数据 = 载入时取一次 GET /versions
 //      （发布/回滚后刷新）；拉取失败不阻塞编辑器——徽标隐藏（null = 未知）而不
-//      假显「未发布」。发布编排在 src/editor/publish.ts 纯逻辑（TDD 缝）：dirty
-//      自动先走保存流成功后 publish，一次动作；保存流不变声明 = 编辑器永远打开
-//      草稿、保存 = 现有 PUT、发布是保存后的显式固化，自动促存是编排便利而非
-//      「发布即保存」语义合并。反馈复用内联模式（按钮等待态 + docNote），无 toast。 ----
+//      假显「未发布」；版本抽屉对 null 显「版本列表不可用」（评审修复 F1：
+//      未知 ≠ 未发布，null 语义由 versionListState 纯逻辑钉死）。发布编排在
+//      src/editor/publish.ts 纯逻辑（TDD 缝）：dirty 自动先走保存流成功后
+//      publish，一次动作；保存流不变声明 = 编辑器永远打开草稿、保存 = 现有 PUT、
+//      发布是保存后的显式固化，自动促存是编排便利而非「发布即保存」语义合并。
+//      反馈复用内联模式（按钮等待态 + docNote），无 toast。 ----
 
 const versions = ref<TemplateVersionSummary[] | null>(null)
 const versionBadgeLabel = computed(() => (versions.value === null ? null : versionBadgeOf(versions.value)))
 
-/** 版本列表刷新：失败容忍（保持现值不置 null——发布/回滚主流程已成功时旧徽标比
- *  「未知」更接近真相；载入首拉失败则保持 null = 徽标隐藏） */
+/** 版本列表刷新：失败容忍（保持现值不置 null——发布/回滚主流程已成功时旧值比
+ *  「未知」更接近真相；载入首拉失败则保持 null = 徽标隐藏、抽屉显「版本列表
+ *  不可用」） */
 async function refreshVersions(): Promise<void> {
     const record = template.value
     if (!record) return
@@ -1894,11 +1897,12 @@ onBeforeUnmount(() => {
             @cancel="closeSaveAsNew"
         />
 
-        <!-- 版本历史抽屉（template-draft-publish 批 B ③，spec §6）：版本列表纯呈现，
+        <!-- 版本历史抽屉（template-draft-publish 批 B ③，spec §6）：版本列表纯呈现
+             （null = 未知态显「版本列表不可用」，评审修复 F1——未知 ≠ 未发布），
              回滚确认/在途/错误全由宿主持有；行内回滚 → ConfirmDialog → 会话替换 -->
         <VersionHistoryDrawer
             :open="versionDrawerOpen"
-            :versions="versions ?? []"
+            :versions="versions"
             :reverting="reverting"
             :reverting-version="revertTarget?.version ?? null"
             @close="versionDrawerOpen = false"

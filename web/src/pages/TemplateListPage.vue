@@ -21,6 +21,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { api, formatApiError, type TemplateSummary, type TemplateVersionSummary } from '../api'
+import { formatTimestamp } from '../editor/format'
 import { createBlankTemplate, createImageTemplate } from '../editor/newtemplate'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ImageTemplateDialog from '../components/ImageTemplateDialog.vue'
@@ -263,11 +264,6 @@ async function runDelete(): Promise<void> {
     }
 }
 
-function formatUpdatedAt(iso: string): string {
-    const t = new Date(iso)
-    return Number.isNaN(t.getTime()) ? iso : t.toLocaleString('zh-CN', { hour12: false })
-}
-
 // ── 印张卡片纯呈现辅助（蓝晒印坊语言：序号章 / 首字水印 / 进场 stagger）──
 
 /** 卡片序号章：模板 id 三位补零（No.007） */
@@ -466,7 +462,7 @@ function riseDelay(index: number): string {
                         <RouterLink :to="`/editor/${t.id}`" class="group block">
                             <div class="truncate text-[15px] font-medium text-zinc-100 transition-colors group-hover:text-sky-300">{{ t.name }}</div>
                             <div class="mt-0.5 font-mono text-[11px] text-zinc-500">
-                                更新于 {{ formatUpdatedAt(t.updatedAt) }}
+                                更新于 {{ formatTimestamp(t.updatedAt) }}
                             </div>
                         </RouterLink>
                         <div class="mt-3 flex items-center justify-end gap-2">
@@ -549,7 +545,7 @@ function riseDelay(index: number): string {
                                             :data-card-render-version="v.version"
                                             class="pc-menu__item"
                                             :disabled="renderingId !== null"
-                                            :title="`渲染 v${v.version}（发布于 ${formatUpdatedAt(v.createdAt)}）`"
+                                            :title="`渲染 v${v.version}（发布于 ${formatTimestamp(v.createdAt)}）`"
                                             @click="runCardRender(t, v.version)"
                                         >
                                             <span class="pc-menu__icon" aria-hidden="true">
@@ -560,7 +556,7 @@ function riseDelay(index: number): string {
                                             </span>
                                             <span class="min-w-0">
                                                 <span class="pc-menu__title">v{{ v.version }}</span>
-                                                <span class="pc-menu__desc">发布于 {{ formatUpdatedAt(v.createdAt) }}</span>
+                                                <span class="pc-menu__desc">发布于 {{ formatTimestamp(v.createdAt) }}</span>
                                             </span>
                                         </button>
                                     </template>
