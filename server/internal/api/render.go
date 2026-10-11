@@ -26,9 +26,23 @@ import (
 // 30s WithTimeout,到点 504 render_deadline_exceeded
 const renderDeadline = 30 * time.Second
 
-// draftSentinel 渲染选版字符串哨兵(spec §4,票 03 Comments 契约修订):编辑器
-// 预览渲草稿列现值——本图定案前的原渲染语义显式化保留
-const draftSentinel = "draft"
+// 渲染选版 mode 三态常量(spec §4,票 03 Comments 契约修订 / 评审修复 F5 取态单点):
+// latest = 缺省(最新已发布,原隐身于 switch default,显式化防取态漂移)/
+// draft = 草稿哨兵(编辑器预览渲草稿列现值——本图定案前的原渲染语义显式化保留)/
+// explicit = 显式指定历史版本号。三态同处声明,switch 显式分支,default 仅兜底
+// 未知态(mode 只产自下述常量,理论不可达)
+const (
+	draftSentinel     = "draft"
+	selectionLatest   = "latest"
+	selectionExplicit = "explicit"
+)
+
+// writeInvalidJSON 400 invalid_json 信封单点(评审修复 F3 文件内收敛):选版解析
+// 家族把坏 JSON/字段形态非法统一归此码(spec §4 哨兵复用裁决),message 按现场
+// 承载具体拒因
+func writeInvalidJSON(w http.ResponseWriter, message string) {
+	writeError(w, http.StatusBadRequest, codes.InvalidJSON, message)
+}
 
 // renderRecordResponse RenderRecord 响应形状(spec §2.3):url 为前导斜杠形态
 // (§2.2),DB 存相对 path;version null 透传(draft 渲染 / 版本化前旧行)
@@ -58,7 +72,7 @@ type renderSelection struct {
 // 版本;"draft" = 草稿哨兵;null 视同缺省(null 归一先例);类型错/零/负数/
 // 非整数/未知形态 → 400 invalid_json。失败已写响应,调用方拿到 ok=false 直接返回
 func resolveRenderSelection(w http.ResponseWriter, r *http.Request) (renderSelection, bool) {
-	def := renderSelection{mode: "latest"}
+	def := renderSelection{mode: selectionLatest}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -92,20 +106,20 @@ func resolveRenderSelection(w http.ResponseWriter, r *http.Request) (renderSelec
 	numDec := json.NewDecoder(bytes.NewReader(field))
 	numDec.UseNumber()
 	if err := numDec.Decode(&num); err != nil || numDec.More() {
-		writeError(w, http.StatusBadRequest, codes.InvalidJSON, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
+		writeInvalidJSON(w, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
 		return def, false
 	}
 	n, ok := num.(json.Number)
 	if !ok {
-		writeError(w, http.StatusBadRequest, codes.InvalidJSON, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
+		writeInvalidJSON(w, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
 		return def, false
 	}
 	version, err := n.Int64()
 	if err != nil || version <= 0 {
-		writeError(w, http.StatusBadRequest, codes.InvalidJSON, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
+		writeInvalidJSON(w, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
 		return def, false
 	}
-	return renderSelection{mode: "explicit", version: version}, true
+	return renderSelection{mode: selectionExplicit, version: version}, true
 }
 
 // versionedRunRecord 版本化路径的渲染输入(spec §4:版本行只快照文档整体,
@@ -141,25 +155,12 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// 选版落位:版本化路径用版本行 canvases/flow_chain + 当前数据源绑定;
 	// draft 哨兵用草稿列现值(rec 原样),渲染记 version NULL(未对应任何发布
-	// 版本,诚实语义)
+	// 版本,诚实语义)。三态显式分支(latest 原隐身 default,评审修复 F5 显式化),
+	// default 仅兜底未知态——mode 只产自上述三常量,理论不可达
 	runRec := rec
 	var version *int64
 	switch selection.mode {
-	case draftSentinel: // 草稿列现值 = 原语义显式化
-	case "explicit":
-		ver, err := s.store.GetTemplateVersion(r.Context(), id, selection.version)
-		if err != nil {
-			if errors.Is(err, store.ErrTemplateVersionNotFound) {
-				writeError(w, http.StatusNotFound, codes.VersionNotFound, "版本不存在")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, codes.InternalError, "读取版本失败")
-			return
-		}
-		runRec = versionedRunRecord(ver)
-		v := selection.version
-		version = &v
-	default: // 缺省 = 最新已发布(明示 breaking change,spec §4)
+	case selectionLatest: // 缺省 = 最新已发布(明示 breaking change,spec §4)
 		latest, ok, err := s.store.LatestTemplateVersion(r.Context(), id)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, codes.InternalError, "读取最新版本失败")
@@ -176,6 +177,23 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 		}
 		runRec = versionedRunRecord(ver)
 		version = &latest
+	case draftSentinel: // 草稿列现值 = 原语义显式化
+	case selectionExplicit:
+		ver, err := s.store.GetTemplateVersion(r.Context(), id, selection.version)
+		if err != nil {
+			if errors.Is(err, store.ErrTemplateVersionNotFound) {
+				writeError(w, http.StatusNotFound, codes.VersionNotFound, "版本不存在")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, codes.InternalError, "读取版本失败")
+			return
+		}
+		runRec = versionedRunRecord(ver)
+		v := selection.version
+		version = &v
+	default: // 兜底未知态(理论不可达):mode 三常量闭合,到此即内部不变量破坏
+		writeError(w, http.StatusInternalServerError, codes.InternalError, "未知渲染选版形态")
+		return
 	}
 
 	var datasetJSON json.RawMessage

@@ -94,7 +94,14 @@ func (s *Store) BackfillTemplateVersionsV1(ctx context.Context) (int64, error) {
 // 按 SQL NULL 对齐)——相等幂等跳过,回 (最新版本号, 既有 createdAt, true);
 // 不等则 INSERT 新行(version = MAX+1 从 1 起,INSERT-only),回 (新版本号,
 // 新 createdAt, false)。发布不触碰 templates 行(updated_at 不动)。发布读的是
-// 已保存草稿(handler 层先过 preflight 守门)。模板不存在 → ErrNotFound
+// 已保存草稿(handler 层先过 preflight 守门,守门先于本方法的 duplicate 判定)。
+// 模板不存在 → ErrNotFound
+//
+// 两读草稿窄窗(评审修复 F7 记档,不改机制):handler 的守门读与本方法的固化读
+// 是两次独立读草稿,两读之间并发 PUT 理论上可致「验非所固」(校验的草稿 ≠ 固化
+// 的草稿)。本示例应用为单用户单连接前提(README 演示轨/工作区既定),窗口实际
+// 不可达,不为此加锁——事务内两读已保证 duplicate 比较与固化自洽,仅与前置守门
+// 存在理论缝隙。
 func (s *Store) PublishTemplateVersion(ctx context.Context, id int64) (version int64, createdAt string, duplicate bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

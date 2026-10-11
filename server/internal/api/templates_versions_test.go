@@ -185,6 +185,50 @@ func TestPublishTemplate_Preflight422(t *testing.T) {
 	}
 }
 
+// TestPublishTemplate_GateBeforeDuplicate 守门先于 duplicate 判定(评审修复 F6
+// 钉死):回填 v1 零校验——坏图草稿经 BackfillTemplateVersionsV1 原样固化为 v1 后,
+// 重发同内容字节面必命中 duplicate 判定(草稿列与最新版本行文本相等),但
+// preflight 守门在前 → 422 invalid_graph,不产版本行、不 duplicate。发布是主动
+// 确认,坏内容不得借幂等通道蒙混(修复路径 = 编辑草稿后再发布)
+func TestPublishTemplate_GateBeforeDuplicate(t *testing.T) {
+	h, st, seedID := newVersioningServer(t)
+
+	// 坏图草稿直写(绕过保存预检——草稿坏了还能进编辑器修,守门只在发布处),
+	// 回填把同一坏内容零校验固化为 v1
+	broken := store.TemplateContent{
+		Name: "结业证书 · 批量打印页",
+		Canvases: []store.CanvasEntry{
+			{Name: "坏帧", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}`)},
+		},
+	}
+	if err := st.UpdateTemplateContent(t.Context(), seedID, broken); err != nil {
+		t.Fatalf("直写坏草稿: %v", err)
+	}
+	if _, err := st.BackfillTemplateVersionsV1(t.Context()); err != nil {
+		t.Fatalf("回填 v1: %v", err)
+	}
+
+	// 草稿与 v1 字节相等(duplicate 判定必命中)仍被守门打回:422 invalid_graph
+	code, body := publish(t, h, fmt.Sprintf("%d", seedID))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, 期望 422(守门先于 duplicate, %v)", code, body)
+	}
+	if got := errCode(t, body); got != "invalid_graph" {
+		t.Fatalf("code = %s, 期望 invalid_graph", got)
+	}
+
+	// 不产版本行、不 duplicate:版本史仍只有回填的 v1
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/templates/%d/versions", seedID), nil))
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("版本列表应为数组: %v\n%s", err, rec.Body.String())
+	}
+	if len(list) != 1 || list[0]["version"].(float64) != 1 {
+		t.Fatalf("守门失败不得产生新版本行(仍只有回填 v1): %v", list)
+	}
+}
+
 // TestPublishTemplate_NotFound404 寻址失败 → 404 template_not_found
 func TestPublishTemplate_NotFound404(t *testing.T) {
 	h, _, _ := newVersioningServer(t)

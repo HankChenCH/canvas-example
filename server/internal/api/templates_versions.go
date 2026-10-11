@@ -27,12 +27,23 @@ type publishResponse struct {
 	Duplicate bool   `json:"duplicate,omitempty"`
 }
 
+// writeVersionNotFound 404 version_not_found 信封单点(评审修复 F3 文件内收敛):
+// 版本化家族把模板 id 非整数/路径 version 非整数/版本不存在/对无版本模板指定
+// 统一归此码(spec §4 同精神),message 按现场承载具体拒因
+func writeVersionNotFound(w http.ResponseWriter, message string) {
+	writeError(w, http.StatusNotFound, codes.VersionNotFound, message)
+}
+
 // handlePublishTemplate POST /api/templates/{id}/publish:读草稿列固化为新版本。
-// 守门先行:草稿过 preflight.Check(解码 + 链校验,纯结构不吃数据集)——失败
-// 422 invalid_graph(message 用 preflight 中文消息),不产生版本行;新版本 201
-// {version,createdAt};草稿列文本与最新版本行字节相等 → 200 duplicate:true
-// (幂等跳过,同编码路径字节比较确定)。updated_at 不动。寻址失败 404
-// template_not_found
+// 守门先行——preflight 先于 duplicate 判定(评审修复 F6 钉死序与理由):草稿过
+// preflight.Check(解码 + 链校验,纯结构不吃数据集)失败 422 invalid_graph
+// (message 用 preflight 中文消息),不产生版本行。序的理由:守渲染主路径(缺省
+// 渲染踩最新已发布,必渲染失败的版本不得入榜),发布是主动确认、坏内容不得借
+// 幂等通道蒙混——回填 v1 零校验,坏图草稿重发同内容本会字节面命中 duplicate
+// (200),守门在前则打回 422 属预期,修复路径 = 编辑草稿后再发布。通过守门后:
+// 新版本 201 {version,createdAt};草稿列文本与最新版本行字节相等 → 200
+// duplicate:true(幂等跳过,同编码路径字节比较确定)。updated_at 不动。
+// 寻址失败 404 template_not_found
 func (s *Server) handlePublishTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -54,6 +65,10 @@ func (s *Server) handlePublishTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 两读草稿窄窗(评审修复 F7 记档,不改机制):上文守门读(GetTemplate)与本处
+	// 固化读(PublishTemplateVersion 内再读草稿列)是两次独立读,之间并发 PUT
+	// 理论上可致「验非所固」(校验的草稿 ≠ 固化的草稿)。本示例应用为单用户单
+	// 连接前提(README 演示轨/工作区既定),窗口实际不可达,不为此加锁或改协议。
 	version, createdAt, duplicate, err := s.store.PublishTemplateVersion(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err, "发布模板失败")
@@ -91,18 +106,18 @@ func (s *Server) handleGetTemplateVersion(w http.ResponseWriter, r *http.Request
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
 		// 版本寻址以版本为准:模板 id 非整数同归 version_not_found
-		writeError(w, http.StatusNotFound, codes.VersionNotFound, "版本不存在")
+		writeVersionNotFound(w, "版本不存在")
 		return
 	}
 	version, err := parseID(r.PathValue("version"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, codes.VersionNotFound, "版本不存在")
+		writeVersionNotFound(w, "版本不存在")
 		return
 	}
 	rec, err := s.store.GetTemplateVersion(r.Context(), id, version)
 	if err != nil {
 		if errors.Is(err, store.ErrTemplateVersionNotFound) {
-			writeError(w, http.StatusNotFound, codes.VersionNotFound, "版本不存在")
+			writeVersionNotFound(w, "版本不存在")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, codes.InternalError, "读取版本失败")
@@ -142,7 +157,7 @@ func (s *Server) handleRevertTemplate(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
 		case errors.Is(err, store.ErrTemplateVersionNotFound):
-			writeError(w, http.StatusNotFound, codes.VersionNotFound, "版本不存在")
+			writeVersionNotFound(w, "版本不存在")
 		default:
 			writeError(w, http.StatusInternalServerError, codes.InternalError, "回滚模板失败")
 		}
