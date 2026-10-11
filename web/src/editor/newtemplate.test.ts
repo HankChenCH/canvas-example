@@ -23,6 +23,7 @@ function record(id: number): TemplateRecord {
         canvases: [],
         flowChain: null,
         dataSourceId: null,
+        editorState: null,
         createdAt: '2026-10-06T00:00:00Z',
         updatedAt: '2026-10-06T00:00:00Z',
     }

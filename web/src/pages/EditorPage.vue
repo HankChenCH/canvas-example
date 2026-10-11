@@ -45,6 +45,13 @@
 // 反馈段回显；成功自动打开结果抽屉（RenderResultDrawer，只显本次会话最近一次）。
 // 与预览导出并存：导出预览图钮保留（文案含「预览图」），抽屉注明「预览仅断行
 // 参考，以终图为准」——导出 vs 终图词汇直接做进 UI。
+// 工程数据（project-data spec §6，工单 04）：编辑器状态随模板聚合持久化——宿主
+// 拼装快照 TemplateEditorStateSnapshot（schemaVersion + frames[帧名切片] + prefs），
+// 切片/常量从内核导入、宿主只拼装不解释。首载宽容恢复（null/悬空帧键 = 全默认态
+// 起步）+ 切帧缝内存映射（exportEditorState 写回、openDocument(canvas, frames[帧名])
+// 同型恢复）+ 内容保存成功搭车 PUT editor-state；状态不计 dirty（纯内容口径零改动）、
+// 失败静默 console.warn（切帧/离开时点 flush 在工单 05 补全；另存为 POST 不带状态，
+// 内存映射随会话延续，副本首写落下一 flush 时点）。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
@@ -66,6 +73,7 @@ import {
     rootLayerOf,
 } from '@hankchen/canvas-editor'
 import type {
+    CanvasEditorState,
     EditorShortcutAction,
     FontCatalogEntry,
     LayerType,
@@ -110,8 +118,16 @@ import {
     type DataSourceRecord,
     type DataSourceSummary,
     type RenderRecord,
+    type TemplateEditorStateSnapshot,
     type TemplateRecord,
 } from '../api'
+import {
+    buildEditorStateSnapshot,
+    dropFrameStateKey,
+    migrateFrameStateKey,
+    parseTemplateEditorStateSnapshot,
+    pickFrameStates,
+} from '../editor/editorState'
 import {
     baselineFromSlots,
     blankFrameSlot,
@@ -197,6 +213,18 @@ async function loadTemplate(id: string): Promise<void> {
             errorText.value = e instanceof Error ? e.message : String(e)
             return
         }
+        // 工程数据快照恢复编排（工单 04，spec §6 首载序「GET editorState → 逐帧
+        // decode → openDocument(帧0, 切片) → applyEditorPrefs 一次性」的宿主半边）：
+        // 宽容解析（editorState null/形状不合法 = 全默认态起步，零报错）→ 悬空帧键
+        // （帧改名遗留）剔除后种子进内存映射（切帧往返 / 后续 flush 载荷所需）→
+        // prefs 一次性应用。prefs 应用先于帧 0 的 openDocument（spec §6 字面序相反）
+        // ——openDocument reset 保留标尺等偏好（内核自持，工单 01 已验 reset 语义），
+        // 先后等价；快照无 prefs 则不应用（内核自持，不重置）。帧 0 切片实际入会话
+        // 在 openFrameDocument 的 openDocument(canvas, frames[帧名])（onReady 或
+        // 重载路径收口）。
+        const restored = parseTemplateEditorStateSnapshot(record.editorState)
+        frameStates.value = pickFrameStates(restored.frames, frameSlots.value.map((slot) => slot.name))
+        if (restored.prefs) editor.applyEditorPrefs(restored.prefs)
         savedBaseline = baselineFromSlots(record.name, frameSlots.value, normalizedChain)
         activeFrame.value = 0
         template.value = record
@@ -241,6 +269,42 @@ watch(
 const frameSlots = ref<FrameSlot[]>([])
 const activeFrame = ref(0)
 
+// ---- 工程数据内存映射（工单 04，spec §6）：会话内存帧状态切片映射，键 = 帧名
+// （CanvasEntry.name，spec §3 快照形状）。切帧缝 exportEditorState 写回/恢复维护
+// （切帧正确性所需、零额外成本），载入时自快照种子（pickFrameStates 悬空键剔除），
+// flush 时与活动帧现取切片拼装成完整快照。不进 dirty 口径（纯内容口径零改动）、
+// 不驱动渲染——纯切帧/flush 正确性记账。 ----
+
+const frameStates = ref<Record<string, CanvasEditorState>>({})
+
+/** 当前会话的完整工程数据快照（flush 载荷）：活动帧切片现取（exportEditorState 的
+ *  ui 现值，映射写回值可能滞后到切出时刻），其余帧取映射（切帧缝写回值，未访问帧
+ *  = 种子值或无切片）；prefs 现读。组装与拷贝语义在 editorState.ts 纯逻辑单测。 */
+function currentEditorStateSnapshot(): TemplateEditorStateSnapshot {
+    return buildEditorStateSnapshot({
+        frameNames: frameSlots.value.map((slot) => slot.name),
+        slices: frameSlots.value.map((slot, i) =>
+            i === activeFrame.value ? editor.exportEditorState() : (frameStates.value[slot.name] ?? null),
+        ),
+        prefs: editor.getEditorPrefs(),
+    })
+}
+
+/** 切出帧状态切片写回映射（切帧缝）：ui 现值 exportEditorState，键 = 帧名 */
+function stashActiveFrameState(): void {
+    const leavingName = frameSlots.value[activeFrame.value]?.name
+    if (leavingName) frameStates.value[leavingName] = editor.exportEditorState()
+}
+
+/** 切出缝 = graph 快照入槽 + 状态切片写回映射（spec §4.2 切帧快照 + 工单 04 状态
+ *  写回，两条缝同一时刻、同一帧）：switchToFrame / appendBlankFrame / deleteFrame
+ *  共用；保存缝（runDocumentSave/runSaveAs）只取 graph 快照——状态现取
+ *  （currentEditorStateSnapshot 的活动帧现读），不走映射。 */
+function stashActiveFrame(): void {
+    snapshotActiveFrame()
+    stashActiveFrameState()
+}
+
 /** 切出前快照当前帧（spec §4.2：encodeGraph(editor.store.doc) 快照该帧进缓冲） */
 function snapshotActiveFrame(): void {
     const doc = editor.store.doc
@@ -253,27 +317,31 @@ function snapshotActiveFrame(): void {
 
 /** 切帧（spec §4.2）：快照切出帧 → decodeGraph 重建会话文档（ui 选择/撤销历史等
  *  会话态随 openDocument 重置）。视口保留不 refit；schema 不重置无需重复注入；
- *  materialize 与 dirty 重算由 doc 订阅顺带驱动；帧间切换不提示。 */
+ *  materialize 与 dirty 重算由 doc 订阅顺带驱动；帧间切换不提示。
+ *  工程数据（工单 04）：切出帧状态切片写回映射 → 切入帧切片随 openDocument(canvas,
+ *  frames[帧名]) 同型恢复（reset → apply → prune 原子管线；无切片 = 全默认态），
+ *  帧间往返参考线/锁定随映射回来。 */
 function switchToFrame(index: number): void {
     if (index === activeFrame.value || !frameSlots.value[index]) return
-    snapshotActiveFrame()
+    stashActiveFrame()
     const doc = decodeGraphJson(frameSlots.value[index]!.graphJson)
     activeFrame.value = index
-    editor.openDocument(doc)
+    editor.openDocument(doc, frameStates.value[frameSlots.value[index]!.name])
 }
 
 /** 尾部追加空白帧（spec §4.2 增帧，26 票）：追加位置恒为尾部与活动帧位置无关——
  *  flowChain 节点按帧数组下标引用，尾部追加既有节点下标无一失效（链零改写即仍
  *  合法；中插会整体位移下标，仍不做）。时序复用 16 票切帧缝：先快照当前帧
- *  入槽（防丢未保存编辑）→ push 新槽位（「第 N 帧」、幅面 = 追加时活动帧画布宽高、
- *  层空）→ activeFrame 指向新帧 → openDocument 空白文档（schema 不重置无需注入；
- *  与活动帧同幅，切帧惯例视口保留不 refit）。dirty 重算与 materialize 由 openDocument
+ *  入槽（防丢未保存编辑）+ 状态切片写回映射（工单 04 切帧缝同款）→ push 新槽位
+ *  （「第 N 帧」、幅面 = 追加时活动帧画布宽高、层空）→ activeFrame 指向新帧 →
+ *  openDocument 空白文档（新帧无切片 = 全默认态；schema 不重置无需注入；与活动帧
+ *  同幅，切帧惯例视口保留不 refit）。dirty 重算与 materialize 由 openDocument
  *  的 doc 通知顺带驱动（store 契约：openDocument 必发 doc 通知，switchToFrame 同款），
  *  槽位数超基线在 isDocDirty 长度收紧处成立。 */
 function appendBlankFrame(): void {
     const doc = editor.store.doc
     if (!template.value || !doc) return
-    snapshotActiveFrame()
+    stashActiveFrame()
     const index = frameSlots.value.length
     frameSlots.value.push(blankFrameSlot(doc.width, doc.height, index))
     flowChainDraft.value = appendFrameToDraft(flowChainDraft.value)
@@ -299,16 +367,27 @@ function confirmDeleteFrame(index: number): void {
     deleteFrame(index)
 }
 
-/** 删帧执行：先快照当前帧入槽（防丢未保存编辑）→ splice 删槽位 → 流链草稿同步
- *  剔除条目（watch 顺带清编辑器错误 + 计入 dirty）→ 活动帧重定向（删活动帧之前的
- *  前移一位；删活动帧的取同位、末位越界缩一；命中活动帧变化才 openDocument 重建
- *  会话文档，schema 不重置、视口保留不 refit）→ 显式 syncDirty（删活动帧之后的帧
- *  不产生文档事件，槽位数变化需手动触发重算）。 */
+/** 删帧执行：切出缝 stash（graph 快照 + 状态写回——删活动帧之前的帧时活动帧会被
+ *  openDocument 重建，现场切片必须先进映射，否则随映射恢复的是上次切帧的旧值）→
+ *  splice 删槽位（被删帧切片随帧出映射——无同名幸存帧时，工单 04；帧名非唯一键
+ *  下取保守清理，映射记账在 editorState.ts 纯逻辑）→ 流链草稿同步剔除条目（watch
+ *  顺带清编辑器错误 + 计入 dirty）→ 活动帧重定向（删活动帧之前的前移一位；删活动
+ *  帧的取同位、末位越界缩一；命中活动帧变化才 openDocument 重建会话文档，切片随
+ *  映射恢复同切帧，schema 不重置、视口保留不 refit）→ 显式 syncDirty（删活动帧之
+ *  后的帧不产生文档事件，槽位数变化需手动触发重算）。 */
 function deleteFrame(index: number): void {
     if (!template.value || frameSlots.value.length <= 1) return
     if (renamingFrame.value !== null) cancelFrameRename()
-    if (editor.store.doc) snapshotActiveFrame()
+    stashActiveFrame()
+    const deletedName = frameSlots.value[index]?.name
     frameSlots.value.splice(index, 1)
+    if (deletedName) {
+        frameStates.value = dropFrameStateKey(
+            frameStates.value,
+            deletedName,
+            frameSlots.value.map((slot) => slot.name),
+        )
+    }
     flowChainDraft.value = deleteFrameFromDraft(flowChainDraft.value, index)
     const wasActive = index === activeFrame.value
     const beforeActive = index < activeFrame.value
@@ -318,7 +397,10 @@ function deleteFrame(index: number): void {
         activeFrame.value = Math.min(index, frameSlots.value.length - 1)
     }
     if (wasActive || beforeActive) {
-        editor.openDocument(decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson))
+        editor.openDocument(
+            decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson),
+            frameStates.value[frameSlots.value[activeFrame.value]!.name],
+        )
     }
     syncDirty()
 }
@@ -353,6 +435,10 @@ function commitFrameRename(): void {
     const next = renamingValue.value.trim()
     const slot = frameSlots.value[index]
     if (!slot || !next || next === slot.name) return
+    // 切片映射键随帧名迁移（工单 04，记账在 editorState.ts 纯逻辑）：已访问帧的
+    // 会话内切片不因重命名丢失（活动帧的现场切片本就不在映射、切出时才写回，迁移
+    // 的是其种子/上次写回值）；同名目标键覆盖（帧名非唯一键的既定代价）
+    frameStates.value = migrateFrameStateKey(frameStates.value, slot.name, next)
     frameSlots.value[index] = { ...slot, name: next }
     syncDirty()
 }
@@ -720,11 +806,13 @@ function onReady({ contentCanvas, overlayCanvas }: CanvasSurfaceReady) {
 }
 
 /** 打开当前帧文档（spec §4.2）：帧缓冲 graphJson → decodeGraph → openDocument →
- *  计一次 dirty 让守卫立即可用 → 物化 → 整页 fit（初始进入与重载同语义）。 */
+ *  计一次 dirty 让守卫立即可用 → 物化 → 整页 fit（初始进入与重载同语义）。
+ *  工程数据（工单 04）：切片自内存映射按帧名取，随 openDocument(canvas, frames[帧名])
+ *  原子应用（载入种子 = 首载恢复编排的帧 0 恢复；无切片 = 全默认态）。 */
 function openFrameDocument(): void {
     if (!template.value || frameSlots.value.length === 0) return
     const doc = decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson)
-    editor.openDocument(doc)
+    editor.openDocument(doc, frameStates.value[frameSlots.value[activeFrame.value]!.name])
     // dirty 基线已在载入时打快照（各帧 canonical 串）；此处即算一次让守卫立即可用
     computeDirty()
     materializer?.materialize(doc)
@@ -779,12 +867,24 @@ const saving = ref(false)
 /** 保存按钮共享 title（顶栏/工具栏两处同文案，单点维护） */
 const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档各帧 + flowChain）'
 
+/** 工程数据搭车写（工单 04，spec §6 写入时点二）：内容保存成功的同一用户动作缝随发
+ *  PUT editor-state（载荷 = schemaVersion + frames + prefs 整存替换）。fire-and-forget：
+ *  不等结果、不重试、不阻塞保存完成与错误面；失败静默 console.warn（spec §6 失败面
+ *  ——无 toast、无状态栏标记、无重试；中断最多丢最近状态增量，恢复端 prune 兜底）。
+ *  状态不计 dirty（纯内容口径零改动），保存态指示灯不受影响。 */
+function putEditorState(id: number, snapshot: TemplateEditorStateSnapshot): void {
+    api.updateTemplateEditorState(id, snapshot).catch((e) => {
+        console.warn('[editor-state] 搭车保存失败（静默降级）', e)
+    })
+}
+
 /** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义，spec §4.4 文档级口径）：当前帧
  *  快照并入帧缓冲（与切出同一条缝）→ 载荷 = name + 帧缓冲各帧 + flowChain。
  *  flowChain 以流链编辑器草稿的派生链为准随载荷整存（29 票）——「保存流链」与
  *  顶栏保存是同一条文档级通道，区别只在错误回显面（编辑器段内 vs 状态栏）；本地
  *  校验不过不发货（顶栏入口就地提示，编辑器入口保存钮已禁用）。基线 = 本次发送
- *  字节，保存期间的继续编辑保持 dirty。 */
+ *  字节，保存期间的继续编辑保持 dirty。工程数据（工单 04）：快照随同一保存缝组装，
+ *  内容 PUT 成功后搭车写。 */
 async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
     const record = template.value
     if (!record || !editor.store.doc || saving.value) return
@@ -796,6 +896,7 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
     const sentName = templateName.value
     const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
     const sentChain = flowChainDerived.value
+    const editorState = currentEditorStateSnapshot()
     const payload = buildSavePayload({
         slots: sentSlots,
         templateName: sentName,
@@ -814,6 +915,8 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
         flowChainError.value = null
         computeDirty()
         docNote.value = '已保存到服务端'
+        // 工程数据搭车写（工单 04）：fire-and-forget，失败静默，不影响保存结果面
+        putEditorState(record.id, editorState)
     } catch (e) {
         const text = formatApiError(e)
         docNote.value = `保存失败：${text}`

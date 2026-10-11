@@ -1,6 +1,8 @@
 // HTTP 契约客户面（spec §2.4）：列表摘要 / 模板全量两条读路径 + 模板 PUT（#5）、
-// 数据源独立实体 CRUD（#6 数据源段）、绑定（#6 绑定通道）与资源上传（#8）写路径。
+// 数据源独立实体 CRUD（#6 数据源段）、绑定（#6 绑定通道）、资源上传（#8）与
+// 编辑器状态（工程数据通道，project-data spec §4）写路径。
 // 错误信封统一 {"error":{code,message}}，按 code 判定语义（spec §2.5）。
+import type { CanvasEditorState, EditorPrefsState } from '@hankchen/canvas-editor'
 
 export interface TemplateSummary {
     id: number
@@ -15,6 +17,9 @@ export interface TemplateRecord {
     flowChain: unknown
     /** 绑定的数据源引用（null = 未绑）——数据源是独立实体，模板只持引用 */
     dataSourceId: number | null
+    /** 工程数据快照（project-data spec §4 读合并）：字节面服务端零校验原样透传，
+     *  null = 从未保存 = 全默认态；宽容解析权威在宿主 editorState.ts + 内核恢复端 */
+    editorState: unknown
     createdAt: string
     updatedAt: string
 }
@@ -78,6 +83,16 @@ export interface DataSourceWritePayload {
     data: unknown
 }
 
+/** 宿主聚合快照（project-data spec §6，工单 04）：PUT /api/templates/{id}/editor-state
+ *  载荷即此形状——schemaVersion/切片/常量自内核导入，宿主只拼装不解释（frames 以
+ *  帧名（CanvasEntry.name）为键、prefs 为编辑器级偏好）。服务端零校验整存替换，
+ *  宽容读权威在内核恢复端 */
+export interface TemplateEditorStateSnapshot {
+    schemaVersion: number
+    frames: Record<string, CanvasEditorState>
+    prefs: EditorPrefsState
+}
+
 /** 渲染记录单图（spec §2.4 #7）：images = 帧序×页序扁平序；url 为前导斜杠形态
  *  （spec §2.2 响应两态），即 /renders 直链 */
 export interface RenderImage {
@@ -121,6 +136,15 @@ export const api = {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+        }),
+    // PUT /api/templates/{id}/editor-state（project-data spec §4 写分道）：快照原样
+    // 整存替换，服务端零校验；成功回全量记录；不触碰 name/canvases/flowChain/
+    // dataSourceId/updatedAt（拖参考线不污染「最近编辑」排序）
+    updateTemplateEditorState: (id: string | number, snapshot: TemplateEditorStateSnapshot) =>
+        request<TemplateRecord>(`/api/templates/${id}/editor-state`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(snapshot),
         }),
     // PUT /api/templates/{id}/datasource（spec §2.4 #6 绑定通道）：{dataSourceId}
     // 整存替换引用列，null = 解绑；引用存在性由服务端先验（404 data_source_not_found）
