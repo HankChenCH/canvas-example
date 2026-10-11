@@ -124,6 +124,7 @@ import {
     type RenderRecord,
     type TemplateEditorStateSnapshot,
     type TemplateRecord,
+    type TemplateVersionSummary,
 } from '../api'
 import {
     buildEditorStateSnapshot,
@@ -162,6 +163,7 @@ import {
     sourceDraftBaseline,
 } from '../editor/datasource'
 import { sanitizeFileBase } from '../editor/render'
+import { runPublishFlow, versionBadgeOf } from '../editor/publish'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
 import FlowChainDrawer from '../components/FlowChainDrawer.vue'
 import RenderResultDrawer from '../components/RenderResultDrawer.vue'
@@ -233,6 +235,9 @@ async function loadTemplate(id: string): Promise<void> {
         activeFrame.value = 0
         template.value = record
         templateName.value = record.name
+        // 版本徽标数据（批 B ②）：载入取一次 GET /versions，fire-and-forget——
+        // 拉取失败徽标隐藏（null = 未知），不阻塞编辑器会话建立
+        void refreshVersions()
         // 重载路径（画布已就绪，onReady 不会再来）：换文档重开当前帧；首载路径由
         // onReady 收口（CanvasSurface 在 template 置位后才挂载）
         if (contentBackend !== null) openFrameDocument()
@@ -915,13 +920,14 @@ function flushEditorStateKeepalive(): void {
  *  顶栏保存是同一条文档级通道，区别只在错误回显面（编辑器段内 vs 状态栏）；本地
  *  校验不过不发货（顶栏入口就地提示，编辑器入口保存钮已禁用）。基线 = 本次发送
  *  字节，保存期间的继续编辑保持 dirty。工程数据（工单 04）：快照随同一保存缝组装，
- *  内容 PUT 成功后搭车写。 */
-async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
+ *  内容 PUT 成功后搭车写。返回 true = 保存成功（发布编排的促存链需要感知成败；
+ *  常规入口忽略返回值）。 */
+async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<boolean> {
     const record = template.value
-    if (!record || !editor.store.doc || saving.value) return
+    if (!record || !editor.store.doc || saving.value) return false
     if (flowChainLocalErrors.value.length > 0) {
         if (origin === 'topbar') docNote.value = '保存失败：流链未通过本地校验（打开帧条「流链」编辑器修复后再保存）'
-        return
+        return false
     }
     snapshotActiveFrame()
     const sentName = templateName.value
@@ -948,11 +954,13 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
         docNote.value = '已保存到服务端'
         // 工程数据搭车写（工单 04）：fire-and-forget，失败静默，不影响保存结果面
         putEditorState(record.id, editorState)
+        return true
     } catch (e) {
         const text = formatApiError(e)
         docNote.value = `保存失败：${text}`
         // flow_chain_invalid 等编译码在流链编辑器段内回显（spec §4.2，29 票）
         if (origin === 'flowchain') flowChainError.value = text
+        return false
     } finally {
         saving.value = false
     }
@@ -966,6 +974,57 @@ function saveTemplate(): void {
 /** 流链编辑器「保存流链」入口：同一文档级通道，错误段内回显（spec §4.2，29 票） */
 function saveFlowChain(): void {
     void runDocumentSave('flowchain')
+}
+
+// ---- 发布与版本徽标（template-draft-publish 批 B ②，spec §6）：顶栏「发布」
+//      按钮 + 轻量徽标（「未发布」/「vN」）。徽标数据 = 载入时取一次 GET /versions
+//      （发布/回滚后刷新）；拉取失败不阻塞编辑器——徽标隐藏（null = 未知）而不
+//      假显「未发布」。发布编排在 src/editor/publish.ts 纯逻辑（TDD 缝）：dirty
+//      自动先走保存流成功后 publish，一次动作；保存流不变声明 = 编辑器永远打开
+//      草稿、保存 = 现有 PUT、发布是保存后的显式固化，自动促存是编排便利而非
+//      「发布即保存」语义合并。反馈复用内联模式（按钮等待态 + docNote），无 toast。 ----
+
+const versions = ref<TemplateVersionSummary[] | null>(null)
+const versionBadgeLabel = computed(() => (versions.value === null ? null : versionBadgeOf(versions.value)))
+
+/** 版本列表刷新：失败容忍（保持现值不置 null——发布/回滚主流程已成功时旧徽标比
+ *  「未知」更接近真相；载入首拉失败则保持 null = 徽标隐藏） */
+async function refreshVersions(): Promise<void> {
+    const record = template.value
+    if (!record) return
+    try {
+        versions.value = await api.listTemplateVersions(record.id)
+    } catch {
+        // 徽标刷新失败静默（spec §6 内联反馈模式，不阻塞主流程）
+    }
+}
+
+const publishing = ref(false)
+
+/** 发布入口（票 05 编排）：先同步即时比较 dirty（防抖窗口内的最近编辑也要计入，
+ *  路由守卫同款口径），dirty 走 runPublishFlow 自动促存再发；成功后刷新徽标与
+ *  版本列表，docNote 反馈「已发布 vN」/「内容与 vN 一致，跳过重复发布」。 */
+async function runPublish(): Promise<void> {
+    const record = template.value
+    if (!record || publishing.value || saving.value) return
+    publishing.value = true
+    try {
+        computeDirty()
+        const outcome = await runPublishFlow({
+            dirty: isDirty.value,
+            save: () => runDocumentSave('topbar'),
+            publish: () => api.publishTemplate(record.id),
+        })
+        if (outcome.ok) {
+            docNote.value = outcome.note
+            await refreshVersions()
+        } else if (outcome.note !== null) {
+            docNote.value = outcome.note
+        }
+        // note null = 保存失败已自带错误面（docNote「保存失败：…」），不覆盖肇因
+    } finally {
+        publishing.value = false
+    }
 }
 
 // ---- 流链编辑器三事件（29 票）：草稿不可变更新（ref 整体替换触发 watch——
@@ -1411,6 +1470,23 @@ onBeforeUnmount(() => {
                 >
                     {{ saving ? '保存中…' : '保存' }}
                 </button>
+                <!-- 发布（template-draft-publish 批 B ②，spec §6）：把草稿固化为新
+                     版本——dirty 时自动先保存再发布（一次动作）；草稿与最新版本字节
+                     相等服务端幂等跳过（duplicate:true 也算成功）。徽标 = 版本史
+                     推导（未发布/vN），发布/回滚后刷新 -->
+                <button
+                    type="button"
+                    class="ghost"
+                    data-publish-template
+                    title="发布：把当前草稿固化为新发布版本（dirty 时自动先保存再发布，一次动作；内容与最新版本一致则跳过重复发布）"
+                    :disabled="publishing || saving"
+                    @click="runPublish"
+                >
+                    {{ publishing ? '发布中…' : '发布' }}
+                </button>
+                <span v-if="versionBadgeLabel" class="version-badge" data-version-badge title="版本徽标：最新已发布版本（「未发布」= 空版本史；发布/回滚后自动刷新）">
+                    {{ versionBadgeLabel }}
+                </span>
                 <button
                     type="button"
                     class="ghost"
@@ -1858,6 +1934,19 @@ onBeforeUnmount(() => {
 .topbar .ghost:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+}
+
+/* 版本徽标（template-draft-publish 批 B ②）：轻量 pill 同行随发布钮，「未发布」
+   与「vN」同款中性形态不闪色，语义靠文本；拉取失败不渲染（v-if） */
+.version-badge {
+    padding: 3px 9px;
+    border: 1px solid var(--shell-line-strong);
+    border-radius: 999px;
+    background: var(--shell-panel);
+    color: var(--shell-fg-2);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
 }
 
 .hidden {
