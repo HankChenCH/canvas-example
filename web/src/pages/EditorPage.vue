@@ -45,13 +45,17 @@
 // 反馈段回显；成功自动打开结果抽屉（RenderResultDrawer，只显本次会话最近一次）。
 // 与预览导出并存：导出预览图钮保留（文案含「预览图」），抽屉注明「预览仅断行
 // 参考，以终图为准」——导出 vs 终图词汇直接做进 UI。
-// 工程数据（project-data spec §6，工单 04）：编辑器状态随模板聚合持久化——宿主
+// 工程数据（project-data spec §6，工单 04/05）：编辑器状态随模板聚合持久化——宿主
 // 拼装快照 TemplateEditorStateSnapshot（schemaVersion + frames[帧名切片] + prefs），
 // 切片/常量从内核导入、宿主只拼装不解释。首载宽容恢复（null/悬空帧键 = 全默认态
 // 起步）+ 切帧缝内存映射（exportEditorState 写回、openDocument(canvas, frames[帧名])
-// 同型恢复）+ 内容保存成功搭车 PUT editor-state；状态不计 dirty（纯内容口径零改动）、
-// 失败静默 console.warn（切帧/离开时点 flush 在工单 05 补全；另存为 POST 不带状态，
-// 内存映射随会话延续，副本首写落下一 flush 时点）。
+// 同型恢复）+ 写入三时点 flush（均无条件幂等——无脏跟踪每次全量快照、无常驻定时器、
+// 失败静默 console.warn）：① 切帧缝顺带 PUT（fire-and-forget 小载荷写，工单 05）；
+// ② 内容保存成功搭车 PUT（工单 04）；③ 路由离开静默 flush（不进 confirm、不拦
+// 导航）+ 页签关闭 beforeunload 经 fetch keepalive 发出（工单 05）。状态不计 dirty
+// （纯内容口径零改动）。另存为 POST 不带状态、内存映射随会话延续——replace 是
+// editor→editor 参数级导航不触发离开钩子，副本首写落下一 flush 时点、原模板状态
+// 不受扰动。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
@@ -296,13 +300,18 @@ function stashActiveFrameState(): void {
     if (leavingName) frameStates.value[leavingName] = editor.exportEditorState()
 }
 
-/** 切出缝 = graph 快照入槽 + 状态切片写回映射（spec §4.2 切帧快照 + 工单 04 状态
- *  写回，两条缝同一时刻、同一帧）：switchToFrame / appendBlankFrame / deleteFrame
- *  共用；保存缝（runDocumentSave/runSaveAs）只取 graph 快照——状态现取
- *  （currentEditorStateSnapshot 的活动帧现读），不走映射。 */
+/** 切出缝 = graph 快照入槽 + 状态切片写回映射 + 工程数据 flush（spec §4.2 切帧
+ *  快照 + 工单 04 状态写回 + 工单 05 时点一，同一时刻、同一帧）：switchToFrame /
+ *  appendBlankFrame / deleteFrame 共用；保存缝（runDocumentSave/runSaveAs）只取
+ *  graph 快照——状态现取（currentEditorStateSnapshot 的活动帧现读），不走映射。
+ *  缝尾顺带 flush（时点一）：载荷含切出帧现场切片（活动帧现读 = 刚写回映射的
+ *  同值）+ 映射其余帧 + prefs，fire-and-forget 不等结果、不阻塞切帧。deleteFrame
+ *  的 flush 载荷瞬时含将删帧键（stash 先于 splice/dropFrameStateKey）——悬空键由
+ *  恢复端宽容读丢弃 + 下次 flush 覆盖自愈（spec §3 既定代价，记档）。 */
 function stashActiveFrame(): void {
     snapshotActiveFrame()
     stashActiveFrameState()
+    flushEditorState()
 }
 
 /** 切出前快照当前帧（spec §4.2：encodeGraph(editor.store.doc) 快照该帧进缓冲） */
@@ -871,11 +880,33 @@ const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档
  *  PUT editor-state（载荷 = schemaVersion + frames + prefs 整存替换）。fire-and-forget：
  *  不等结果、不重试、不阻塞保存完成与错误面；失败静默 console.warn（spec §6 失败面
  *  ——无 toast、无状态栏标记、无重试；中断最多丢最近状态增量，恢复端 prune 兜底）。
- *  状态不计 dirty（纯内容口径零改动），保存态指示灯不受影响。 */
+ *  状态不计 dirty（纯内容口径零改动），保存态指示灯不受影响。快照由保存缝预取
+ *  （与发送内容同一时刻），不走 flushEditorState 现取。 */
 function putEditorState(id: number, snapshot: TemplateEditorStateSnapshot): void {
     api.updateTemplateEditorState(id, snapshot).catch((e) => {
         console.warn('[editor-state] 搭车保存失败（静默降级）', e)
     })
+}
+
+/** 工程数据 flush（工单 05，spec §6 写入时点一/三之一共用）：当前会话全量快照
+ *  无条件 PUT——状态不设脏跟踪，flush 幂等，每次全量（小载荷，切帧/离开频率下
+ *  可接受）。fire-and-forget：不等结果、不阻塞动作；失败静默 console.warn。
+ *  template 未绑（载入中/载入失败）跳过。 */
+function flushEditorState(): void {
+    const record = template.value
+    if (!record) return
+    api.updateTemplateEditorState(record.id, currentEditorStateSnapshot()).catch((e) => {
+        console.warn('[editor-state] 状态 flush 失败（静默降级）', e)
+    })
+}
+
+/** 页签关闭 flush（工单 05，spec §6 写入时点三之二）：同快照经 keepalive 通道
+ *  发出（unload 期存活；sendBeacon 只能 POST，PUT 写分道语义保不住）。同样无条件
+ *  幂等；载荷自足（currentEditorStateSnapshot 同步组装、JSON 同步串化）。 */
+function flushEditorStateKeepalive(): void {
+    const record = template.value
+    if (!record) return
+    api.updateTemplateEditorStateKeepalive(record.id, currentEditorStateSnapshot())
 }
 
 /** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义，spec §4.4 文档级口径）：当前帧
@@ -1215,15 +1246,23 @@ function onKeydown(event: KeyboardEvent): void {
 }
 window.addEventListener('keydown', onKeydown)
 
-/** 关闭守卫双保险之一：路由离开 confirm（spec §4.4）——同步即时比较 */
+/** 关闭守卫双保险之一：路由离开 confirm（spec §4.4）——同步即时比较。工程数据
+ *  静默 flush（工单 05 时点三之一）随钩子无条件先发：不进 confirm 文案、不拦
+ *  导航（flush 后照常放行/询问）；内容 dirty 的 confirm 语义原样（状态不计 dirty，
+ *  不因状态弹窗）。editor→editor 参数级导航（另存为 replace）不走本钩子（vue-router
+ *  同路由参数变化触发 update 不触发 leave）——副本首写落下一真实 flush 时点。 */
 onBeforeRouteLeave(() => {
+    flushEditorState()
     computeDirty()
     if (!isDirty.value) return true
     return window.confirm('当前有未保存的变更，离开将丢失。确定离开吗？')
 })
 
-/** 双保险之二：页签关闭 beforeunload（文案由浏览器定） */
+/** 双保险之二：页签关闭 beforeunload（文案由浏览器定）。工程数据 flush（工单 05
+ *  时点三之二）随钩子无条件先发（keepalive PUT，unload 期存活）；内容 dirty 的
+ *  浏览器确认行为原样（状态不计 dirty，不因状态弹）。 */
 function onBeforeUnload(event: BeforeUnloadEvent): void {
+    flushEditorStateKeepalive()
     computeDirty()
     if (!isDirty.value) return
     event.preventDefault()

@@ -117,6 +117,9 @@ export interface FontInfo {
     ref: string
 }
 
+/** 工程数据写分道端点（project-data spec §4）：普通通道与页签关闭 keepalive 通道共用 */
+const editorStateUrl = (id: string | number): string => `/api/templates/${id}/editor-state`
+
 export const api = {
     listTemplates: () => request<TemplateSummary[]>('/api/templates'),
     // GET /api/fonts：字体清单白名单（seed/fonts.json 只读下发）；失败由调用方
@@ -141,11 +144,25 @@ export const api = {
     // 整存替换，服务端零校验；成功回全量记录；不触碰 name/canvases/flowChain/
     // dataSourceId/updatedAt（拖参考线不污染「最近编辑」排序）
     updateTemplateEditorState: (id: string | number, snapshot: TemplateEditorStateSnapshot) =>
-        request<TemplateRecord>(`/api/templates/${id}/editor-state`, {
+        request<TemplateRecord>(editorStateUrl(id), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(snapshot),
         }),
+    // 同端点页签关闭通道（project-data spec §6 写入时点三，工单 05）：unload 期经
+    // fetch keepalive 发出——sendBeacon 只能 POST，PUT 写分道语义保不住；快照载荷
+    // 自足（同步组装同步发出，不依赖页面存活）。fire-and-forget：不解析响应（unload
+    // 期无从消费）、失败静默 console.warn（spec §6 失败面，调用方无 catch 可挂）
+    updateTemplateEditorStateKeepalive: (id: string | number, snapshot: TemplateEditorStateSnapshot): void => {
+        void fetch(editorStateUrl(id), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(snapshot),
+            keepalive: true,
+        }).catch((e) => {
+            console.warn('[editor-state] 页签关闭 flush 失败（静默降级）', e)
+        })
+    },
     // PUT /api/templates/{id}/datasource（spec §2.4 #6 绑定通道）：{dataSourceId}
     // 整存替换引用列，null = 解绑；引用存在性由服务端先验（404 data_source_not_found）
     bindTemplateDataSource: (id: string | number, dataSourceId: number | null) =>
