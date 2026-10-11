@@ -54,6 +54,12 @@ func newServer(st *store.Store, rs *render.Service, fonts []FontEntry) http.Hand
 	// 工程数据写分道(工程 spec §4):编辑器状态快照原样整存替换,读合并复用
 	// GET /api/templates/{id} 全量记录
 	mux.HandleFunc("PUT /api/templates/{id}/editor-state", s.handleUpdateTemplateEditorState)
+	// 模板版本化(模板草稿-发布-版本化,spec §3/§5):发布动作 + 版本史读家族 +
+	// 回滚;发布守门 422 invalid_graph,回滚 200 回全量记录
+	mux.HandleFunc("POST /api/templates/{id}/publish", s.handlePublishTemplate)
+	mux.HandleFunc("GET /api/templates/{id}/versions", s.handleListTemplateVersions)
+	mux.HandleFunc("GET /api/templates/{id}/versions/{version}", s.handleGetTemplateVersion)
+	mux.HandleFunc("POST /api/templates/{id}/revert", s.handleRevertTemplate)
 	// 删除模板(spec §2.4 #10,卡片操作修订):级联清渲染记录行,产物文件保留
 	mux.HandleFunc("DELETE /api/templates/{id}", s.handleDeleteTemplate)
 	// 数据源是独立实体(spec §2.4 数据源段):自有 CRUD,模板经绑定端点持引用
