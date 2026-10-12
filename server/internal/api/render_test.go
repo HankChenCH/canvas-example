@@ -42,7 +42,8 @@ func templateTableGraph() map[string]any {
 }
 
 // newLocalRenderTemplate 造一个离线可渲染的模板(双帧模板表 + 默认链),
-// 创建即绑定数据源(单调用,spec §2.4 #3)后返回模板 id
+// 创建即绑定数据源(单调用,spec §2.4 #3)并发布 v1(缺省渲染语义 = 最新已发布,
+// 明示 breaking change,spec §4)后返回模板 id
 func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 	t.Helper()
 	ds := mustJSONFile(t, map[string]any{
@@ -70,7 +71,12 @@ func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 	if code != http.StatusCreated {
 		t.Fatalf("造模板失败: %d %v", code, body)
 	}
-	return int64(body["id"].(float64))
+	id := int64(body["id"].(float64))
+	code, body = doRequest(t, h, http.MethodPost, fmt.Sprintf("/api/templates/%d/publish", id), "application/json", nil)
+	if code != http.StatusCreated {
+		t.Fatalf("发布渲染用模板失败: %d %v", code, body)
+	}
+	return id
 }
 
 // TestPostRender_201SeedShape 渲染 → 201 RenderRecord:images 帧序×页序扁平、
@@ -135,7 +141,8 @@ func TestPostRender_KeepAll(t *testing.T) {
 	firstURL := first["images"].([]any)[0].(map[string]any)["url"].(string)
 	oldRenderID := regexp.MustCompile(`^/renders/(\d+)/`).FindStringSubmatch(firstURL)[1]
 
-	// 改模板(整存替换)后再渲染:新渲染记录新 id
+	// 改模板(整存替换)后再渲染:新渲染记录新 id(缺省渲染 = 最新已发布 v1,
+	// 与草稿改动无关——keep-all 旧图快照仍服务)
 	put := mustJSONFile(t, map[string]any{
 		"name":     "改名后的渲染模板",
 		"canvases": []any{map[string]any{"name": "主页", "graph": templateTableGraph()}},
@@ -156,4 +163,187 @@ func TestPostRender_KeepAll(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
 		t.Fatalf("旧渲染 %s 应仍可服务: %d %q", firstURL, rec.Code, rec.Header().Get("Content-Type"))
 	}
+}
+
+// --- 渲染选版(工单 04,spec §4):可选 body {version: number|"draft"} ---
+
+// postRenderBody 带任意 body 的 POST 渲染
+func postRenderBody(t *testing.T, h http.Handler, id, body string) (int, map[string]any) {
+	t.Helper()
+	return doRequest(t, h, http.MethodPost, fmt.Sprintf("/api/templates/%s/render", id), "application/json", []byte(body))
+}
+
+// rewriteDraftCanvas 整存替换草稿为单帧指定名(改 canvases 文本,发布不 duplicate)
+func rewriteDraftCanvas(t *testing.T, h http.Handler, id int64, frameName string) {
+	t.Helper()
+	put := mustJSONFile(t, map[string]any{
+		"name":     "渲染用本地模板",
+		"canvases": []any{map[string]any{"name": frameName, "graph": templateTableGraph()}},
+	})
+	code, body := doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d", id), "application/json", put)
+	if code != http.StatusOK {
+		t.Fatalf("改草稿失败: %d %v", code, body)
+	}
+}
+
+// publishDraft 发布当前草稿,返回新版本号
+func publishDraft(t *testing.T, h http.Handler, id int64) float64 {
+	t.Helper()
+	code, body := doRequest(t, h, http.MethodPost, fmt.Sprintf("/api/templates/%d/publish", id), "application/json", nil)
+	if code != http.StatusCreated {
+		t.Fatalf("发布失败: %d %v", code, body)
+	}
+	return body["version"].(float64)
+}
+
+// firstPageName 渲染记录首页的帧名(选版内容断言位)
+func firstPageName(t *testing.T, body map[string]any) string {
+	t.Helper()
+	images, ok := body["images"].([]any)
+	if !ok || len(images) == 0 {
+		t.Fatalf("渲染记录应至少一页: %v", body)
+	}
+	return images[0].(map[string]any)["name"].(string)
+}
+
+// TestPostRender_SelectionMatrix 选版矩阵:缺省 = 最新已发布(明示 breaking
+// change,草稿领先也不踩);显式数字 = 指定历史版本;draft 哨兵 = 草稿列现值;
+// 记录 version 字段逐态正确(draft 渲染 null 透传)
+func TestPostRender_SelectionMatrix(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h) // v1 = 主页/续页 + 链
+	rewriteDraftCanvas(t, h, id, "主页改")
+	if got := publishDraft(t, h, id); got != 2 {
+		t.Fatalf("改版后发布应得 v2, 实得 %v", got)
+	}
+	rewriteDraftCanvas(t, h, id, "草稿帧") // 草稿领先于 v2,不发布
+
+	// 缺省(无 body)= 最新已发布 v2,而非草稿
+	code, body := postRender(t, h, fmt.Sprintf("%d", id))
+	if code != http.StatusCreated {
+		t.Fatalf("无 body 渲染 = %d (%v)", code, body)
+	}
+	if v, _ := body["version"].(float64); v != 2 {
+		t.Fatalf("缺省渲染应记 version=2: %v", body["version"])
+	}
+	if got := firstPageName(t, body); got != "主页改" {
+		t.Fatalf("缺省渲染应踩 v2 内容(主页改,明示 breaking change), 实得 %q", got)
+	}
+
+	// 显式数字 v1 = 历史版本内容
+	code, body = postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":1}`)
+	if code != http.StatusCreated {
+		t.Fatalf("{version:1} 渲染 = %d (%v)", code, body)
+	}
+	if v, _ := body["version"].(float64); v != 1 {
+		t.Fatalf("显式渲染应记 version=1: %v", body["version"])
+	}
+	if got := firstPageName(t, body); got != "主页" {
+		t.Fatalf("显式 v1 渲染应踩 v1 内容(主页), 实得 %q", got)
+	}
+
+	// draft 哨兵 = 草稿列现值(编辑器预览专用,票 03 Comments 契约修订)
+	code, body = postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":"draft"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("{version:draft} 渲染 = %d (%v)", code, body)
+	}
+	if body["version"] != nil {
+		t.Fatalf("draft 渲染记录 version 应 null 透传: %v", body["version"])
+	}
+	if got := firstPageName(t, body); got != "草稿帧" {
+		t.Fatalf("draft 渲染应踩草稿列现值, 实得 %q", got)
+	}
+
+	// {"version":null} 视同缺省(null 归一先例,与缺字段同语义)
+	code, body = postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":null}`)
+	if code != http.StatusCreated {
+		t.Fatalf("{version:null} 渲染 = %d (%v)", code, body)
+	}
+	if v, _ := body["version"].(float64); v != 2 {
+		t.Fatalf("version null 应视同缺省(最新已发布): %v", body["version"])
+	}
+}
+
+// TestPostRender_Unpublished409 从未发布 → 409 template_unpublished(状态冲突型);
+// 对无版本模板指定数字 → 404 version_not_found(寻址失败)
+func TestPostRender_Unpublished409(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newUnpublishedTemplate(t, h)
+
+	code, body := postRender(t, h, fmt.Sprintf("%d", id))
+	if code != http.StatusConflict || errCode(t, body) != "template_unpublished" {
+		t.Fatalf("未发布渲染 = %d/%s, 期望 409/template_unpublished", code, errCode(t, body))
+	}
+	if msg, _ := body["error"].(map[string]any)["message"].(string); msg == "" {
+		t.Fatalf("409 应携带可读 message: %v", body)
+	}
+
+	// 对无版本模板指定数字 → 404 version_not_found(spec §4 含对无版本模板指定)
+	code, body = postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":1}`)
+	if code != http.StatusNotFound || errCode(t, body) != "version_not_found" {
+		t.Fatalf("无版本模板指定 = %d/%s, 期望 404/version_not_found", code, errCode(t, body))
+	}
+}
+
+// TestPostRender_VersionNotFound404 指定不存在的版本 → 404 version_not_found
+func TestPostRender_VersionNotFound404(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h) // 已发布 v1
+
+	code, body := postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":99}`)
+	if code != http.StatusNotFound || errCode(t, body) != "version_not_found" {
+		t.Fatalf("{version:99} = %d/%s, 期望 404/version_not_found", code, errCode(t, body))
+	}
+}
+
+// TestPostRender_InvalidSelection400 version 形态错误 → 400 invalid_json:
+// 类型错/零/负数/非整数/未知字符串哨兵/坏 JSON
+func TestPostRender_InvalidSelection400(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h)
+
+	for name, raw := range map[string]string{
+		"未知字符串": `{"version":"nope"}`,
+		"零":     `{"version":0}`,
+		"负数":    `{"version":-1}`,
+		"非整数":   `{"version":1.5}`,
+		"布尔":    `{"version":true}`,
+		"数组":    `{"version":[1]}`,
+		"对象":    `{"version":{"n":1}}`,
+		"坏JSON": `not json`,
+		"尾随内容":  `{"version":1} tail`,
+	} {
+		code, body := postRenderBody(t, h, fmt.Sprintf("%d", id), raw)
+		if code != http.StatusBadRequest || errCode(t, body) != "invalid_json" {
+			t.Fatalf("[%s] = %d/%s, 期望 400/invalid_json", name, code, errCode(t, body))
+		}
+	}
+}
+
+// TestPostRender_TemplateMissingWithBody404 先寻址模板:合法 body + 模板不存在
+// → 404 template_not_found(spec §4)
+func TestPostRender_TemplateMissingWithBody404(t *testing.T) {
+	h, _ := newTestServer(t)
+	code, body := postRenderBody(t, h, "999", `{"version":1}`)
+	if code != http.StatusNotFound || errCode(t, body) != "template_not_found" {
+		t.Fatalf("999 + body = %d/%s, 期望 404/template_not_found", code, errCode(t, body))
+	}
+}
+
+// newUnpublishedTemplate 造一个离线可渲染但从未发布的模板(空链单帧直通)
+func newUnpublishedTemplate(t *testing.T, h http.Handler) int64 {
+	t.Helper()
+	payload := mustJSONFile(t, map[string]any{
+		"name":     "未发布渲染模板",
+		"canvases": []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+	})
+	code, body := doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
+	if code != http.StatusCreated {
+		t.Fatalf("造未发布模板失败: %d %v", code, body)
+	}
+	return int64(body["id"].(float64))
 }

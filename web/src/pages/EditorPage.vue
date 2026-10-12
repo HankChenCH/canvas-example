@@ -39,12 +39,23 @@
 // → 成功后会话延续式重绑（dirty 基线重置为新模板）+ router.replace('/editor/<newId>')
 // 不重走载入——App.vue 去 :key 后 editor→editor 参数级导航复用本页实例，路由 id
 // 与会话脱钩的导航走防御性重载兜底；中途失败错误归因弹窗内回显，不重绑不导航。
-// 渲染终图（spec §4.6，19 票）：顶栏「渲染终图」→ POST /templates/{id}/render
-// （无 body，存储态为准——dirty 可渲染，结果对应已保存版本）；等待期按钮禁用，
+// 渲染终图（spec §4.6，19 票 / tdp 批 B ④ draft 哨兵）：顶栏「渲染终图」→ POST
+// /templates/{id}/render（body {version:"draft"}——编辑器是草稿世界，预览渲草稿列
+// 现值，发布不被预览倒逼；缺省语义 = 最新已发布归列表页）；等待期按钮禁用，
 // 30s deadline 服务端控制、前端不另设超时；失败错误体（稳定码在前）走状态栏
 // 反馈段回显；成功自动打开结果抽屉（RenderResultDrawer，只显本次会话最近一次）。
 // 与预览导出并存：导出预览图钮保留（文案含「预览图」），抽屉注明「预览仅断行
 // 参考，以终图为准」——导出 vs 终图词汇直接做进 UI。
+// 发布与版本（template-draft-publish 批 B ②③，spec §6 / 票 02-05）：顶栏「发布」
+// 钮 + 轻量版本徽标（未发布/vN，数据 = 载入取一次 GET /versions，发布/回滚后刷
+// 新，失败容忍徽标隐藏）——发布编排在 src/editor/publish.ts 纯逻辑（dirty 自动
+// 先走保存流成功后 publish，一次动作；保存流不变：编辑器永远打开草稿、保存 =
+// 现有 PUT、发布是保存后的显式固化，自动促存是编排便利非「发布即保存」合并）；
+// 顶栏「版本」钮开合 VersionHistoryDrawer（版本史 = 发布史），行内回滚 →
+// ConfirmDialog（spec 定死文案）→ POST revert 全量记录 → src/editor/revert.ts
+// planRevertSession 成算 → 会话延续式替换（dirty 基线重置为新内容即归 clean、
+// 流链草稿与基线重置、工程数据零特殊处理——悬空帧键宽容读丢弃、幸存同名帧
+// 参考线原样保留；spec §5），徽标/版本列表刷新 + docNote 反馈。
 // 工程数据（project-data spec §6，工单 04/05）：编辑器状态随模板聚合持久化——宿主
 // 拼装快照 TemplateEditorStateSnapshot（schemaVersion + frames[帧名切片] + prefs），
 // 切片/常量从内核导入、宿主只拼装不解释。首载宽容恢复（null/悬空帧键 = 全默认态
@@ -124,6 +135,7 @@ import {
     type RenderRecord,
     type TemplateEditorStateSnapshot,
     type TemplateRecord,
+    type TemplateVersionSummary,
 } from '../api'
 import {
     buildEditorStateSnapshot,
@@ -162,9 +174,13 @@ import {
     sourceDraftBaseline,
 } from '../editor/datasource'
 import { sanitizeFileBase } from '../editor/render'
+import { runPublishFlow, versionBadgeOf } from '../editor/publish'
+import { planRevertSession } from '../editor/revert'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
 import FlowChainDrawer from '../components/FlowChainDrawer.vue'
 import RenderResultDrawer from '../components/RenderResultDrawer.vue'
+import VersionHistoryDrawer from '../components/VersionHistoryDrawer.vue'
 import NamePromptDialog from '../components/NamePromptDialog.vue'
 
 // ---- 模板载入（spec §4.1）：GET /templates/{id}；404 template_not_found → 错误
@@ -233,6 +249,9 @@ async function loadTemplate(id: string): Promise<void> {
         activeFrame.value = 0
         template.value = record
         templateName.value = record.name
+        // 版本徽标数据（批 B ②）：载入取一次 GET /versions，fire-and-forget——
+        // 拉取失败徽标隐藏（null = 未知），不阻塞编辑器会话建立
+        void refreshVersions()
         // 重载路径（画布已就绪，onReady 不会再来）：换文档重开当前帧；首载路径由
         // onReady 收口（CanvasSurface 在 template 置位后才挂载）
         if (contentBackend !== null) openFrameDocument()
@@ -915,13 +934,14 @@ function flushEditorStateKeepalive(): void {
  *  顶栏保存是同一条文档级通道，区别只在错误回显面（编辑器段内 vs 状态栏）；本地
  *  校验不过不发货（顶栏入口就地提示，编辑器入口保存钮已禁用）。基线 = 本次发送
  *  字节，保存期间的继续编辑保持 dirty。工程数据（工单 04）：快照随同一保存缝组装，
- *  内容 PUT 成功后搭车写。 */
-async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
+ *  内容 PUT 成功后搭车写。返回 true = 保存成功（发布编排的促存链需要感知成败；
+ *  常规入口忽略返回值）。 */
+async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<boolean> {
     const record = template.value
-    if (!record || !editor.store.doc || saving.value) return
+    if (!record || !editor.store.doc || saving.value) return false
     if (flowChainLocalErrors.value.length > 0) {
         if (origin === 'topbar') docNote.value = '保存失败：流链未通过本地校验（打开帧条「流链」编辑器修复后再保存）'
-        return
+        return false
     }
     snapshotActiveFrame()
     const sentName = templateName.value
@@ -948,11 +968,13 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<void> {
         docNote.value = '已保存到服务端'
         // 工程数据搭车写（工单 04）：fire-and-forget，失败静默，不影响保存结果面
         putEditorState(record.id, editorState)
+        return true
     } catch (e) {
         const text = formatApiError(e)
         docNote.value = `保存失败：${text}`
         // flow_chain_invalid 等编译码在流链编辑器段内回显（spec §4.2，29 票）
         if (origin === 'flowchain') flowChainError.value = text
+        return false
     } finally {
         saving.value = false
     }
@@ -966,6 +988,141 @@ function saveTemplate(): void {
 /** 流链编辑器「保存流链」入口：同一文档级通道，错误段内回显（spec §4.2，29 票） */
 function saveFlowChain(): void {
     void runDocumentSave('flowchain')
+}
+
+// ---- 发布与版本徽标（template-draft-publish 批 B ②，spec §6）：顶栏「发布」
+//      按钮 + 轻量徽标（「未发布」/「vN」）。徽标数据 = 载入时取一次 GET /versions
+//      （发布/回滚后刷新）；拉取失败不阻塞编辑器——徽标隐藏（null = 未知）而不
+//      假显「未发布」；版本抽屉对 null 显「版本列表不可用」（评审修复 F1：
+//      未知 ≠ 未发布，null 语义由 versionListState 纯逻辑钉死）。发布编排在
+//      src/editor/publish.ts 纯逻辑（TDD 缝）：dirty 自动先走保存流成功后
+//      publish，一次动作；保存流不变声明 = 编辑器永远打开草稿、保存 = 现有 PUT、
+//      发布是保存后的显式固化，自动促存是编排便利而非「发布即保存」语义合并。
+//      反馈复用内联模式（按钮等待态 + docNote），无 toast。 ----
+
+const versions = ref<TemplateVersionSummary[] | null>(null)
+const versionBadgeLabel = computed(() => (versions.value === null ? null : versionBadgeOf(versions.value)))
+
+/** 版本列表刷新：失败容忍（保持现值不置 null——发布/回滚主流程已成功时旧值比
+ *  「未知」更接近真相；载入首拉失败则保持 null = 徽标隐藏、抽屉显「版本列表
+ *  不可用」） */
+async function refreshVersions(): Promise<void> {
+    const record = template.value
+    if (!record) return
+    try {
+        versions.value = await api.listTemplateVersions(record.id)
+    } catch {
+        // 徽标刷新失败静默（spec §6 内联反馈模式，不阻塞主流程）
+    }
+}
+
+const publishing = ref(false)
+
+/** 发布入口（票 05 编排）：先同步即时比较 dirty（防抖窗口内的最近编辑也要计入，
+ *  路由守卫同款口径），dirty 走 runPublishFlow 自动促存再发；成功后刷新徽标与
+ *  版本列表，docNote 反馈「已发布 vN」/「内容与 vN 一致，跳过重复发布」。 */
+async function runPublish(): Promise<void> {
+    const record = template.value
+    if (!record || publishing.value || saving.value) return
+    publishing.value = true
+    try {
+        computeDirty()
+        const outcome = await runPublishFlow({
+            dirty: isDirty.value,
+            save: () => runDocumentSave('topbar'),
+            publish: () => api.publishTemplate(record.id),
+        })
+        if (outcome.ok) {
+            docNote.value = outcome.note
+            await refreshVersions()
+        } else if (outcome.note !== null) {
+            docNote.value = outcome.note
+        }
+        // note null = 保存失败已自带错误面（docNote「保存失败：…」），不覆盖肇因
+    } finally {
+        publishing.value = false
+    }
+}
+
+// ---- 版本历史抽屉与回滚（template-draft-publish 批 B ③，spec §6 / 票 04）：顶栏
+//      「版本」钮开合 VersionHistoryDrawer（复用抽屉模式，宿主持有全部状态）；行内
+//      回滚 → ConfirmDialog（spec 定死文案）→ POST revert 拿全量记录 → planRevertSession
+//      成算 → 会话替换（见 runRevert 详注）。 ----
+
+const versionDrawerOpen = ref(false)
+
+const revertOpen = ref(false)
+const revertTarget = ref<TemplateVersionSummary | null>(null)
+const revertError = ref<string | null>(null)
+const reverting = ref(false)
+
+/** 确认框文案（spec §6 定死句式，N = 目标版本号） */
+const revertNote = computed(() =>
+    revertTarget.value === null
+        ? '将用历史版本的内容覆盖当前草稿；未保存的修改将丢失'
+        : `将用版本 ${revertTarget.value.version} 的内容覆盖当前草稿；未保存的修改将丢失`,
+)
+
+/** 行内回滚入口：弹确认框（服务端零守卫，确认交互在前端——票 04） */
+function openRevert(v: TemplateVersionSummary): void {
+    revertTarget.value = v
+    revertError.value = null
+    revertOpen.value = true
+}
+
+function closeRevert(): void {
+    revertOpen.value = false
+    revertError.value = null
+    revertTarget.value = null
+}
+
+/** 回滚执行（spec §5 / 票 04，批 B ③）：POST revert 200 回全量模板记录（与
+ *  GET /templates/{id} 同形，无需二次 GET），拿记录做**会话替换**——会话延续式
+ *  （另存为先例，不整页重载、内容后端已就绪走 openFrameDocument 重开当前帧）：
+ *  - template/模板名/帧槽/活动帧归 0 整体切换；savedBaseline = plan.baseline
+ *    （**dirty 基线重置为新内容**——回滚后立即归 clean，与 loadTemplate/另存为
+ *    同口径；继续编辑才再 dirty，满意后发布成新版本，版本线线性）；
+ *  - 流链草稿与段基线同步重置（plan.flowChainDraft / plan.normalizedChain）；
+ *  - **工程数据零特殊处理**（spec §5）：frameStates 不动——悬空帧键由宽容读丢弃
+ *    （pickFrameStates 精神），幸存同名帧参考线原样保留（best-effort），flush
+ *    载荷按现役帧名组装自愈；
+ *  - 数据源绑定：revert 不碰绑定列（dataSourceId 理论不变），仍按全量记录如实
+ *    重取/重注 schema（applyBoundSource 同入口，与 loadTemplate 同口径）；
+ *  - 徽标/版本列表刷新 + docNote 反馈「已回滚到 vN」。
+ *  成算先行：planRevertSession 任一帧解码失败抛错时会话零变更，错误留在确认框内
+ *  可重试/取消；API 失败同样框内回显。 */
+async function runRevert(): Promise<void> {
+    const record = template.value
+    const target = revertTarget.value
+    if (!record || !target || reverting.value) return
+    reverting.value = true
+    try {
+        const updated = await api.revertTemplate(record.id, target.version)
+        // 成算先行（全有或全无）：planRevertSession 任一帧解码失败、数据源实体重取
+        // 失败都发生在任何会话变更之前——失败时原会话零变更，错误留在确认框内
+        const plan = planRevertSession(updated)
+        const source = updated.dataSourceId === null ? null : await api.getDataSource(updated.dataSourceId)
+        // ---- 会话替换（同步赋值段，以上均成功后才执行）----
+        template.value = updated
+        templateName.value = updated.name
+        frameSlots.value = plan.slots
+        activeFrame.value = 0
+        savedBaseline = plan.baseline
+        flowChainDraft.value = plan.flowChainDraft
+        flowChainBaselineChain.value = plan.normalizedChain
+        flowChainError.value = null
+        // 数据源绑定按全量记录如实重注 schema（applyBoundSource 同入口）
+        applyBoundSource(source)
+        revertOpen.value = false
+        openFrameDocument()
+        await refreshVersions()
+        revertTarget.value = null
+        docNote.value = `已回滚到 v${target.version}`
+    } catch (e) {
+        revertError.value = formatApiError(e)
+    } finally {
+        reverting.value = false
+    }
 }
 
 // ---- 流链编辑器三事件（29 票）：草稿不可变更新（ref 整体替换触发 watch——
@@ -1200,11 +1357,15 @@ async function runSaveAsNew(): Promise<void> {
     }
 }
 
-// ---- 渲染终图（spec §4.6，19 票）：顶栏触发 POST /templates/{id}/render（无
-// body）——渲染始终以服务端存储态为准（模板 + dataset），dirty 时可渲染、结果
-// 对应已保存版本（抽屉注记说明）。等待期按钮禁用；30s deadline 服务端控制，
-// 前端不另设超时；失败错误体 {error:{code,message}} 以稳定码在前回显状态栏反
-// 馈段；成功自动打开结果抽屉，lastRender 整体替换 = 只显本次会话最近一次。 ----
+// ---- 渲染终图（spec §4.6，19 票 / template-draft-publish 批 B ④ draft 哨兵，票 03
+// 契约修订）：顶栏触发 POST /templates/{id}/render（body {version:"draft"}）——
+// 编辑器是草稿世界，预览是编辑辅助：渲染草稿列现值，发布不被预览倒逼（缺省语义
+// 已改为最新已发布，编辑器预览若沿用缺省会变成预览已发布版而非草稿）。dirty 可
+// 渲染（草稿现值即编辑所见）；等待期按钮禁用，30s deadline 服务端控制，前端不另
+// 设超时；失败错误体（稳定码在前）走状态栏反馈段回显；成功自动打开结果抽屉
+// （RenderResultDrawer，只显本次会话最近一次）。与预览导出并存：导出预览图钮保留
+// （文案含「预览图」），抽屉注明「预览仅断行参考，以终图为准」——导出 vs 终图
+// 词汇直接做进 UI。 ----
 
 const rendering = ref(false)
 const renderDrawerOpen = ref(false)
@@ -1214,12 +1375,12 @@ async function runRender(): Promise<void> {
     const record = template.value
     if (!record || rendering.value) return
     rendering.value = true
-    docNote.value = '渲染终图中…（以服务端存储态为准，结果对应已保存版本）'
+    docNote.value = '渲染草稿中…（编辑器预览渲草稿列现值；发布版本请走列表页缺省渲染 = 最新已发布）'
     try {
-        const result = await api.renderTemplate(record.id)
+        const result = await api.renderTemplate(record.id, { version: 'draft' })
         lastRender.value = result
         renderDrawerOpen.value = true
-        docNote.value = `渲染完成，共 ${result.images.length} 页`
+        docNote.value = `渲染完成，共 ${result.images.length} 页（草稿现值）`
     } catch (e) {
         docNote.value = `渲染失败：${formatApiError(e)}`
     } finally {
@@ -1235,7 +1396,7 @@ function isImeComposing(event: KeyboardEvent): boolean {
 /** 键盘：仅 Ctrl/Cmd+S（保存是宿主职责，不入内核注册表）。文本编辑中键盘路由
  *  进 textarea，保存不抢；其余快捷键已由 useShortcuts 统一处理。 */
 function onKeydown(event: KeyboardEvent): void {
-    if (saveAsOpen.value || saveAsNewOpen.value) return // 名字弹窗模态持有键盘（Enter/Esc 由弹窗自理）
+    if (saveAsOpen.value || saveAsNewOpen.value || revertOpen.value) return // 名字/确认弹窗模态持有键盘（Enter/Esc 由弹窗自理）
     if (editor.store.ui.editing !== null) return
     const mod = event.ctrlKey || event.metaKey
     if (mod && !event.shiftKey && event.key.toLowerCase() === 's') {
@@ -1374,8 +1535,8 @@ onBeforeUnmount(() => {
          工作台 / 状态栏），页面零滚动 -->
     <main v-else class="stage">
         <!-- 顶栏（spec §4.1）：← 返回列表｜模板名可编辑（内容进 dirty 口径）｜
-             保存态｜保存 / 另存为（18 票）/ 渲染终图（19 票）/ 导出预览图（预览
-             与终图并存，spec §4.6） -->
+             保存态｜保存 / 发布 + 版本徽标（tdp 批 B ②）/ 版本（批 B ③）/ 另存为
+             （18 票）/ 渲染终图（19 票，draft 哨兵）/ 导出预览图（预览与终图并存） -->
         <header class="topbar" aria-label="编辑器顶栏">
             <div class="topbar-doc">
                 <RouterLink to="/" class="back-link" data-back-link>← 返回列表</RouterLink>
@@ -1411,6 +1572,34 @@ onBeforeUnmount(() => {
                 >
                     {{ saving ? '保存中…' : '保存' }}
                 </button>
+                <!-- 发布（template-draft-publish 批 B ②，spec §6）：把草稿固化为新
+                     版本——dirty 时自动先保存再发布（一次动作）；草稿与最新版本字节
+                     相等服务端幂等跳过（duplicate:true 也算成功）。徽标 = 版本史
+                     推导（未发布/vN），发布/回滚后刷新 -->
+                <button
+                    type="button"
+                    class="ghost"
+                    data-publish-template
+                    title="发布：把当前草稿固化为新发布版本（dirty 时自动先保存再发布，一次动作；内容与最新版本一致则跳过重复发布）"
+                    :disabled="publishing || saving"
+                    @click="runPublish"
+                >
+                    {{ publishing ? '发布中…' : '发布' }}
+                </button>
+                <span v-if="versionBadgeLabel" class="version-badge" data-version-badge title="版本徽标：最新已发布版本（「未发布」= 空版本史；发布/回滚后自动刷新）">
+                    {{ versionBadgeLabel }}
+                </span>
+                <!-- 版本历史（template-draft-publish 批 B ③，spec §6）：开合抽屉——
+                     版本号 + 发布时间 + 行内回滚（ConfirmDialog 二次确认） -->
+                <button
+                    type="button"
+                    class="ghost"
+                    data-open-versions
+                    title="版本历史：已发布版本列表与回滚入口"
+                    @click="versionDrawerOpen = !versionDrawerOpen"
+                >
+                    版本
+                </button>
                 <button
                     type="button"
                     class="ghost"
@@ -1421,13 +1610,14 @@ onBeforeUnmount(() => {
                 >
                     另存为
                 </button>
-                <!-- 渲染终图（spec §4.6，19 票）：POST /render 无 body，存储态为准；
-                     等待期禁用（30s deadline 服务端控制，前端不另设超时） -->
+                <!-- 渲染终图（spec §4.6，19 票 / 批 B ④ draft 哨兵）：{version:"draft"}
+                     渲染草稿列现值（编辑器是草稿世界，发布不被预览倒逼）；等待期禁用
+                     （30s deadline 服务端控制，前端不另设超时） -->
                 <button
                     type="button"
                     class="ghost"
                     data-render-final
-                    title="渲染终图：服务端渲染已保存版本（模板 + 数据集，dirty 时结果对应已保存版本）；服务端 30s 上限，完成自动打开结果抽屉"
+                    title="渲染终图：渲染当前草稿内容（version=draft 哨兵——预览是编辑辅助，发布不被预览倒逼；已发布版本请走列表页渲染）；服务端 30s 上限，完成自动打开结果抽屉"
                     :disabled="rendering"
                     @click="runRender"
                 >
@@ -1707,6 +1897,33 @@ onBeforeUnmount(() => {
             @cancel="closeSaveAsNew"
         />
 
+        <!-- 版本历史抽屉（template-draft-publish 批 B ③，spec §6）：版本列表纯呈现
+             （null = 未知态显「版本列表不可用」，评审修复 F1——未知 ≠ 未发布），
+             回滚确认/在途/错误全由宿主持有；行内回滚 → ConfirmDialog → 会话替换 -->
+        <VersionHistoryDrawer
+            :open="versionDrawerOpen"
+            :versions="versions"
+            :reverting="reverting"
+            :reverting-version="revertTarget?.version ?? null"
+            @close="versionDrawerOpen = false"
+            @revert="openRevert"
+        />
+
+        <!-- 回滚确认框（spec §6 定死文案；服务端零守卫，确认交互在前端——票 04）：
+             错误留在框内可重试/取消，会话替换只在确认后发生 -->
+        <ConfirmDialog
+            :open="revertOpen"
+            :busy="reverting"
+            :error="revertError"
+            danger
+            title="回滚到历史版本"
+            :note="revertNote"
+            confirm-text="回滚"
+            confirm-busy-text="回滚中…"
+            @confirm="runRevert"
+            @cancel="closeRevert"
+        />
+
         <!-- 渲染结果抽屉（spec §4.6，19 票）：记录/开合/模板名（下载建议名）由宿主
              持有，缩略图网格直用 images[].url；成功自动打开、关闭钮回落，只显本次
              会话最近一次（lastRender 整体替换） -->
@@ -1858,6 +2075,19 @@ onBeforeUnmount(() => {
 .topbar .ghost:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+}
+
+/* 版本徽标（template-draft-publish 批 B ②）：轻量 pill 同行随发布钮，「未发布」
+   与「vN」同款中性形态不闪色，语义靠文本；拉取失败不渲染（v-if） */
+.version-badge {
+    padding: 3px 9px;
+    border: 1px solid var(--shell-line-strong);
+    border-radius: 999px;
+    background: var(--shell-panel);
+    color: var(--shell-fg-2);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
 }
 
 .hidden {

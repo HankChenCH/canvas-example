@@ -1,10 +1,13 @@
 <script setup lang="ts">
 // 模板列表（spec §4.1 / 14 票目录页；22 票加从零新建入口；24 票加底图快捷入口；
-// 卡片操作修订加删除与直渲染）：卡片 = name + updatedAt（GET /api/templates 摘要
-// 恰这三字段）+ 操作条。渲染：直调 renderTemplate（POST /templates/{id}/render，
-// 无 body），成功自动开结果抽屉（RenderResultDrawer 复用编辑器同款，只显本次会话
-// 最近一次；top 传小值贴顶——列表页无编辑器工具栏），失败页面错误条回显稳定码在
-// 前文案。删除：弹确认框（ConfirmDialog，开启聚焦取消钮防误触）→ deleteTemplate
+// 卡片操作修订加删除与直渲染；template-draft-publish 批 B ④ 加选版下拉）：卡片 =
+// name + updatedAt（GET /api/templates 摘要恰这三字段）+ 操作条。渲染：「渲染」直调
+// renderTemplate 缺省路径（POST /templates/{id}/render 无 body = 最新已发布，
+// tdp spec §4 breaking change 由存量迁移 v1 吸收），另设「v▾」版本下拉选历史版本
+// （惰性拉取，正文零感知）；成功自动开结果抽屉（RenderResultDrawer 复用编辑器同款，
+// 只显本次会话最近一次；top 传小值贴顶——列表页无编辑器工具栏），失败页面错误条
+// 回显稳定码在前文案。删除：弹确认框（ConfirmDialog，开启聚焦取消钮防误触）→
+// deleteTemplate
 // （DELETE /templates/{id}，spec §2.4 #10：级联清渲染记录行，产物文件保留）→
 // 204 后本地移除卡片，失败在确认框内回显可重试。首访重定向由 router 守卫处理，
 // 本页另负责两个新建入口——「＋ 新建空白模板」弹名字输入（NamePromptDialog）→
@@ -17,7 +20,8 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { api, formatApiError, type TemplateSummary } from '../api'
+import { api, formatApiError, type TemplateSummary, type TemplateVersionSummary } from '../api'
+import { formatTimestamp } from '../editor/format'
 import { createBlankTemplate, createImageTemplate } from '../editor/newtemplate'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ImageTemplateDialog from '../components/ImageTemplateDialog.vue'
@@ -168,14 +172,17 @@ async function runCreateImage(): Promise<void> {
     await router.push(`/editor/${result.record.id}`)
 }
 
-/** 卡片直渲染（spec §4.6 同语义：以服务端存储态为准，无 body）：成功自动开
- *  结果抽屉并记住该卡名（下载建议名基段）；失败错误条回显（稳定码在前） */
-async function runCardRender(t: TemplateSummary): Promise<void> {
+/** 卡片直渲染（spec §4.6 / template-draft-publish 批 B ④ 渲染选版）：version
+ *  缺省 = 无 body 缺省路径（渲染最新已发布版本，从未发布 409 template_unpublished）；
+ *  数字 = 指定历史版本（{version: n}）。成功自动开结果抽屉并记住该卡名（下载建议
+ *  名基段）；失败错误条回显（稳定码在前） */
+async function runCardRender(t: TemplateSummary, version?: number): Promise<void> {
     if (renderingId.value !== null) return
     renderingId.value = t.id
     actionError.value = null
+    versionsMenuFor.value = null
     try {
-        lastRender.value = await api.renderTemplate(t.id)
+        lastRender.value = await api.renderTemplate(t.id, version === undefined ? undefined : { version })
         lastRenderName.value = t.name
         renderDrawerOpen.value = true
     } catch (e) {
@@ -183,6 +190,48 @@ async function runCardRender(t: TemplateSummary): Promise<void> {
     } finally {
         renderingId.value = null
     }
+}
+
+// ---- 卡片选版渲染（template-draft-publish 批 B ④，spec §6）：渲染操作处的版本
+//      下拉——默认项「最新已发布」走无 body 缺省路径，历史版本走 {version: n}。
+//      惰性拉取语义：版本列表只在下拉打开时按模板拉一次（GET …/versions，页面
+//      会话内缓存，重开不重拉）；失败容忍——下拉退化为仅默认项（列表页正文零
+//      感知：卡片摘要不显示版本信息，版本只出现在这个弹层里）。 ----
+
+/** 哪张卡的版本下拉开着（单开） */
+const versionsMenuFor = ref<number | null>(null)
+/** 卡版本列表缓存：缺键 = 未拉取；数组 = 拉取成功（version 降序）；'error' =
+ *  拉取失败（下拉退化为仅默认项，重开重试） */
+const cardVersions = ref<Record<number, TemplateVersionSummary[] | 'error'>>({})
+const versionsLoadingFor = ref<number | null>(null)
+
+async function toggleVersionsMenu(t: TemplateSummary): Promise<void> {
+    if (versionsMenuFor.value === t.id) {
+        versionsMenuFor.value = null
+        return
+    }
+    versionsMenuFor.value = t.id
+    if (cardVersions.value[t.id] === undefined) {
+        versionsLoadingFor.value = t.id
+        try {
+            cardVersions.value[t.id] = await api.listTemplateVersions(t.id)
+        } catch {
+            // 失败容忍：标 'error' → 菜单只留默认项（缺省渲染仍可用），重开重试
+            cardVersions.value[t.id] = 'error'
+        } finally {
+            versionsLoadingFor.value = null
+        }
+    }
+}
+
+/** 卡版本列表读取（模板辅助，免模板内类型断言）：非数组（error/未拉取）→ 空 */
+function cardVersionList(t: TemplateSummary): TemplateVersionSummary[] {
+    const v = cardVersions.value[t.id]
+    return Array.isArray(v) ? v : []
+}
+
+function cardVersionsFailed(t: TemplateSummary): boolean {
+    return cardVersions.value[t.id] === 'error'
 }
 
 function openDelete(t: TemplateSummary): void {
@@ -215,11 +264,6 @@ async function runDelete(): Promise<void> {
     }
 }
 
-function formatUpdatedAt(iso: string): string {
-    const t = new Date(iso)
-    return Number.isNaN(t.getTime()) ? iso : t.toLocaleString('zh-CN', { hour12: false })
-}
-
 // ── 印张卡片纯呈现辅助（蓝晒印坊语言：序号章 / 首字水印 / 进场 stagger）──
 
 /** 卡片序号章：模板 id 三位补零（No.007） */
@@ -249,7 +293,7 @@ function riseDelay(index: number): string {
                     <div class="min-w-0">
                         <h1 class="pc-display mb-2 text-4xl leading-tight text-zinc-50">模板列表</h1>
                         <p class="max-w-xl text-sm leading-6 text-zinc-500">
-                            选择一张印张进入编辑器，或从零新建；卡片直渲染与编辑器同语义，以服务端存储态为准
+                            选择一张印张进入编辑器，或从零新建；卡片直渲染最新已发布版本（v▾ 可选历史版本），编辑器内预览渲草稿
                         </p>
                     </div>
                     <div class="flex flex-none flex-wrap items-center gap-2.5">
@@ -418,20 +462,106 @@ function riseDelay(index: number): string {
                         <RouterLink :to="`/editor/${t.id}`" class="group block">
                             <div class="truncate text-[15px] font-medium text-zinc-100 transition-colors group-hover:text-sky-300">{{ t.name }}</div>
                             <div class="mt-0.5 font-mono text-[11px] text-zinc-500">
-                                更新于 {{ formatUpdatedAt(t.updatedAt) }}
+                                更新于 {{ formatTimestamp(t.updatedAt) }}
                             </div>
                         </RouterLink>
                         <div class="mt-3 flex items-center justify-end gap-2">
-                            <button
-                                type="button"
-                                data-card-render
-                                class="rounded-md border border-sky-800/70 px-2.5 py-1 text-xs text-sky-300 transition-colors hover:border-sky-500 hover:bg-sky-950/40 disabled:cursor-not-allowed disabled:opacity-50"
-                                :disabled="renderingId !== null"
-                                :title="renderingId === t.id ? '渲染中…（以服务端存储态为准）' : '渲染终图：以服务端存储态为准，成功后打开结果抽屉'"
-                                @click="runCardRender(t)"
-                            >
-                                {{ renderingId === t.id ? '渲染中…' : '渲染' }}
-                            </button>
+                            <!-- 渲染 + 选版（template-draft-publish 批 B ④，spec §6）：
+                                 「渲染」= 无 body 缺省路径（最新已发布）；「v▾」开版本
+                                 下拉——打开时惰性拉版本列表（会话内缓存，失败退化为仅
+                                 默认项），默认项「最新已发布」同样无 body，历史版本
+                                 {version: n}。列表页正文零感知（卡片摘要不显示版本） -->
+                            <div class="relative flex items-center gap-2" @keydown.escape="versionsMenuFor = null">
+                                <button
+                                    type="button"
+                                    data-card-render
+                                    class="rounded-md border border-sky-800/70 px-2.5 py-1 text-xs text-sky-300 transition-colors hover:border-sky-500 hover:bg-sky-950/40 disabled:cursor-not-allowed disabled:opacity-50"
+                                    :disabled="renderingId !== null"
+                                    :title="renderingId === t.id ? '渲染中…（最新已发布版本）' : '渲染终图：渲染最新已发布版本，成功后打开结果抽屉'"
+                                    @click="runCardRender(t)"
+                                >
+                                    {{ renderingId === t.id ? '渲染中…' : '渲染' }}
+                                </button>
+                                <button
+                                    type="button"
+                                    data-card-versions
+                                    class="rounded-md border border-[#223252] px-1.5 py-1 text-xs text-zinc-400 transition-colors hover:border-sky-700 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                    :aria-expanded="versionsMenuFor === t.id"
+                                    aria-haspopup="menu"
+                                    title="按版本渲染：选择历史发布版本（缺省渲染 = 最新已发布；版本列表打开时惰性拉取）"
+                                    :disabled="renderingId !== null"
+                                    @click="toggleVersionsMenu(t)"
+                                >
+                                    v▾
+                                </button>
+                                <!-- 点外收起：透明截断层垫在菜单之下（新建入口菜单同款） -->
+                                <span
+                                    v-if="versionsMenuFor === t.id"
+                                    class="fixed inset-0 z-10 cursor-default"
+                                    aria-hidden="true"
+                                    @click="versionsMenuFor = null"
+                                ></span>
+                                <!-- 版本菜单：向上弹（卡片操作条贴底），max-h 内滚防
+                                     越卡裁剪；空列表 = 未发布（提示后仍可缺省渲染，
+                                     服务端 409 template_unpublished 文案可达） -->
+                                <div
+                                    v-if="versionsMenuFor === t.id"
+                                    role="menu"
+                                    aria-label="按版本渲染"
+                                    class="pc-menu pc-menu--scroll absolute bottom-full right-0 z-20 mb-2 w-[240px]"
+                                >
+                                    <button
+                                        type="button"
+                                        role="menuitem"
+                                        data-card-render-latest
+                                        class="pc-menu__item"
+                                        title="缺省渲染：最新已发布版本（无 body）"
+                                        :disabled="renderingId !== null"
+                                        @click="runCardRender(t)"
+                                    >
+                                        <span class="pc-menu__icon" aria-hidden="true">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                                <path d="M13 2L4 14h6l-1 8 9-12h-6z" />
+                                            </svg>
+                                        </span>
+                                        <span class="min-w-0">
+                                            <span class="pc-menu__title">最新已发布</span>
+                                            <span class="pc-menu__desc">缺省路径：渲染最新已发布版本</span>
+                                        </span>
+                                    </button>
+                                    <p v-if="versionsLoadingFor === t.id" class="pc-menu__hint" data-versions-loading>版本列表加载中…</p>
+                                    <p v-else-if="cardVersionsFailed(t)" class="pc-menu__hint pc-menu__hint--error" data-versions-error>
+                                        版本列表加载失败，仅可缺省渲染（重开重试）
+                                    </p>
+                                    <p v-else-if="cardVersionList(t).length === 0" class="pc-menu__hint" data-versions-empty>
+                                        未发布过版本（缺省渲染将被拒绝）
+                                    </p>
+                                    <template v-else>
+                                        <button
+                                            v-for="v in cardVersionList(t)"
+                                            :key="v.version"
+                                            type="button"
+                                            role="menuitem"
+                                            :data-card-render-version="v.version"
+                                            class="pc-menu__item"
+                                            :disabled="renderingId !== null"
+                                            :title="`渲染 v${v.version}（发布于 ${formatTimestamp(v.createdAt)}）`"
+                                            @click="runCardRender(t, v.version)"
+                                        >
+                                            <span class="pc-menu__icon" aria-hidden="true">
+                                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                                                    <rect x="4" y="3" width="16" height="18" rx="2" />
+                                                    <path d="M8 8h8M8 12h8M8 16h5" />
+                                                </svg>
+                                            </span>
+                                            <span class="min-w-0">
+                                                <span class="pc-menu__title">v{{ v.version }}</span>
+                                                <span class="pc-menu__desc">发布于 {{ formatTimestamp(v.createdAt) }}</span>
+                                            </span>
+                                        </button>
+                                    </template>
+                                </div>
+                            </div>
                             <button
                                 type="button"
                                 data-card-delete
@@ -603,6 +733,35 @@ function riseDelay(index: number): string {
     font-size: 11px;
     line-height: 1.5;
     color: #7c8ca5;
+}
+
+/* 版本菜单（批 B ④）：向上弹（卡片操作条贴底）+ 高度内滚——防版本过多越出卡片
+   被卡片 overflow-hidden 裁剪 */
+.pc-menu--scroll {
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.pc-menu__hint {
+    margin: 0;
+    padding: 10px 14px;
+    border-top: 1px solid #16233c;
+    color: #7c8ca5;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.pc-menu__hint--error {
+    color: #fca5a5;
+}
+
+.pc-menu__item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pc-menu__item:disabled:hover {
+    background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

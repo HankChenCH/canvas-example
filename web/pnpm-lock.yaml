@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@hankchen/canvas-editor': ^0.2.0
+  '@hankchen/canvas-editor': ^0.4.0
 
 importers:
 
@@ -18,11 +18,11 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
       '@hankchen/canvas-editor':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.4.0
+        version: 0.4.0
       '@hankchen/canvas-editor-vue':
-        specifier: ^0.1.4
-        version: 0.1.4(vue@3.5.43(typescript@5.9.3))
+        specifier: ^0.3.0
+        version: 0.3.0(vue@3.5.43(typescript@5.9.3))
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)
@@ -77,13 +77,13 @@ packages:
   '@hankchen/canvas-browser-renderer@0.1.0':
     resolution: {integrity: sha512-MYt+uztz03wKitkOZUoWwhJU0ANxj/2Ah1XQGOGkBpWANN4NNoVFY0jbi8a+LchxiZJiWWbZso7vGTPQSgYcPA==}
 
-  '@hankchen/canvas-editor-vue@0.1.4':
-    resolution: {integrity: sha512-9G3TcQ4o+nKK4xZr8nK1Y2zSOqauK5sAJmJ1HyzdlN4thfq9J2A6Y+/upRstDz8ieS5FfqAlh/aJKGThUMVC/Q==}
+  '@hankchen/canvas-editor-vue@0.3.0':
+    resolution: {integrity: sha512-vGJhfiJnJpr9lWG/zu6d+wSq7+hCKPsQXgUisXF5DvWW7hV7zfkimZK2KLk/oIvVWK2A6p0EfgNxqU3IYQTOkg==}
     peerDependencies:
       vue: ^3.5.0
 
-  '@hankchen/canvas-editor@0.2.0':
-    resolution: {integrity: sha512-E5qpvJqsek8h8zapSIx6XlZIfd5zcvSPMunncsnNBwYLytk0Isa0PTboFtSeeEBqdZEqKoZKoAcDm9WKQuz4Jg==}
+  '@hankchen/canvas-editor@0.4.0':
+    resolution: {integrity: sha512-ZJtLwT4LwLOTpOlE1u+ItHZlNVLPEY5bVmGNyWiO504prx5nqRtYEVTqtYKizhJ+pSJ1HgakDpoY4ckqVDpn+g==}
 
   '@hankchen/canvas@0.1.0':
     resolution: {integrity: sha512-bPdyA1TcfptqE6yVExqsZZjh9qNQHT3g2M4ecHXMId8/ZQLizUmqUejkwurrTMk+0cY59CD+ubRdjNqM1Z1i4Q==}
@@ -905,13 +905,13 @@ snapshots:
       '@hankchen/canvas': 0.1.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-editor-vue@0.1.4(vue@3.5.43(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@0.3.0(vue@3.5.43(typescript@5.9.3))':
     dependencies:
-      '@hankchen/canvas-editor': 0.2.0
+      '@hankchen/canvas-editor': 0.4.0
       '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)
 
-  '@hankchen/canvas-editor@0.2.0':
+  '@hankchen/canvas-editor@0.4.0':
     dependencies:
       '@hankchen/canvas': 0.1.0
       '@hankchen/canvas-browser-renderer': 0.1.0

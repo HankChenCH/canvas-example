@@ -88,7 +88,21 @@ CREATE TABLE IF NOT EXISTS renders (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	template_id INTEGER NOT NULL,
 	images      TEXT NOT NULL,
+	version     INTEGER,
 	created_at  TEXT NOT NULL
+);
+-- 模板版本史(模板草稿-发布-版本化,spec §2):快照 = canvases+flow_chain 文档
+-- 整体,data_source_id 是绑定不进快照;版本行 INSERT-only 永无 UPDATE,版本号
+-- 每模板自增从 1 起(store 层事务内 MAX+1 计算,UNIQUE 兜底);新建模板空版本
+-- 史起步,存量由 BackfillTemplateVersionsV1 回填 v1
+CREATE TABLE IF NOT EXISTS template_versions (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	template_id INTEGER NOT NULL,
+	version     INTEGER NOT NULL,
+	canvases    TEXT NOT NULL,
+	flow_chain  TEXT,
+	created_at  TEXT NOT NULL,
+	UNIQUE (template_id, version)
 );`
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("建表: %w", err)
@@ -96,6 +110,29 @@ CREATE TABLE IF NOT EXISTS renders (
 	if err := s.ensureTemplateEditorStateColumn(); err != nil {
 		return err
 	}
+	if err := s.ensureRenderVersionColumn(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureRenderVersionColumn 幂等补列(渲染选版溯源,模板草稿-发布-版本化 spec §4):
+// 上一版建的 renders 表缺 version 列时 ALTER TABLE 补上——ensure-column 先例同款
+// (PRAGMA table_info 探测)。NULL 语义盘点(诚实不造假):① 版本化前的旧行
+// (迁移保留 NULL);② {"version":"draft"} 草稿渲染(未对应任何发布版本);
+// ③ 除此之外 NULL 不应出现(新行除 draft 外必填渲染所用版本,出现即不变量违例)
+func (s *Store) ensureRenderVersionColumn() error {
+	hasTable, columns, err := s.tableColumns("renders")
+	if err != nil {
+		return err
+	}
+	if !hasTable || columns["version"] {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE renders ADD COLUMN version INTEGER`); err != nil {
+		return fmt.Errorf("补 renders.version 列: %w", err)
+	}
+	log.Printf("renders 表补 version 列(渲染选版溯源,旧行 NULL = 版本化前渲染)")
 	return nil
 }
 
@@ -118,12 +155,12 @@ func (s *Store) ensureTemplateEditorStateColumn() error {
 	return nil
 }
 
-// templateColumns PRAGMA table_info(templates) 列清单(hasLegacyTemplateTable
-// 与 ensureTemplateEditorStateColumn 共用);表不存在时 hasTable = false
-func (s *Store) templateColumns() (hasTable bool, columns map[string]bool, err error) {
-	rows, err := s.db.Query(`PRAGMA table_info(templates)`)
+// tableColumns PRAGMA table_info(表) 列清单(ensure-column 迁移共用:templates
+// 的 editor_state 与 renders 的 version 同款);表不存在时 hasTable = false
+func (s *Store) tableColumns(table string) (hasTable bool, columns map[string]bool, err error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
-		return false, nil, fmt.Errorf("探测 templates 表: %w", err)
+		return false, nil, fmt.Errorf("探测 %s 表: %w", table, err)
 	}
 	defer rows.Close()
 	columns = map[string]bool{}
@@ -135,14 +172,20 @@ func (s *Store) templateColumns() (hasTable bool, columns map[string]bool, err e
 		var dflt any
 		var pk int
 		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			return false, nil, fmt.Errorf("读 templates 列: %w", err)
+			return false, nil, fmt.Errorf("读 %s 列: %w", table, err)
 		}
 		columns[name] = true
 	}
 	if err := rows.Err(); err != nil {
-		return false, nil, fmt.Errorf("遍历 templates 列: %w", err)
+		return false, nil, fmt.Errorf("遍历 %s 列: %w", table, err)
 	}
 	return hasTable, columns, nil
+}
+
+// templateColumns templates 表列清单(hasLegacyTemplateTable 与
+// ensureTemplateEditorStateColumn 共用)
+func (s *Store) templateColumns() (bool, map[string]bool, error) {
+	return s.tableColumns("templates")
 }
 
 // hasLegacyTemplateTable templates 表存在但无 data_source_id 列 = 旧版形态
@@ -342,11 +385,12 @@ func (s *Store) UpdateTemplateEditorState(ctx context.Context, id int64, state j
 	return requireRow(res, "更新模板工程数据", id, ErrNotFound)
 }
 
-// DeleteTemplate 删除模板行并级联清其渲染记录行(无渲染历史端点,模板删后
-// 记录行不可达);渲染产物 PNG 文件保留——keep-all 快照语义,/renders 直链仍可用。
+// DeleteTemplate 删除模板行并级联清其渲染记录行与版本史行(无渲染历史端点,
+// 模板删后记录行不可达;版本是模板私有子行,随模板消亡,无 409 守卫——spec §2
+// 删除级联);渲染产物 PNG 文件保留——keep-all 快照语义,/renders 直链仍可用。
 // 数据源实体不受影响(独立资源,引用随模板行整行消失,不悬空)。
-// 事务保证级联面原子:先删 renders 再删 templates,id 不存在 → ErrNotFound
-// (回滚,已执行的级联删除一并撤销)
+// 事务保证级联面原子:先删 renders 与 template_versions 再删 templates,
+// id 不存在 → ErrNotFound(回滚,已执行的级联删除一并撤销)
 func (s *Store) DeleteTemplate(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -355,6 +399,9 @@ func (s *Store) DeleteTemplate(ctx context.Context, id int64) error {
 	defer func() { _ = tx.Rollback() }() // Commit 后为 no-op
 	if _, err := tx.ExecContext(ctx, `DELETE FROM renders WHERE template_id = ?`, id); err != nil {
 		return fmt.Errorf("级联删除模板 %d 渲染记录: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM template_versions WHERE template_id = ?`, id); err != nil {
+		return fmt.Errorf("级联删除模板 %d 版本行: %w", id, err)
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM templates WHERE id = ?`, id)
 	if err != nil {
@@ -566,22 +613,27 @@ type RenderImage struct {
 	Path  string `json:"path"`
 }
 
-// RenderRecord 渲染记录(spec §2.3):images = 帧序×页序扁平页序列
+// RenderRecord 渲染记录(spec §2.3):images = 帧序×页序扁平页序列。
+// Version = 渲染所用发布版本(null 透传,无 omitempty):draft 渲染与版本化前
+// 旧行为 NULL,诚实语义见 ensureRenderVersionColumn 注释
 type RenderRecord struct {
 	ID         int64         `json:"id"`
 	TemplateID int64         `json:"templateId"`
+	Version    *int64        `json:"version"`
 	CreatedAt  string        `json:"createdAt"`
 	Images     []RenderImage `json:"images"`
 }
 
 // CreateRenderRecord 先落一条 stub 记录(images 空数组)取自增 id——产物文件名
 // renders/<id>/<seq>.png 依赖 id 先行;落盘成功后经 UpdateRenderImages 回填。
+// version = 渲染所用发布版本(nil = draft 渲染,记 NULL 未对应任何发布版本);
+// 新行除 draft 外必填版本(不变量见 ensureRenderVersionColumn 注释)。
 // 落库失败由 handler 映射 500 internal_error(spec §2.5)
-func (s *Store) CreateRenderRecord(ctx context.Context, templateID int64) (*RenderRecord, error) {
+func (s *Store) CreateRenderRecord(ctx context.Context, templateID int64, version *int64) (*RenderRecord, error) {
 	now := nowRFC3339()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO renders (template_id, images, created_at) VALUES (?, '[]', ?)`,
-		templateID, now,
+		`INSERT INTO renders (template_id, images, version, created_at) VALUES (?, '[]', ?, ?)`,
+		templateID, nullableInt(version), now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("插入渲染记录: %w", err)
@@ -590,7 +642,7 @@ func (s *Store) CreateRenderRecord(ctx context.Context, templateID int64) (*Rend
 	if err != nil {
 		return nil, fmt.Errorf("取渲染记录自增 id: %w", err)
 	}
-	return &RenderRecord{ID: id, TemplateID: templateID, CreatedAt: now, Images: []RenderImage{}}, nil
+	return &RenderRecord{ID: id, TemplateID: templateID, Version: version, CreatedAt: now, Images: []RenderImage{}}, nil
 }
 
 // UpdateRenderImages 回填 images JSON(产物全部落盘成功后调用)
