@@ -28,6 +28,8 @@ const (
 	ExpressionEmptyResource  = "expression_empty_resource"
 	ExpressionTypeMismatch   = "expression_type_mismatch"
 	ExpressionSyntaxError    = "expression_syntax_error"
+	// ADR 0020 资源表达式单值门:已标记 Image/Qr 的表达式必须恰为一个裸路径片段
+	ExpressionResourceSingleRef = "expression_resource_single_ref"
 
 	// 文档编译(链校验 + 流分配 + 分页)
 	FlowChainInvalid         = "flow_chain_invalid"

@@ -478,6 +478,19 @@ func TestRun_ErrorMapping(t *testing.T) {
 			json.RawMessage(`{"org":{"logo":""}}`),
 			"expression_empty_resource",
 		},
+		// ADR 0020 单值门:已标记 Image/Qr 的表达式必须恰为一个裸路径片段,
+		// 多片段拼接在求值前 fail-fast(求值端对齐 go-canvas c598233)
+		"资源表达式多片段拼接": {
+			&store.TemplateRecord{
+				Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
+					`{"canvas":{"width":100,"height":100},"layers":[
+					 {"type":"QrCodeLayer","priority":0,
+					  "spec":{"shape":{"width":10,"height":10}},
+					  "data":{"valueType":"ExpressionValue","expression":"https://verify.example/{{doc.title}}","value":"https://verify.example/{{doc.title}}"}}]}`)}},
+			},
+			json.RawMessage(`{"doc":{"title":"HC-001"}}`),
+			"expression_resource_single_ref",
+		},
 	}
 	for name, tc := range cases {
 		_, perr := svc.Run(t.Context(), tc.record, tc.dataset)

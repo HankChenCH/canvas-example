@@ -286,6 +286,8 @@ func mapPipelineErr(ctx context.Context, err error) *PipelineErr {
 		return pipeline400(err, codes.ExpressionTypeMismatch)
 	case errors.Is(err, hydrate.ErrExpressionSyntaxError):
 		return pipeline400(err, codes.ExpressionSyntaxError)
+	case errors.Is(err, hydrate.ErrExpressionSingleResourceRef):
+		return pipeline400(err, codes.ExpressionResourceSingleRef)
 	// 文档编译(链校验 + 流分配 + 分页;分配期超容复用 paginate 段码)
 	case errors.Is(err, paginate.ErrFlowChainInvalid):
 		return pipeline400(err, codes.FlowChainInvalid)
