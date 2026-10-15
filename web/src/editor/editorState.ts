@@ -55,7 +55,13 @@ export function parseTemplateEditorStateSnapshot(raw: unknown): ParsedEditorStat
         }
     }
     const prefs = isEditorPrefsShape(obj.prefs)
-        ? { rulersVisible: obj.prefs.rulersVisible, anchorExpanded: obj.prefs.anchorExpanded }
+        ? {
+              rulersVisible: obj.prefs.rulersVisible,
+              anchorExpanded: obj.prefs.anchorExpanded,
+              // 新层样式槽宽容透传（editor 0.5.0）：旧快照缺字段/畸形值由内核
+              // applyEditorPrefs 逐字段收口（pickNextTextStylePatch 不符保留现值），宿主不校验
+              nextTextStyle: obj.prefs.nextTextStyle,
+          }
         : null
     return { frames, prefs }
 }
