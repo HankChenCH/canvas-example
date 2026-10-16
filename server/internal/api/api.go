@@ -71,6 +71,8 @@ func newServer(st *store.Store, rs *render.Service, fonts []FontEntry) http.Hand
 	mux.HandleFunc("DELETE /api/datasources/{id}", s.handleDeleteDataSource)
 	mux.HandleFunc("POST /api/assets", s.handleUploadAsset)
 	mux.HandleFunc("POST /api/templates/{id}/render", s.handleRenderTemplate)
+	// 渲染历史列表(渲染历史对比):模板维度渲染记录,响应形状与 POST render 一致
+	mux.HandleFunc("GET /api/templates/{id}/renders", s.handleListRendersTemplate)
 	// 静态前缀(spec §2.1):URL /assets/u/x.png ↔ 磁盘 assets/u/x.png(剥前缀即三合一的相对形态)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
 	mux.Handle("/renders/", http.StripPrefix("/renders/", http.FileServer(http.Dir("renders"))))

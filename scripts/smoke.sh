@@ -12,6 +12,8 @@
 # 15 版本化轨(模板草稿-发布-版本化,spec §7 九断言):publish 201 v2 / 重复
 # publish 200 duplicate / GET versions / 无 body 渲染 = 最新已发布带 version 字段 /
 # 显式选版 / draft 哨兵 / 未发布 409 / version_not_found 404 / revert 内容一致。
+# 16 渲染历史(渲染历史对比):GET /api/templates/{id}/renders → 数组 id 降序、
+# 响应形状与 POST render 一致、draft 行 version null、无记录模板空数组。
 # 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
 # 注意:断言 3/8 依赖种子模板仍绑种子数据源(3 页容量数学)——UI 里重绑/改数据源
 # 后会失真,属预期;版本化轨断言依赖重置运行库(存量回填使 seed 持 v1,本轨首发
@@ -444,4 +446,19 @@ PYEOF
 get "/api/templates/$SEED_ID/versions" "$TMP/versions-after-revert.json"
 assert_json "$TMP/versions-after-revert.json" '[v["version"] for v in d] == [2, 1]'
 
-echo "smoke: 断言 1–14 + 版本化轨 9 断言全绿 (BASE=$BASE)"
+# ---- 断言 16 渲染历史(渲染历史对比):基于 SEED_ID。组 15 已对 seed 渲染三次
+# (latest v2 / 显式 v1 / draft),历史列表应有 ≥ 3 条,id 降序,最新为 draft 行
+# (version null);无记录模板回 200 空数组 ----
+
+echo "== 16/16 渲染历史:GET /api/templates/{id}/renders =="
+get "/api/templates/$SEED_ID/renders" "$TMP/renders-history.json"
+assert_json "$TMP/renders-history.json" 'isinstance(d, list) and len(d) >= 3'
+assert_json "$TMP/renders-history.json" 'all(r["id"] < r0["id"] for r0, r in zip(d, d[1:]))'  # id 降序（最新在前）
+assert_json "$TMP/renders-history.json" "all(set(r.keys()) == {'id', 'templateId', 'version', 'createdAt', 'images'} and r['templateId'] == $SEED_ID and isinstance(r['createdAt'], str) and isinstance(r['images'], list) and len(r['images']) >= 1 and all(img['url'].startswith('/renders/') for img in r['images']) for r in d)"
+assert_json "$TMP/renders-history.json" 'd[0]["version"] is None'  # 最新一条 = 组 15(6) 的 draft 渲染
+assert_json "$TMP/renders-history.json" '[r["version"] for r in d[1:3]] == [1, 2]'  # 次序 = 显式 v1 → 缺省 v2
+# 无记录模板(T4,组 15(7) 新建未发布)→ 200 空数组
+get "/api/templates/$T4/renders" "$TMP/renders-empty.json"
+assert_json "$TMP/renders-empty.json" 'd == []'
+
+echo "smoke: 断言 1–14 + 版本化轨 9 断言 + 渲染历史 6 断言全绿 (BASE=$BASE)"

@@ -263,3 +263,40 @@ func toImageResponses(images []store.RenderImage) []renderImageResponse {
 	}
 	return out
 }
+
+// renderHistoryLimit 渲染历史列表固定档位:keep-all 语义下记录只增不减,按模板
+// 截最新 20 条防无界返回(更早记录的产物直链仍永久可用,keep-all 不变)
+const renderHistoryLimit = 20
+
+// handleListRendersTemplate GET /api/templates/{id}/renders → 200
+// renderRecordResponse[](id 降序,最新在前;响应形状与 POST render 一致,DB 相对
+// path 经 toImageResponses 转前导斜杠 url)。渲染历史对比消费:结果抽屉按记录
+// 切换查看。模板不存在 → 404 template_not_found(版本列表同惯例);无记录 →
+// 200 空数组。
+func (s *Server) handleListRendersTemplate(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, codes.TemplateNotFound, "模板不存在")
+		return
+	}
+	if _, err := s.store.GetTemplate(r.Context(), id); err != nil {
+		writeStoreError(w, err, "读取模板失败")
+		return
+	}
+	recs, err := s.store.ListRenderRecords(r.Context(), id, renderHistoryLimit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, codes.InternalError, "读取渲染历史失败")
+		return
+	}
+	out := make([]renderRecordResponse, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, renderRecordResponse{
+			ID:         rec.ID,
+			TemplateID: rec.TemplateID,
+			Version:    rec.Version,
+			CreatedAt:  rec.CreatedAt,
+			Images:     toImageResponses(rec.Images),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}

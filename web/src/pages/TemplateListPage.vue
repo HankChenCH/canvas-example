@@ -4,9 +4,10 @@
 // name + updatedAt（GET /api/templates 摘要恰这三字段）+ 操作条。渲染：「渲染」直调
 // renderTemplate 缺省路径（POST /templates/{id}/render 无 body = 最新已发布，
 // tdp spec §4 breaking change 由存量迁移 v1 吸收），另设「v▾」版本下拉选历史版本
-// （惰性拉取，正文零感知）；成功自动开结果抽屉（RenderResultDrawer 复用编辑器同款，
-// 只显本次会话最近一次；top 传小值贴顶——列表页无编辑器工具栏），失败页面错误条
-// 回显稳定码在前文案。删除：弹确认框（ConfirmDialog，开启聚焦取消钮防误触）→
+// （惰性拉取，正文零感知）；成功自动开结果抽屉（RenderResultDrawer 复用编辑器
+// 同款，渲后刷新渲染历史支持记录切换对比；top 传小值贴顶——列表页无编辑器工具
+// 栏），失败页面错误条回显稳定码在前文案。删除：弹确认框（ConfirmDialog，开启
+// 聚焦取消钮防误触）→
 // deleteTemplate
 // （DELETE /templates/{id}，spec §2.4 #10：级联清渲染记录行，产物文件保留）→
 // 204 后本地移除卡片，失败在确认框内回显可重试。首访重定向由 router 守卫处理，
@@ -79,10 +80,12 @@ const pendingImageName = ref<string | null>(null)
 const pendingImageInfo = ref<string | null>(null)
 
 // 卡片渲染态：在途以 id 记（渲染钮全局禁用，仅在途卡显「渲染中…」）；结果
-// 抽屉复用编辑器同款记录面（record + 该卡名作下载建议名基段）
+// 抽屉复用编辑器同款记录面（渲染历史 + 该卡名作下载建议名基段）：记录列表
+// 渲染后刷新（服务端截最新 20 条），activeRenderId 指向本次记录
 const renderingId = ref<number | null>(null)
 const renderDrawerOpen = ref(false)
-const lastRender = ref<RenderRecord | null>(null)
+const renderRecords = ref<RenderRecord[]>([])
+const activeRenderId = ref<number | null>(null)
 const lastRenderName = ref('')
 // 卡片操作失败回显（渲染失败等非弹窗通道；新一轮操作开始即清）
 const actionError = ref<string | null>(null)
@@ -193,22 +196,39 @@ async function runCreateImage(): Promise<void> {
 
 /** 卡片直渲染（spec §4.6 / template-draft-publish 批 B ④ 渲染选版）：version
  *  缺省 = 无 body 缺省路径（渲染最新已发布版本，从未发布 409 template_unpublished）；
- *  数字 = 指定历史版本（{version: n}）。成功自动开结果抽屉并记住该卡名（下载建议
- *  名基段）；失败错误条回显（稳定码在前） */
+ *  数字 = 指定历史版本（{version: n}）。成功刷新渲染历史并自动开结果抽屉
+ *  （activeRecordId 指向本次记录）；失败错误条回显（稳定码在前） */
 async function runCardRender(t: TemplateSummary, version?: number): Promise<void> {
     if (renderingId.value !== null) return
     renderingId.value = t.id
     actionError.value = null
     versionsMenuFor.value = null
     try {
-        lastRender.value = await api.renderTemplate(t.id, version === undefined ? undefined : { version })
+        const record = await api.renderTemplate(t.id, version === undefined ? undefined : { version })
         lastRenderName.value = t.name
+        await refreshRenderHistory(t.id, record)
         renderDrawerOpen.value = true
     } catch (e) {
         actionError.value = `渲染失败：${formatApiError(e)}`
     } finally {
         renderingId.value = null
     }
+}
+
+/** 渲染历史刷新（渲染历史对比）：失败容忍——退化为仅本次记录（结果抽屉不空），
+ *  activeRecordId 恒指向本次记录（用户要看的就是刚渲的这版） */
+async function refreshRenderHistory(templateId: number, fallback: RenderRecord): Promise<void> {
+    try {
+        renderRecords.value = await api.listRenders(templateId)
+    } catch {
+        renderRecords.value = [fallback]
+    }
+    activeRenderId.value = fallback.id
+}
+
+/** 记录切换条回写（状态归宿主） */
+function onRenderSelect(id: number): void {
+    activeRenderId.value = id
 }
 
 // ---- 卡片选版渲染（template-draft-publish 批 B ④，spec §6）：渲染操作处的版本
@@ -664,12 +684,14 @@ function riseDelay(index: number): string {
                 @cancel="closeDelete"
             />
 
-            <!-- 渲染结果抽屉（spec §4.6 同款；列表页无工具栏，top 贴顶） -->
+            <!-- 渲染结果抽屉（spec §4.6 同款 + 渲染历史对比；列表页无工具栏，top 贴顶） -->
             <RenderResultDrawer
                 :open="renderDrawerOpen"
-                :record="lastRender"
+                :records="renderRecords"
+                :active-record-id="activeRenderId"
                 :template-name="lastRenderName"
                 top="24px"
+                @select="onRenderSelect"
                 @close="renderDrawerOpen = false"
             />
         </div>
