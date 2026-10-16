@@ -26,6 +26,7 @@ const prefs: EditorPrefsState = {
     rulersVisible: true,
     anchorExpanded: false,
     nextTextStyle: defaultNextTextStyle(),
+    nextLayerRatio: 'free',
 }
 
 describe('buildEditorStateSnapshot（flush 侧组装）', () => {
