@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -346,4 +347,92 @@ func newUnpublishedTemplate(t *testing.T, h http.Handler) int64 {
 		t.Fatalf("造未发布模板失败: %d %v", code, body)
 	}
 	return int64(body["id"].(float64))
+}
+
+// TestGetRenders_HistoryList 渲染历史列表(spec:GET /api/templates/{id}/renders):
+// POST 两条后 GET → 200 数组 id 降序(最新在前)、响应形状与 POST render 一致
+// (version/createdAt/images[].url 前导斜杠)、draft 渲染行 version null;模板
+// 不存在 404;无记录模板 200 空数组
+func TestGetRenders_HistoryList(t *testing.T) {
+	h, seedID := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h)
+
+	code, rOld := postRender(t, h, fmt.Sprintf("%d", id))
+	if code != http.StatusCreated {
+		t.Fatalf("首渲 status = %d(%v)", code, rOld)
+	}
+	code, rNew := postRender(t, h, fmt.Sprintf("%d", id))
+	if code != http.StatusCreated {
+		t.Fatalf("再渲 status = %d(%v)", code, rNew)
+	}
+
+	list := getRenders(t, h, id)
+	if len(list) != 2 {
+		t.Fatalf("应 2 条记录, 实得 %d: %v", len(list), list)
+	}
+	if list[0]["id"].(float64) != rNew["id"].(float64) || list[1]["id"].(float64) != rOld["id"].(float64) {
+		t.Fatalf("id 应降序(最新在前): %v / %v", list[0]["id"], list[1]["id"])
+	}
+	for i, item := range list {
+		// 缺省渲染 = 最新已发布(v1,见 newLocalRenderTemplate 发布)
+		if item["version"].(float64) != 1 {
+			t.Fatalf("list[%d].version 应为 1: %v", i, item["version"])
+		}
+		if _, ok := item["createdAt"].(string); !ok || item["createdAt"] == "" {
+			t.Fatalf("list[%d].createdAt 应为非空字符串: %v", i, item)
+		}
+		images, ok := item["images"].([]any)
+		if !ok || len(images) != 1 {
+			t.Fatalf("list[%d].images 应 1 页: %v", i, item["images"])
+		}
+		img := images[0].(map[string]any)
+		if !regexp.MustCompile(`^/renders/\d+/1\.png$`).MatchString(img["url"].(string)) {
+			t.Fatalf("list[%d] url 应前导斜杠形态: %v", i, img["url"])
+		}
+	}
+
+	// draft 渲染行入列且 version null
+	code, draft := doRequest(t, h, http.MethodPost, fmt.Sprintf("/api/templates/%d/render", id), "application/json", []byte(`{"version":"draft"}`))
+	if code != http.StatusCreated {
+		t.Fatalf("draft 渲染 status = %d(%v)", code, draft)
+	}
+	list = getRenders(t, h, id)
+	if len(list) != 3 {
+		t.Fatalf("draft 后应 3 条, 实得 %d", len(list))
+	}
+	if list[0]["id"].(float64) != draft["id"].(float64) {
+		t.Fatalf("最新一条应为 draft 记录: %v vs %v", list[0]["id"], draft["id"])
+	}
+	if list[0]["version"] != nil {
+		t.Fatalf("draft 记录 version 应 null: %v", list[0]["version"])
+	}
+
+	// 模板不存在/非整数 id → 404 template_not_found
+	for _, path := range []string{"/api/templates/999/renders", "/api/templates/abc/renders"} {
+		code, body := doRequest(t, h, http.MethodGet, path, "", nil)
+		if code != http.StatusNotFound || errCode(t, body) != "template_not_found" {
+			t.Fatalf("GET %s = %d/%s, 期望 404/template_not_found", path, code, errCode(t, body))
+		}
+	}
+
+	// 无记录模板(seed)→ 200 空数组
+	if list := getRenders(t, h, seedID); len(list) != 0 {
+		t.Fatalf("无记录模板应空数组: %v", list)
+	}
+}
+
+// getRenders GET 渲染历史列表并解数组响应(数组端点与 doRequest 对象解码分开)
+func getRenders(t *testing.T, h http.Handler, id int64) []map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/templates/%d/renders", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET renders = %d, 期望 200: %s", rec.Code, rec.Body.String())
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("渲染历史响应应为数组: %v\n%s", err, rec.Body.String())
+	}
+	return list
 }

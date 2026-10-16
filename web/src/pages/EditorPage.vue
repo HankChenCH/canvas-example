@@ -176,7 +176,7 @@ import {
     isSegmentDirty,
     sourceDraftBaseline,
 } from '../editor/datasource'
-import { sanitizeFileBase } from '../editor/render'
+import { runRenderFlow, sanitizeFileBase } from '../editor/render'
 import { runPublishFlow, versionBadgeOf } from '../editor/publish'
 import { planRevertSession } from '../editor/revert'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -1166,6 +1166,34 @@ async function runRevert(): Promise<void> {
     }
 }
 
+// ---- 版本历史行内渲染（渲染历史对比 / 版本级预览）：行内「渲染」→
+// POST render {version:N} 渲染该版本快照（不触草稿列、不产生版本行——发版前先
+// 看历史版本效果，或发布后比对历史）；成功刷新渲染历史 + 打开结果抽屉
+// （activeRecordId 指向本次）。在途态行内显示（与回滚钮同款 revertingVersion
+// 模式），错误走状态栏反馈段。 ----
+
+const versionRendering = ref(false)
+const versionRenderingTarget = ref<number | null>(null)
+
+async function runVersionRender(v: TemplateVersionSummary): Promise<void> {
+    const record = template.value
+    if (!record || versionRendering.value) return
+    versionRendering.value = true
+    versionRenderingTarget.value = v.version
+    docNote.value = `渲染 v${v.version} 中…`
+    try {
+        const result = await api.renderTemplate(record.id, { version: v.version })
+        await refreshRenderHistory(result)
+        renderDrawerOpen.value = true
+        docNote.value = `渲染完成，共 ${result.images.length} 页（v${v.version} 版本快照）`
+    } catch (e) {
+        docNote.value = `渲染失败：${formatApiError(e)}`
+    } finally {
+        versionRendering.value = false
+        versionRenderingTarget.value = null
+    }
+}
+
 // ---- 流链编辑器三事件（29 票）：草稿不可变更新（ref 整体替换触发 watch——
 // 错误清空 + dirty 防抖），quota 交编辑器钳制后的非负整数（null = 不携带） ----
 
@@ -1398,32 +1426,60 @@ async function runSaveAsNew(): Promise<void> {
     }
 }
 
-// ---- 渲染终图（spec §4.6，19 票 / template-draft-publish 批 B ④ draft 哨兵，票 03
-// 契约修订）：顶栏触发 POST /templates/{id}/render（body {version:"draft"}）——
-// 编辑器是草稿世界，预览是编辑辅助：渲染草稿列现值，发布不被预览倒逼（缺省语义
-// 已改为最新已发布，编辑器预览若沿用缺省会变成预览已发布版而非草稿）。dirty 可
-// 渲染（草稿现值即编辑所见）；等待期按钮禁用，30s deadline 服务端控制，前端不另
-// 设超时；失败错误体（稳定码在前）走状态栏反馈段回显；成功自动打开结果抽屉
-// （RenderResultDrawer，只显本次会话最近一次）。与预览导出并存：导出预览图钮保留
-// （文案含「预览图」），抽屉注明「预览仅断行参考，以终图为准」——导出 vs 终图
-// 词汇直接做进 UI。 ----
+// ---- 渲染草稿（spec §4.6，19 票 / template-draft-publish 批 B ④ draft 哨兵，票 03
+// 契约修订 / 渲染历史对比升级）：顶栏触发「改了草稿先渲一下看效果」——
+// runRenderFlow 促存链（publish.ts runPublishFlow 同款先例）：dirty 自动先走保存
+// 流成功后渲草稿列现值，渲的即所见（否则结果对应旧草稿列，用户以为渲的是所改
+// 内容——废版成因之一）；clean 直接渲（不强制无谓 PUT）。保存写草稿列不产生版本
+// 行，发布仍是显式动作（促存是编排便利，非「渲染即保存」语义合并）。等待期按钮
+// 禁用，30s deadline 服务端控制，前端不另设超时；失败错误体（稳定码在前）走状态
+// 栏反馈段回显；成功刷新渲染历史并自动打开结果抽屉（RenderResultDrawer 记录切换
+// 条支持与历史渲染对比，activeRecordId 指向本次）。与预览导出并存：导出预览图钮
+// 保留（文案含「预览图」），抽屉注明「预览仅断行参考，以终图为准」——导出 vs 终图
+// 词汇直接做进 UI。按版本渲染（发版轨）：版本历史抽屉行内「渲染」+ 列表页卡片，
+// 见 runVersionRender。 ----
 
 const rendering = ref(false)
 const renderDrawerOpen = ref(false)
-const lastRender = ref<RenderRecord | null>(null)
+const renderRecords = ref<RenderRecord[]>([])
+const activeRenderId = ref<number | null>(null)
+
+/** 渲染历史刷新（渲染历史对比）：失败容忍——退化为仅本次记录（结果抽屉不空），
+ *  activeRecordId 恒指向本次记录（用户要看的就是刚渲的这版） */
+async function refreshRenderHistory(fallback: RenderRecord): Promise<void> {
+    try {
+        renderRecords.value = await api.listRenders(fallback.templateId)
+    } catch {
+        renderRecords.value = [fallback]
+    }
+    activeRenderId.value = fallback.id
+}
+
+/** 记录切换条回写（状态归宿主） */
+function onRenderSelect(id: number): void {
+    activeRenderId.value = id
+}
 
 async function runRender(): Promise<void> {
     const record = template.value
     if (!record || rendering.value) return
     rendering.value = true
-    docNote.value = '渲染草稿中…（编辑器预览渲草稿列现值；发布版本请走列表页缺省渲染 = 最新已发布）'
+    docNote.value = '渲染草稿中…（dirty 自动先保存，渲的即所见；按已发布版本渲染走列表页）'
     try {
-        const result = await api.renderTemplate(record.id, { version: 'draft' })
-        lastRender.value = result
-        renderDrawerOpen.value = true
-        docNote.value = `渲染完成，共 ${result.images.length} 页（草稿现值）`
-    } catch (e) {
-        docNote.value = `渲染失败：${formatApiError(e)}`
+        computeDirty()
+        const outcome = await runRenderFlow({
+            dirty: isDirty.value,
+            save: () => runDocumentSave('topbar'),
+            render: () => api.renderTemplate(record.id, { version: 'draft' }),
+        })
+        if (outcome.ok) {
+            await refreshRenderHistory(outcome.record)
+            renderDrawerOpen.value = true
+            docNote.value = `渲染完成，共 ${outcome.record.images.length} 页（草稿${outcome.saved ? '，已先保存未存改动' : ''}）`
+        } else if (outcome.note !== null) {
+            docNote.value = outcome.note
+        }
+        // note null = 保存失败已自带错误面（docNote「保存失败：…」），不覆盖肇因
     } finally {
         rendering.value = false
     }
@@ -1651,18 +1707,18 @@ onBeforeUnmount(() => {
                 >
                     另存为
                 </button>
-                <!-- 渲染终图（spec §4.6，19 票 / 批 B ④ draft 哨兵）：{version:"draft"}
-                     渲染草稿列现值（编辑器是草稿世界，发布不被预览倒逼）；等待期禁用
-                     （30s deadline 服务端控制，前端不另设超时） -->
+                <!-- 渲染草稿（spec §4.6，19 票 / 批 B ④ draft 哨兵 / 渲染历史对比）：
+                     dirty 自动先保存再渲（渲的即所见），{version:"draft"} 渲草稿列现值；
+                     等待期禁用（30s deadline 服务端控制，前端不另设超时） -->
                 <button
                     type="button"
                     class="ghost"
                     data-render-final
-                    title="渲染终图：渲染当前草稿内容（version=draft 哨兵——预览是编辑辅助，发布不被预览倒逼；已发布版本请走列表页渲染）；服务端 30s 上限，完成自动打开结果抽屉"
+                    title="渲染草稿：先保存未存改动，再渲染当前草稿看效果（发布不被预览倒逼；按已发布版本渲染走列表页或版本历史行内「渲染」）；服务端 30s 上限，完成自动打开结果抽屉（可与历史渲染对比）"
                     :disabled="rendering"
                     @click="runRender"
                 >
-                    {{ rendering ? '渲染中…' : '渲染终图' }}
+                    {{ rendering ? '渲染中…' : '渲染草稿' }}
                 </button>
                 <!-- editor.store.doc 是非响应式读数，按钮可用态不做文档门（处理器自守卫），
                      导出中状态走响应式 exporting -->
@@ -1950,14 +2006,18 @@ onBeforeUnmount(() => {
 
         <!-- 版本历史抽屉（template-draft-publish 批 B ③，spec §6）：版本列表纯呈现
              （null = 未知态显「版本列表不可用」，评审修复 F1——未知 ≠ 未发布），
-             回滚确认/在途/错误全由宿主持有；行内回滚 → ConfirmDialog → 会话替换 -->
+             回滚确认/在途/错误全由宿主持有；行内回滚 → ConfirmDialog → 会话替换；
+             行内渲染 → runVersionRender（版本快照渲染，进渲染历史对比） -->
         <VersionHistoryDrawer
             :open="versionDrawerOpen"
             :versions="versions"
             :reverting="reverting"
             :reverting-version="revertTarget?.version ?? null"
+            :rendering="versionRendering"
+            :rendering-version="versionRenderingTarget"
             @close="versionDrawerOpen = false"
             @revert="openRevert"
+            @render="runVersionRender"
         />
 
         <!-- 回滚确认框（spec §6 定死文案；服务端零守卫，确认交互在前端——票 04）：
@@ -1975,13 +2035,15 @@ onBeforeUnmount(() => {
             @cancel="closeRevert"
         />
 
-        <!-- 渲染结果抽屉（spec §4.6，19 票）：记录/开合/模板名（下载建议名）由宿主
-             持有，缩略图网格直用 images[].url；成功自动打开、关闭钮回落，只显本次
-             会话最近一次（lastRender 整体替换） -->
+        <!-- 渲染结果抽屉（spec §4.6，19 票 + 渲染历史对比）：渲染历史记录/当前记录/
+             开合/模板名（下载建议名）由宿主持有，缩略图网格直用 images[].url；成功
+             自动打开、关闭钮回落；切换条在历史记录间对比查看 -->
         <RenderResultDrawer
             :open="renderDrawerOpen"
-            :record="lastRender"
+            :records="renderRecords"
+            :active-record-id="activeRenderId"
             :template-name="templateName"
+            @select="onRenderSelect"
             @close="renderDrawerOpen = false"
         />
     </main>

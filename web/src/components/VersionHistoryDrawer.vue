@@ -7,12 +7,14 @@
  * 空列表 = 未发布推导态，给行动指引空态；null = 列表未知（未加载或拉取失败）显
  * 「版本列表不可用」——未知 ≠ 未发布，不假显「尚未发布过版本」，评审修复 F1），
  * 行内「回滚」钮 → 宿主弹 ConfirmDialog 二次确认（服务端零守卫，票 04：覆盖目标
- * = 最后保存的草稿）。
+ * = 最后保存的草稿）；行内「渲染」钮 → 宿主 POST render {version:N} 渲染该版本
+ * 快照（版本级预览：不触草稿列、不产生版本行；结果进渲染历史抽屉支持记录切换
+ * 对比）。
  *
- * 状态边界：版本列表（含未知态）、回滚确认目标、错误与在途态全由宿主持有——本
- * 组件纯呈现（FlowChainDrawer/DataSourceDrawer 先例：Teleport body + 自带令牌块，
- * 非模态，画布保持可交互）。明示不做（票 05 图级 Q3）：历史版本预览、版本对比、
- * 版本删除/重命名、发布备注——UI 只露版本号 + 时间 + 动作。
+ * 状态边界：版本列表（含未知态）、回滚确认目标、渲染在途、错误与在途态全由宿主
+ * 持有——本组件纯呈现（FlowChainDrawer/DataSourceDrawer 先例：Teleport body +
+ * 自带令牌块，非模态，画布保持可交互）。仍不做（票 05 图级 Q3）：版本画布内
+ * 预览/对比、版本删除/重命名、发布备注——UI 只露版本号 + 时间 + 动作。
  */
 import { computed } from 'vue'
 
@@ -29,12 +31,18 @@ const props = defineProps<{
     reverting: boolean
     /** 在途回滚目标版本（该行显「回滚中…」，null = 无在途） */
     revertingVersion: number | null
+    /** 行内渲染在途（渲染钮禁用） */
+    rendering: boolean
+    /** 在途渲染目标版本（该行显「渲染中…」，null = 无在途） */
+    renderingVersion: number | null
 }>()
 
 const emit = defineEmits<{
     close: []
     /** 行内回滚：宿主走 ConfirmDialog → POST revert → 会话替换（spec §6） */
     revert: [version: TemplateVersionSummary]
+    /** 行内渲染：宿主 POST render {version:N} → 渲染历史刷新 + 结果抽屉 */
+    render: [version: TemplateVersionSummary]
 }>()
 
 /** 列表态分支（versionListState 纯逻辑单测钉死三态：unknown/unpublished/ready） */
@@ -56,6 +64,7 @@ const rows = computed(() => props.versions ?? [])
             <section class="cn-vhd__section">
                 <p class="cn-vhd__note">
                     版本史即发布史：发布把草稿固化为新版本；回滚把历史版本内容复制回草稿（不产生新版本），确认后当前草稿被覆盖。
+                    行内「渲染」查看该版本渲染效果，不影响草稿与版本线。
                 </p>
 
                 <!-- 列表未知：null = 未加载或拉取失败（≠ 未发布，不撒谎——评审修复
@@ -69,16 +78,26 @@ const rows = computed(() => props.versions ?? [])
                     尚未发布过版本——顶栏「发布」把当前草稿固化为 v1。
                 </p>
 
-                <!-- 版本行：版本号 + 发布时间 + 行内回滚（version 降序，最新在前） -->
+                <!-- 版本行：版本号 + 发布时间 + 行内渲染/回滚（version 降序，最新在前） -->
                 <template v-else>
                     <div v-for="v in rows" :key="v.version" class="cn-vhd__row" :data-version-row="v.version">
                         <span class="cn-vhd__version">v{{ v.version }}</span>
                         <span class="cn-vhd__time">发布于 {{ formatTimestamp(v.createdAt) }}</span>
                         <button
                             type="button"
+                            class="cn-vhd__render"
+                            data-version-render
+                            :disabled="rendering || reverting"
+                            :title="`渲染 v${v.version} 查看效果（版本快照渲染，不影响草稿与版本线；结果进渲染结果抽屉）`"
+                            @click="emit('render', v)"
+                        >
+                            {{ rendering && renderingVersion === v.version ? '渲染中…' : '渲染' }}
+                        </button>
+                        <button
+                            type="button"
                             class="cn-vhd__revert"
                             data-version-revert
-                            :disabled="reverting"
+                            :disabled="reverting || rendering"
                             :title="`回滚到 v${v.version}：把该版本内容复制回草稿（覆盖当前草稿，需确认）`"
                             @click="emit('revert', v)"
                         >
@@ -214,6 +233,9 @@ const rows = computed(() => props.versions ?? [])
     white-space: nowrap;
 }
 
+/* 行内动作钮：渲染（次级查看动作）与回滚（覆盖性动作）同款底形，回滚 hover 提
+   红以示覆盖语义区分 */
+.cn-vhd__render,
 .cn-vhd__revert {
     flex: none;
     padding: 4px 12px;
@@ -228,11 +250,17 @@ const rows = computed(() => props.versions ?? [])
         color 0.2s;
 }
 
-.cn-vhd__revert:hover:not(:disabled) {
+.cn-vhd__render:hover:not(:disabled) {
     border-color: var(--cn-accent);
     color: var(--cn-accent);
 }
 
+.cn-vhd__revert:hover:not(:disabled) {
+    border-color: #f87171;
+    color: #fca5a5;
+}
+
+.cn-vhd__render:disabled,
 .cn-vhd__revert:disabled {
     opacity: 0.55;
     cursor: not-allowed;

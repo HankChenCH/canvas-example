@@ -252,6 +252,10 @@ export const api = {
                       body: JSON.stringify({ version: opts.version }),
                   },
         ),
+    // GET /api/templates/{id}/renders（渲染历史对比）：模板维度渲染记录，id 降序
+    // （最新在前），响应形状与 renderTemplate 同形（version null = draft 渲染行）；
+    // 服务端固定档位截最新 20 条（keep-all 语义下防无界返回），无查询参数
+    listRenders: (id: string | number) => request<RenderRecord[]>(`/api/templates/${id}/renders`),
     // POST /api/templates/{id}/publish（tdp spec §3 发布）：无 body，把草稿列固化
     // 为新版本（201）；草稿与最新版本字节相等 → 200 duplicate:true 幂等跳过；图
     // 病态 422 invalid_graph（preflight 守门，不产生版本行）；模板不存在 404

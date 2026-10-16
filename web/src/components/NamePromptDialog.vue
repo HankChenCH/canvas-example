@@ -8,12 +8,21 @@
  * Esc 取消（输入法合成中的 Enter 只上屏不确认）；点遮罩取消。在途态下确认与取消
  * 均禁用——半途中断会让「已建副本/模板」与界面状态脱钩。
  *
- * 状态边界：名字草稿（defineModel）、错误文案、在途态全部由宿主持有——本组件
- * 纯呈现，不持业务状态（DataSourceDrawer 先例）。Teleport body + 自带令牌块。
+ * 数据源选择段（新建模板选数据源，可选能力）：仅当宿主传 dataSourceOptions 时
+ * 渲染（另存为消费面不传 = 整段不渲染，零感知）——首项「暂不绑定」，其余项带
+ * 「N 个模板引用」影响面注记（DataSourceDrawer 绑定段同词汇）；空列表给「去创建」
+ * 链接（/datasources/new）。选择经 defineModel 回宿主，随建随绑。
+ *
+ * 状态边界：名字草稿（defineModel）、数据源选择（defineModel）、错误文案、在途态
+ * 全部由宿主持有——本组件纯呈现，不持业务状态（DataSourceDrawer 先例）。
+ * Teleport body + 自带令牌块。
  */
 import { nextTick, ref, watch } from 'vue'
 
+import type { DataSourceSummary } from '../api'
+
 const name = defineModel<string>('name', { required: true })
+const dataSourceId = defineModel<number | null>('dataSourceId')
 
 const props = defineProps<{
     /** 弹窗开合（宿主动作钮驱动） */
@@ -31,6 +40,8 @@ const props = defineProps<{
     /** 确认钮文案（在途态由 confirmBusyText 接管） */
     confirmText?: string
     confirmBusyText?: string
+    /** 数据源候选（undefined = 不渲染数据源段，另存为消费面） */
+    dataSourceOptions?: DataSourceSummary[]
 }>()
 
 const emit = defineEmits<{
@@ -68,6 +79,12 @@ function onKeydown(event: KeyboardEvent): void {
         emit('confirm')
     }
 }
+
+/** 下拉 → 模型：'' = 暂不绑定（null），其余转数字 id */
+function onDataSourceChange(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value
+    dataSourceId.value = value === '' ? null : Number(value)
+}
 </script>
 
 <template>
@@ -99,6 +116,31 @@ function onKeydown(event: KeyboardEvent): void {
                     :disabled="saving"
                     spellcheck="false"
                 />
+                <!-- 数据源选择段（可选能力）：仅 dataSourceOptions 传入时渲染 -->
+                <template v-if="dataSourceOptions !== undefined">
+                    <label class="cn-npd__label cn-npd__label--ds" for="npd-datasource">数据源（可选）</label>
+                    <select
+                        id="npd-datasource"
+                        class="cn-npd__input cn-npd__select"
+                        data-name-prompt-datasource
+                        :value="dataSourceId ?? ''"
+                        :disabled="saving"
+                        @change="onDataSourceChange"
+                    >
+                        <option value="">暂不绑定（可在编辑器顶栏「数据源」中绑定）</option>
+                        <option v-for="s in dataSourceOptions" :key="s.id" :value="String(s.id)">
+                            {{ s.name }}（{{ s.templateCount }} 个模板引用）
+                        </option>
+                    </select>
+                    <p v-if="dataSourceOptions.length === 0" class="cn-npd__hint" data-name-prompt-ds-empty>
+                        还没有数据源——可先「暂不绑定」创建，之后到
+                        <RouterLink class="cn-npd__link" to="/datasources/new">数据源页</RouterLink>
+                        创建并在编辑器内绑定。
+                    </p>
+                    <p v-else class="cn-npd__hint" data-name-prompt-ds-hint>
+                        绑定后，文字/图片/二维码即可用 <code v-pre>{{字段}}</code> 表达式引用数据内容。
+                    </p>
+                </template>
                 <p class="cn-npd__note">{{ note }}</p>
                 <p v-if="error" class="cn-npd__error" data-name-prompt-error>{{ error }}</p>
                 <footer class="cn-npd__footer">
@@ -231,6 +273,53 @@ function onKeydown(event: KeyboardEvent): void {
     border-color: rgba(56, 189, 248, 0.65);
     box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
     outline: none;
+}
+
+/* 数据源选择段：标签与名字输入拉开间距；select 沿用输入框底形（原生弹层），
+   hint 小字解释「绑定 → 表达式可用」的因果关系 */
+.cn-npd__label--ds {
+    margin-top: 14px;
+}
+
+.cn-npd__select {
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--cn-muted) 50%),
+        linear-gradient(135deg, var(--cn-muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 18px) calc(50% - 2px),
+        calc(100% - 13px) calc(50% - 2px);
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    cursor: pointer;
+}
+
+.cn-npd__select:focus {
+    cursor: default;
+}
+
+.cn-npd__hint {
+    margin: 8px 0 0;
+    color: var(--cn-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.cn-npd__hint code {
+    padding: 0 3px;
+    border: 1px solid var(--cn-line);
+    border-radius: 4px;
+    background: var(--cn-bg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+}
+
+.cn-npd__link {
+    color: var(--cn-accent);
+    text-decoration: none;
+}
+
+.cn-npd__link:hover {
+    text-decoration: underline;
 }
 
 .cn-npd__note {

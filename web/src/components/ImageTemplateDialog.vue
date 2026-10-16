@@ -5,12 +5,18 @@
  * 形态骨架与 NamePromptDialog 同款（模态名字输入 + Enter 确认 / Esc 取消 / 点遮罩
  * 取消 / 在途双禁用），增加本机选图区：选图事件把 File 交宿主解码像素尺寸
  * （createImageBitmap 属 DOM 通道，归宿主），选中结果经 imageName/imageInfo 两
- * props 回显。状态边界：名字草稿（defineModel）、已选图、错误文案、在途态全部
- * 由宿主持有——本组件纯呈现。Teleport body + 自带令牌块。
+ * props 回显。数据源选择段与 NamePromptDialog 同款（仅 dataSourceOptions 传入时
+ * 渲染，首项「暂不绑定」，空列表给「去创建」链接）。
+ *
+ * 状态边界：名字草稿（defineModel）、数据源选择（defineModel）、已选图、错误文案、
+ * 在途态全部由宿主持有——本组件纯呈现。Teleport body + 自带令牌块。
  */
 import { nextTick, ref, watch } from 'vue'
 
+import type { DataSourceSummary } from '../api'
+
 const name = defineModel<string>('name', { required: true })
+const dataSourceId = defineModel<number | null>('dataSourceId')
 
 const props = defineProps<{
     /** 弹窗开合（宿主动作钮驱动） */
@@ -32,6 +38,8 @@ const props = defineProps<{
     /** 确认钮文案（在途态由 confirmBusyText 接管） */
     confirmText?: string
     confirmBusyText?: string
+    /** 数据源候选（undefined = 不渲染数据源段） */
+    dataSourceOptions?: DataSourceSummary[]
 }>()
 
 const emit = defineEmits<{
@@ -78,6 +86,12 @@ function onFileChange(event: Event): void {
     const file = el.files?.[0] ?? null
     el.value = ''
     if (file) emit('select', file)
+}
+
+/** 下拉 → 模型：'' = 暂不绑定（null），其余转数字 id（NamePromptDialog 同款） */
+function onDataSourceChange(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value
+    dataSourceId.value = value === '' ? null : Number(value)
 }
 </script>
 
@@ -129,6 +143,31 @@ function onFileChange(event: Event): void {
                 <p v-if="imageName" class="cn-itd__image" data-image-prompt-image>
                     {{ imageName }}<template v-if="imageInfo"> · {{ imageInfo }}</template>
                 </p>
+                <!-- 数据源选择段（可选能力）：仅 dataSourceOptions 传入时渲染 -->
+                <template v-if="dataSourceOptions !== undefined">
+                    <label class="cn-itd__label cn-itd__label--ds" for="itd-datasource">数据源（可选）</label>
+                    <select
+                        id="itd-datasource"
+                        class="cn-itd__input cn-itd__select"
+                        data-image-prompt-datasource
+                        :value="dataSourceId ?? ''"
+                        :disabled="saving"
+                        @change="onDataSourceChange"
+                    >
+                        <option value="">暂不绑定（可在编辑器顶栏「数据源」中绑定）</option>
+                        <option v-for="s in dataSourceOptions" :key="s.id" :value="String(s.id)">
+                            {{ s.name }}（{{ s.templateCount }} 个模板引用）
+                        </option>
+                    </select>
+                    <p v-if="dataSourceOptions.length === 0" class="cn-itd__hint" data-image-prompt-ds-empty>
+                        还没有数据源——可先「暂不绑定」创建，之后到
+                        <RouterLink class="cn-itd__link" to="/datasources/new">数据源页</RouterLink>
+                        创建并在编辑器内绑定。
+                    </p>
+                    <p v-else class="cn-itd__hint" data-image-prompt-ds-hint>
+                        绑定后，文字/图片/二维码即可用 <code v-pre>{{字段}}</code> 表达式引用数据内容。
+                    </p>
+                </template>
                 <p class="cn-itd__note">{{ note }}</p>
                 <p v-if="error" class="cn-itd__error" data-image-prompt-error>{{ error }}</p>
                 <footer class="cn-itd__footer">
@@ -262,6 +301,54 @@ function onFileChange(event: Event): void {
     border-color: rgba(56, 189, 248, 0.65);
     box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
     outline: none;
+}
+
+/* 数据源选择段（NamePromptDialog 同款词汇）：标签拉开间距 + select 沿用输入框
+   底形（原生弹层 + 自绘箭头）+ hint 小字解释「绑定 → 表达式可用」 */
+.cn-itd__label--ds {
+    display: block;
+    margin-top: 14px;
+}
+
+.cn-itd__select {
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--cn-muted) 50%),
+        linear-gradient(135deg, var(--cn-muted) 50%, transparent 50%);
+    background-position:
+        calc(100% - 18px) calc(50% - 2px),
+        calc(100% - 13px) calc(50% - 2px);
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    cursor: pointer;
+}
+
+.cn-itd__select:focus {
+    cursor: default;
+}
+
+.cn-itd__hint {
+    margin: 8px 0 0;
+    color: var(--cn-muted);
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.cn-itd__hint code {
+    padding: 0 3px;
+    border: 1px solid var(--cn-line);
+    border-radius: 4px;
+    background: var(--cn-bg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+}
+
+.cn-itd__link {
+    color: var(--cn-accent);
+    text-decoration: none;
+}
+
+.cn-itd__link:hover {
+    text-decoration: underline;
 }
 
 /* 文件选择落区：原生 input 视觉隐藏（包裹式 label 关联，点击即开选图器），

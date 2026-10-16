@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -855,5 +856,106 @@ func TestDeleteDataSource_GuardsReferences(t *testing.T) {
 	// 不存在 → ErrDataSourceNotFound
 	if err := st.DeleteDataSource(ctx, 999); !errors.Is(err, ErrDataSourceNotFound) {
 		t.Fatalf("删除不存在 err = %v, 期望 ErrDataSourceNotFound", err)
+	}
+}
+
+// TestListRenderRecords_OrderLimitIsolation 渲染历史列表:id 降序(最新在前)、
+// limit 截断取最新、模板间隔离、version 透传(draft 行 nil)、images 原样
+// (DB 相对 path 形态,响应侧转换归 api 层)
+func TestListRenderRecords_OrderLimitIsolation(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	idA, err := st.CreateTemplate(ctx, seedContent())
+	if err != nil {
+		t.Fatalf("创建模板 A: %v", err)
+	}
+	other := seedContent()
+	other.Name = "另一模板"
+	idB, err := st.CreateTemplate(ctx, other)
+	if err != nil {
+		t.Fatalf("创建模板 B: %v", err)
+	}
+
+	// A 三条:草稿(nil)→ v1 → v2,id 自增即时间序
+	rDraft, err := st.CreateRenderRecord(ctx, idA, nil)
+	if err != nil {
+		t.Fatalf("造 draft 渲染记录: %v", err)
+	}
+	v1 := int64(1)
+	rV1, err := st.CreateRenderRecord(ctx, idA, &v1)
+	if err != nil {
+		t.Fatalf("造 v1 渲染记录: %v", err)
+	}
+	v2 := int64(2)
+	rV2, err := st.CreateRenderRecord(ctx, idA, &v2)
+	if err != nil {
+		t.Fatalf("造 v2 渲染记录: %v", err)
+	}
+	// draft 行回填 images(其余 stub 空数组),断言 images 原样透出
+	draftImages := []RenderImage{{Frame: 0, Name: "主页", Path: "renders/" + fmt.Sprintf("%d", rDraft.ID) + "/1.png"}}
+	if err := st.UpdateRenderImages(ctx, rDraft.ID, draftImages); err != nil {
+		t.Fatalf("回填 draft images: %v", err)
+	}
+	// B 一条(隔离对照)
+	if _, err := st.CreateRenderRecord(ctx, idB, nil); err != nil {
+		t.Fatalf("造模板 B 渲染记录: %v", err)
+	}
+
+	recs, err := st.ListRenderRecords(ctx, idA, 20)
+	if err != nil {
+		t.Fatalf("列渲染记录: %v", err)
+	}
+	if len(recs) != 3 {
+		t.Fatalf("模板 A 应 3 条记录, 实得 %d: %+v", len(recs), recs)
+	}
+	wantOrder := []int64{rV2.ID, rV1.ID, rDraft.ID}
+	for i, rec := range recs {
+		if rec.ID != wantOrder[i] {
+			t.Fatalf("顺序不符: recs[%d].id = %d, 期望 %d(id 降序)", i, rec.ID, wantOrder[i])
+		}
+		if rec.TemplateID != idA {
+			t.Fatalf("recs[%d].TemplateID = %d, 期望 %d", i, rec.TemplateID, idA)
+		}
+	}
+	if recs[0].Version == nil || *recs[0].Version != 2 {
+		t.Fatalf("最新记录应为 v2: %+v", recs[0].Version)
+	}
+	if recs[1].Version == nil || *recs[1].Version != 1 {
+		t.Fatalf("次新记录应为 v1: %+v", recs[1].Version)
+	}
+	if recs[2].Version != nil {
+		t.Fatalf("draft 记录 version 应 nil 透传: %+v", recs[2].Version)
+	}
+	if len(recs[2].Images) != 1 || recs[2].Images[0].Path != draftImages[0].Path {
+		t.Fatalf("images 应原样透出(DB 相对 path): %+v", recs[2].Images)
+	}
+	if recs[0].CreatedAt == "" {
+		t.Fatalf("createdAt 应非空: %+v", recs[0])
+	}
+
+	// limit 截断:取最新 2 条
+	limited, err := st.ListRenderRecords(ctx, idA, 2)
+	if err != nil {
+		t.Fatalf("limit 列渲染记录: %v", err)
+	}
+	if len(limited) != 2 || limited[0].ID != rV2.ID || limited[1].ID != rV1.ID {
+		t.Fatalf("limit=2 应取最新两条 [v2 v1]: %+v", limited)
+	}
+
+	// 模板隔离 + 无记录模板回空数组(非 nil)
+	onlyB, err := st.ListRenderRecords(ctx, idB, 20)
+	if err != nil {
+		t.Fatalf("列模板 B 渲染记录: %v", err)
+	}
+	if len(onlyB) != 1 {
+		t.Fatalf("模板 B 应恰 1 条, 实得 %d", len(onlyB))
+	}
+	empty, err := st.ListRenderRecords(ctx, 999, 20)
+	if err != nil {
+		t.Fatalf("列不存在模板渲染记录: %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("无记录应回空数组(非 nil): %+v", empty)
 	}
 }

@@ -19,7 +19,7 @@ const lockedPath: LayerPath = [2]
 const snapshot: TemplateEditorStateSnapshot = {
     schemaVersion: EDITOR_STATE_SCHEMA_VERSION,
     frames: { 主页: { guides: [{ id: 1, orientation: 'vertical', position: 100 }], lockedPaths: [lockedPath] } },
-    prefs: { rulersVisible: true, anchorExpanded: false, nextTextStyle: defaultNextTextStyle(), nextLayerRatio: 'free' },
+    prefs: { rulersVisible: true, anchorExpanded: false, nextTextStyle: defaultNextTextStyle() },
 }
 
 describe('api.updateTemplateEditorStateKeepalive（页签关闭通道）', () => {

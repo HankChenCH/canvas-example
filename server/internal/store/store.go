@@ -667,3 +667,41 @@ func (s *Store) DeleteRenderRecord(ctx context.Context, id int64) error {
 	}
 	return requireRow(res, "删除渲染记录", id, ErrNotFound)
 }
+
+// ListRenderRecords 渲染历史列表(渲染历史对比,模板维度):id 降序(最新在前),
+// limit 截断取最新——记录只增不减的 keep-all 语义下由 api 层固定档位防无界返回。
+// images 为 DB 相对 path 形态(spec §2.2 存储形态,前导斜杠 url 转换归 api 响应侧);
+// draft 渲染行 Version nil 透传(诚实语义同 CreateRenderRecord)。无记录回空数组
+// 非 nil(响应为数组惯例,同 ListTemplates)。
+func (s *Store) ListRenderRecords(ctx context.Context, templateID int64, limit int) ([]RenderRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, template_id, version, created_at, images FROM renders WHERE template_id = ? ORDER BY id DESC LIMIT ?`,
+		templateID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("查询模板 %d 渲染记录: %w", templateID, err)
+	}
+	defer rows.Close()
+	out := []RenderRecord{}
+	for rows.Next() {
+		var rec RenderRecord
+		var version sql.NullInt64
+		var images string
+		if err := rows.Scan(&rec.ID, &rec.TemplateID, &version, &rec.CreatedAt, &images); err != nil {
+			return nil, fmt.Errorf("扫描渲染记录: %w", err)
+		}
+		if version.Valid {
+			rec.Version = &version.Int64
+		}
+		rec.Images = []RenderImage{}
+		if images != "" && images != "[]" {
+			if err := json.Unmarshal([]byte(images), &rec.Images); err != nil {
+				return nil, fmt.Errorf("解析渲染记录 %d images: %w", rec.ID, err)
+			}
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("遍历渲染记录: %w", err)
+	}
+	return out, nil
+}

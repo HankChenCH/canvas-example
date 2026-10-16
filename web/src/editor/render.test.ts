@@ -1,9 +1,11 @@
 // 渲染终图纯逻辑测试（19 票 TDD 缝，spec §4.6）：单张终图下载文件名（结果抽屉
-// 缩略图的 <a download> 建议名）。Node 无 DOM 环境。
+// 缩略图的 <a download> 建议名）+ 渲染历史版本标注 + 渲染促存链成算。Node 无 DOM
+// 环境。
 import { describe, expect, it } from 'vitest'
 
+import { ApiError } from '../api'
 import type { RenderImage } from '../api'
-import { renderImageFileName } from './render'
+import { renderImageFileName, renderVersionLabel, runRenderFlow } from './render'
 
 describe('renderImageFileName（单张终图下载文件名，spec §4.6 <a download>）', () => {
     it('模板名-终图-页序-帧名.png：页序取帧序×页序扁平下标（1 起），同帧多页不重名', () => {
@@ -28,5 +30,78 @@ describe('renderImageFileName（单张终图下载文件名，spec §4.6 <a down
         expect(renderImageFileName('   ', { frame: 0, name: '主页', url: '/renders/1/1.png' }, 4)).toBe(
             'template-终图-5-主页.png',
         )
+    })
+})
+
+describe('renderVersionLabel（渲染记录版本标注，渲染历史对比词汇）', () => {
+    it('null = 草稿渲染（诚实语义），正整数 = vN', () => {
+        expect(renderVersionLabel(null)).toBe('草稿')
+        expect(renderVersionLabel(1)).toBe('v1')
+        expect(renderVersionLabel(12)).toBe('v12')
+    })
+})
+
+describe('runRenderFlow（渲染促存链编排，对齐 runPublishFlow 促存先例）', () => {
+    const record = { id: 7, templateId: 1, version: null, createdAt: '2026-10-16T00:00:00Z', images: [] }
+
+    it('clean 直接渲染，不触发无谓保存', async () => {
+        let saved = 0
+        let rendered = 0
+        const outcome = await runRenderFlow({
+            dirty: false,
+            save: async () => {
+                saved += 1
+                return true
+            },
+            render: async () => {
+                rendered += 1
+                return record
+            },
+        })
+        expect(saved).toBe(0)
+        expect(rendered).toBe(1)
+        expect(outcome).toEqual({ ok: true, record, saved: false })
+    })
+
+    it('dirty 先促存成功再渲染（渲的即所见），saved 标记随行', async () => {
+        const order: string[] = []
+        const outcome = await runRenderFlow({
+            dirty: true,
+            save: async () => {
+                order.push('save')
+                return true
+            },
+            render: async () => {
+                order.push('render')
+                return record
+            },
+        })
+        expect(order).toEqual(['save', 'render'])
+        expect(outcome).toEqual({ ok: true, record, saved: true })
+    })
+
+    it('dirty 且保存失败：中止渲染不覆盖保存步错误面（note null），渲染零调用', async () => {
+        let rendered = 0
+        const outcome = await runRenderFlow({
+            dirty: true,
+            save: async () => false,
+            render: async () => {
+                rendered += 1
+                return record
+            },
+        })
+        expect(rendered).toBe(0)
+        expect(outcome).toEqual({ ok: false, note: null })
+    })
+
+    it('渲染打回（如 invalid_graph）归稳定码在前文案，不向上抛', async () => {
+        const outcome = await runRenderFlow({
+            dirty: false,
+            save: async () => true,
+            render: async () => {
+                throw new ApiError(422, 'invalid_graph', '图病态')
+            },
+        })
+        expect(outcome).toEqual({ ok: false, note: '渲染失败：invalid_graph：图病态' })
     })
 })
