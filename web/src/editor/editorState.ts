@@ -61,9 +61,8 @@ export function parseTemplateEditorStateSnapshot(raw: unknown): ParsedEditorStat
               // 新层样式槽宽容透传（editor 0.5.0）：旧快照缺字段/畸形值由内核
               // applyEditorPrefs 逐字段收口（pickNextTextStylePatch 不符保留现值），宿主不校验
               nextTextStyle: obj.prefs.nextTextStyle,
-              // 建层比例槽宽容透传（editor 0.6.0）：同上逐字段收口（pickNextLayerRatio
-              // 非六档枚举值回落 'free'），旧快照缺字段即回默认自由档
-              nextLayerRatio: obj.prefs.nextLayerRatio,
+              // 建层比例槽已随 editor 0.7.0 退役（ADR 0021）：旧快照残键按未知键
+              // 宽容丢弃（spec §3 读侧语义），不再透传
           }
         : null
     return { frames, prefs }
