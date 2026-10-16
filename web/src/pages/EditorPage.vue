@@ -534,6 +534,8 @@ const contentDirty = computed(
 )
 const contentSaving = ref(false)
 const contentError = ref<string | null>(null)
+// 绑定 schema 的内核拒绝明细（死端态整改 2b，applyBoundSource 注入时快照）
+const schemaRejected = ref<string | null>(null)
 
 /** 应用绑定态（spec §4.3 载入/保存/绑定同一入口）：实体进内容段基线与文本域、
  *  schema 注入编辑器会话（null = 清除候选；注入失败内核静默降级已内建） */
@@ -546,6 +548,11 @@ function applyBoundSource(source: DataSourceRecord | null): void {
     selectedBindId.value = source?.id ?? null
     contentError.value = null
     editor.setDataSourceSchema(source === null ? null : source.schema)
+    // 声明被拒快照（死端态整改 2b）：注入同步生效，直读会话态即可——开放映射/
+    // 保留键等被静默降级为无候选，抽屉回显原因，否则用户「绑了数据源」却无候选
+    const rejection = editor.store.ui.dataSourceSchemaRejection
+    schemaRejected.value =
+        rejection === null ? null : `当前 schema 被编辑器拒绝（${rejection.reason}）：${rejection.detail}——表达式字段引用将无候选，修正后保存数据源即恢复`
 }
 
 /** 抽屉打开：数据源列表刷新（共享影响面 templateCount 与新建实体即时可见） */
@@ -1947,6 +1954,7 @@ onBeforeUnmount(() => {
             :content-dirty="contentDirty"
             :content-saving="contentSaving"
             :content-error="contentError"
+            :schema-rejected="schemaRejected"
             @close="drawerOpen = false"
             @bind="runBind"
             @save-content="saveContent"

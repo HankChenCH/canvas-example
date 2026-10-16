@@ -41,6 +41,12 @@ const props = defineProps<{
     contentDirty: boolean
     contentSaving: boolean
     contentError: string | null
+    /**
+     * 当前绑定 schema 的内核拒绝明细（死端态整改 2b，直取编辑器会话
+     * dataSourceSchemaRejection）；null = 未拒/未绑——拒绝时表达式引用无候选
+     * （选择器无菜单），此行说明原因与去向。
+     */
+    schemaRejected?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -126,6 +132,9 @@ const bindActionLabel = computed(() => (selectedBindId.value === null ? '解绑'
                     rows="7"
                     spellcheck="false"
                 ></textarea>
+                <!-- 绑定 schema 被编辑器拒绝（死端态整改 2b）：表达式引用无候选的原因
+                     说明——修正后保存即随重新注入消除 -->
+                <p v-if="schemaRejected" class="cn-dsw__error" data-schema-rejected>{{ schemaRejected }}</p>
                 <label class="cn-dsw__label" for="dsw-data">data（JSON）</label>
                 <textarea
                     id="dsw-data"

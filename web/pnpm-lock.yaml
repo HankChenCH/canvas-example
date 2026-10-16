@@ -18,11 +18,11 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0
       '@hankchen/canvas-editor':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: ^0.7.1
+        version: 0.7.1
       '@hankchen/canvas-editor-vue':
-        specifier: ^0.6.0
-        version: 0.6.0(vue@3.5.43(typescript@5.9.3))
+        specifier: ^0.6.1
+        version: 0.6.1(vue@3.5.43(typescript@5.9.3))
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)
@@ -77,13 +77,13 @@ packages:
   '@hankchen/canvas-browser-renderer@0.1.0':
     resolution: {integrity: sha512-MYt+uztz03wKitkOZUoWwhJU0ANxj/2Ah1XQGOGkBpWANN4NNoVFY0jbi8a+LchxiZJiWWbZso7vGTPQSgYcPA==}
 
-  '@hankchen/canvas-editor-vue@0.6.0':
-    resolution: {integrity: sha512-chWuScu1Z2ksBhuLFiORtfp+K8KaHv854gY9Qgj2oEQoPH0J/ZUFtSFuDu8JkdpEEEGCek0anSumisZfKvzpUw==}
+  '@hankchen/canvas-editor-vue@0.6.1':
+    resolution: {integrity: sha512-K1/dL5xReOQ6Y6vTnxHx19foWdmsSaOUO7nyer5PltL50cxnmIUq+qR8rpqyNEp66WfHc1Fptcj3fWZNN5IX5A==}
     peerDependencies:
       vue: ^3.5.0
 
-  '@hankchen/canvas-editor@0.7.0':
-    resolution: {integrity: sha512-TSJcY7vrQLIGAmRKR0V57WBNAoCd25gS60ENUVXgKAGrrQt+udQNjxsgoEE41EVnJKx7hIflOa4x6/m3j6Iheg==}
+  '@hankchen/canvas-editor@0.7.1':
+    resolution: {integrity: sha512-89YtQvHyUkby839JJGbL6jNZWhAs4iodM1EFV61uFcWChNVTbru3tppQB+zgF5vv+yg3oMEF16KLx9sFPHAYmQ==}
 
   '@hankchen/canvas@0.1.0':
     resolution: {integrity: sha512-bPdyA1TcfptqE6yVExqsZZjh9qNQHT3g2M4ecHXMId8/ZQLizUmqUejkwurrTMk+0cY59CD+ubRdjNqM1Z1i4Q==}
@@ -104,8 +104,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@lucide/vue@1.48.0':
-    resolution: {integrity: sha512-3/Nwx/RsqQ4ZrrSML1GNsSWCSDyLnBgoF/eEr1q9G6iZymn3+WKtzIj7Dbc/Nxrt9WOPuGrJ58S+CBiamK+36w==}
+  '@lucide/vue@1.58.0':
+    resolution: {integrity: sha512-HW7yrGw9OUC1TzldLep1d4p1Uc1OCRWLJwzKHm9C3V9Z4/9GADN84NDlyeTzgrcD8yxXs8/SVh8CpKFaA+OPRg==}
     peerDependencies:
       vue: '>=3.0.1'
 
@@ -905,13 +905,13 @@ snapshots:
       '@hankchen/canvas': 0.1.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-editor-vue@0.6.0(vue@3.5.43(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@0.6.1(vue@3.5.43(typescript@5.9.3))':
     dependencies:
-      '@hankchen/canvas-editor': 0.7.0
-      '@lucide/vue': 1.48.0(vue@3.5.43(typescript@5.9.3))
+      '@hankchen/canvas-editor': 0.7.1
+      '@lucide/vue': 1.58.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)
 
-  '@hankchen/canvas-editor@0.7.0':
+  '@hankchen/canvas-editor@0.7.1':
     dependencies:
       '@hankchen/canvas': 0.1.0
       '@hankchen/canvas-browser-renderer': 0.1.0
@@ -938,7 +938,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@lucide/vue@1.48.0(vue@3.5.43(typescript@5.9.3))':
+  '@lucide/vue@1.58.0(vue@3.5.43(typescript@5.9.3))':
     dependencies:
       vue: 3.5.43(typescript@5.9.3)
 
