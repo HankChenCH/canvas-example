@@ -5,7 +5,7 @@
 // 同步发出，不依赖页面存活）；失败路径静默 console.warn（spec §6 失败面）。
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { EDITOR_STATE_SCHEMA_VERSION } from '@hankchen/canvas-editor'
+import { EDITOR_STATE_SCHEMA_VERSION, defaultNextTextStyle } from '@hankchen/canvas-editor'
 import type { LayerPath } from '@hankchen/canvas-editor'
 
 import { api, ApiError, type TemplateEditorStateSnapshot, type TemplateRecord } from './api'
@@ -19,7 +19,7 @@ const lockedPath: LayerPath = [2]
 const snapshot: TemplateEditorStateSnapshot = {
     schemaVersion: EDITOR_STATE_SCHEMA_VERSION,
     frames: { 主页: { guides: [{ id: 1, orientation: 'vertical', position: 100 }], lockedPaths: [lockedPath] } },
-    prefs: { rulersVisible: true, anchorExpanded: false },
+    prefs: { rulersVisible: true, anchorExpanded: false, nextTextStyle: defaultNextTextStyle(), nextLayerRatio: 'free' },
 }
 
 describe('api.updateTemplateEditorStateKeepalive（页签关闭通道）', () => {

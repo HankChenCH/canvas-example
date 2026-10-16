@@ -3,7 +3,7 @@
 // CanvasEditorState 形状（guides/lockedPaths 两数组键齐 = 形状合法，宽容读权威在内核）。
 import { describe, expect, it } from 'vitest'
 
-import { EDITOR_STATE_SCHEMA_VERSION } from '@hankchen/canvas-editor'
+import { EDITOR_STATE_SCHEMA_VERSION, defaultNextTextStyle } from '@hankchen/canvas-editor'
 import type { CanvasEditorState, EditorPrefsState, LayerPath } from '@hankchen/canvas-editor'
 
 import {
@@ -22,7 +22,12 @@ function slice(guidePosition = 100, lockedPath: LayerPath = [2]): CanvasEditorSt
     }
 }
 
-const prefs: EditorPrefsState = { rulersVisible: true, anchorExpanded: false }
+const prefs: EditorPrefsState = {
+    rulersVisible: true,
+    anchorExpanded: false,
+    nextTextStyle: defaultNextTextStyle(),
+    nextLayerRatio: 'free',
+}
 
 describe('buildEditorStateSnapshot（flush 侧组装）', () => {
     it('schemaVersion 取内核常量，frames 按帧名组装、null 切片不产生键，prefs 原样', () => {

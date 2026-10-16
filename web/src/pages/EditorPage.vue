@@ -114,6 +114,9 @@ import {
     type DropdownMenuEntry,
     type FontPickerContext,
 } from '@hankchen/canvas-editor-vue'
+// 模板表共享 rowsPath 表单（template-table-drag-create 工单 03）：插入▾ 模板表项
+// 弹层挂载，确认 = armTemplateTableCreate 武装（layer-panel 域子路径出口）
+import { TemplateTableForm } from '@hankchen/canvas-editor-vue/layer-panel'
 import {
     AlignFloatBar,
     CanvasSurface,
@@ -623,18 +626,56 @@ const ARM_CREATE_ACTION_BY_TYPE = Object.fromEntries(
     Object.entries(ARM_CREATE_LAYER_TYPES).map(([action, type]) => [type, action]),
 ) as Record<LayerType, EditorShortcutAction>
 
-/** 插入▾：面板＋ ADD_LAYER_MENU 同源四项，点击 = 武装画拉 + 状态栏瞬时提示 */
+/** 插入▾：面板＋ ADD_LAYER_MENU 同源五项（文案与 title 单点维护）。四图层项点击 =
+ *  武装画拉 + 状态栏瞬时提示；模板表项（template-table-drag-create 工单 03 同序收入）
+ *  keepsOpen 交换弹层挂共享 TemplateTableForm——确认 = armTemplateTableCreate 武装 +
+ *  同句提示 + 收弹层；取消零副作用收弹层 */
 const insertItems = computed<DropdownMenuEntry[]>(() =>
-    ADD_LAYER_MENU.map((entry) => ({
-        label: entry.label,
-        title: entry.title,
-        shortcut: shortcutActionLabel(ARM_CREATE_ACTION_BY_TYPE[entry.type], shortcutPlatform),
-        run: () => {
-            editor.armLayerCreate(entry.type)
-            useTransientFeedback().show(ARM_LAYER_CREATE_HINT)
-        },
-    })),
+    insertTemplateFormOpen.value
+        ? []
+        : ADD_LAYER_MENU.map((entry) =>
+              entry.kind === 'layer'
+                  ? {
+                        label: entry.label,
+                        title: entry.title,
+                        shortcut: shortcutActionLabel(ARM_CREATE_ACTION_BY_TYPE[entry.type], shortcutPlatform),
+                        run: () => {
+                            editor.armLayerCreate(entry.type)
+                            useTransientFeedback().show(ARM_LAYER_CREATE_HINT)
+                        },
+                    }
+                  : {
+                        label: entry.label,
+                        title: entry.title,
+                        dataAttrs: { 'data-add-layer': 'template-table' },
+                        keepsOpen: true,
+                        run: () => {
+                            insertTemplateFormOpen.value = true
+                        },
+                    },
+          ),
 )
+
+/** 插入▾ 模板表弹层开合态（面板＋ templateFormOpen 同款）：随菜单收清（closed） */
+const insertTemplateFormOpen = ref(false)
+
+/** 弹层表单确认：同一内核武装缝 + 同句提示 + 收弹层；落库归画拉 endCreate（与面板链路同缝） */
+function onInsertTemplateConfirm(rowsPath: string, closeMenu: () => void): void {
+    editor.armTemplateTableCreate(rowsPath)
+    useTransientFeedback().show(ARM_LAYER_CREATE_HINT)
+    closeMenu()
+}
+
+/** 弹层表单取消：收弹层不武装、零副作用（草稿/错误态随组件实例收挂即弃） */
+function onInsertTemplateCancel(closeMenu: () => void): void {
+    insertTemplateFormOpen.value = false
+    closeMenu()
+}
+
+/** 插入▾ 随收清理（底座 closed 事件）：表单开合态不跨开合残留 */
+function onInsertMenuClosed(): void {
+    insertTemplateFormOpen.value = false
+}
 
 /** 选中路径（响应式桥）：排列▾ 灰态判定与动作入参共用 */
 const selection = useSelection(editor)
@@ -1686,8 +1727,18 @@ onBeforeUnmount(() => {
                 data-insert-menu
                 label="＋插入"
                 :items="insertItems"
-                title="插入图层（四类层型统一画拉：点击后在画布拖拽定落位与尺寸，Esc 取消）"
-            />
+                title="插入图层（四类层型统一画拉：点击后在画布拖拽定落位与尺寸，Esc 取消；模板表经表单填数据行路径后画拉）"
+                @closed="onInsertMenuClosed"
+            >
+                <template #body="{ closeMenu }">
+                    <TemplateTableForm
+                        v-if="insertTemplateFormOpen"
+                        :editor="editor"
+                        @confirm="(rowsPath) => onInsertTemplateConfirm(rowsPath, closeMenu)"
+                        @cancel="() => onInsertTemplateCancel(closeMenu)"
+                    />
+                </template>
+            </DropdownMenu>
             <span class="toolbar-divider" aria-hidden="true"></span>
             <button
                 type="button"
