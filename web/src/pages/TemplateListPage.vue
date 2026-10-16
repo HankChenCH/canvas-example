@@ -20,7 +20,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { api, formatApiError, type TemplateSummary, type TemplateVersionSummary } from '../api'
+import { api, formatApiError, type DataSourceSummary, type TemplateSummary, type TemplateVersionSummary } from '../api'
 import { formatTimestamp } from '../editor/format'
 import { createBlankTemplate, createImageTemplate } from '../editor/newtemplate'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
@@ -33,12 +33,25 @@ const router = useRouter()
 const templates = ref<TemplateSummary[] | null>(null)
 const errorText = ref<string | null>(null)
 
-// 新建弹窗态：名字草稿预填默认名、错误文案与在途态全由本页持有（组件纯呈现）
+// 新建弹窗态：名字草稿预填默认名、错误文案与在途态全由本页持有（组件纯呈现）。
+// 数据源选择（随建随绑）：候选在弹窗打开时拉取（null = 未拉取/拉取失败 → 弹窗
+// 数据源段不渲染，创建流程不被阻塞）；选中 id 缺省 null = 暂不绑定
 const NEW_TEMPLATE_DEFAULT_NAME = '未命名模板'
 const newOpen = ref(false)
 const newName = ref(NEW_TEMPLATE_DEFAULT_NAME)
 const newError = ref<string | null>(null)
 const newCreating = ref(false)
+const newSources = ref<DataSourceSummary[] | null>(null)
+const newSourceId = ref<number | null>(null)
+
+/** 弹窗打开即刷新数据源候选（失败容忍：保持 null，段不渲染、主流程零感知） */
+async function refreshNewSources(): Promise<void> {
+    try {
+        newSources.value = await api.listDataSources()
+    } catch {
+        // 列表拉取失败不阻塞新建（数据源是可选绑定，可稍后在编辑器内补绑）
+    }
+}
 
 // 新建入口折叠态：两种新建方式收进一个触发钮的菜单——选中、点外（透明截断
 // 层）与 Esc 均收起，收起后再由对应弹窗接管
@@ -60,6 +73,7 @@ const imageOpen = ref(false)
 const imageName = ref(NEW_TEMPLATE_DEFAULT_NAME)
 const imageError = ref<string | null>(null)
 const imageCreating = ref(false)
+const imageSourceId = ref<number | null>(null)
 const pendingImage = ref<{ file: File; width: number; height: number } | null>(null)
 const pendingImageName = ref<string | null>(null)
 const pendingImageInfo = ref<string | null>(null)
@@ -90,6 +104,8 @@ onMounted(async () => {
 function openNewTemplate(): void {
     newName.value = NEW_TEMPLATE_DEFAULT_NAME
     newError.value = null
+    newSourceId.value = null
+    void refreshNewSources()
     newOpen.value = true
 }
 
@@ -103,7 +119,7 @@ function closeNewTemplate(): void {
 async function runCreateBlank(): Promise<void> {
     if (newCreating.value) return
     newCreating.value = true
-    const result = await createBlankTemplate({ name: newName.value, createTemplate: api.createTemplate })
+    const result = await createBlankTemplate({ name: newName.value, dataSourceId: newSourceId.value, createTemplate: api.createTemplate })
     newCreating.value = false
     if (!result.ok) {
         newError.value = result.message
@@ -119,6 +135,8 @@ function openImageTemplate(): void {
     pendingImage.value = null
     pendingImageName.value = null
     pendingImageInfo.value = null
+    imageSourceId.value = null
+    void refreshNewSources()
     imageOpen.value = true
 }
 
@@ -153,6 +171,7 @@ async function runCreateImage(): Promise<void> {
     const selected = pendingImage.value
     const result = await createImageTemplate({
         name: imageName.value,
+        dataSourceId: imageSourceId.value,
         image: selected === null ? null : {
             name: selected.file.name,
             mime: selected.file.type,
@@ -592,15 +611,18 @@ function riseDelay(index: number): string {
                 <p class="font-mono text-[11px] tracking-[0.25em] text-zinc-600">CANVAS NEXT · 证书批量生成示例</p>
             </footer>
 
-            <!-- 新建空白模板弹窗（spec §4.1，22 票）：名字草稿/错误/在途态本页持有 -->
+            <!-- 新建空白模板弹窗（spec §4.1，22 票）：名字草稿/错误/在途态本页持有；
+                 数据源候选打开时拉取（随建随绑，可选） -->
             <NamePromptDialog
                 v-model:name="newName"
+                v-model:data-source-id="newSourceId"
                 :open="newOpen"
                 :saving="newCreating"
                 :error="newError"
+                :data-source-options="newSources ?? undefined"
                 title="新建空白模板"
                 label="模板名"
-                note="创建含单帧空白 A4 竖版画布（794×1123）的新模板，成功后进入编辑器；数据源与流链可在编辑器内绑定。取消不建。"
+                note="创建含单帧空白 A4 竖版画布（794×1123）的新模板，成功后进入编辑器。取消不建。"
                 confirm-text="创建"
                 confirm-busy-text="创建中…"
                 @confirm="runCreateBlank"
@@ -608,14 +630,16 @@ function riseDelay(index: number): string {
             />
 
             <!-- 以图片新建弹窗（spec §4.1，24 票）：名字/已选底图/错误/在途态本页持有；
-                 确认 = 先上传后建模板（画布宽高 = 图片像素宽高） -->
+                 确认 = 先上传后建模板（画布宽高 = 图片像素宽高）+ 随建随绑数据源 -->
             <ImageTemplateDialog
                 v-model:name="imageName"
+                v-model:data-source-id="imageSourceId"
                 :open="imageOpen"
                 :saving="imageCreating"
                 :error="imageError"
                 :image-name="pendingImageName"
                 :image-info="pendingImageInfo"
+                :data-source-options="newSources ?? undefined"
                 title="以图片新建模板"
                 label="模板名"
                 note="创建单帧模板：画布宽高取所选图片的像素宽高，图片作为「底图」图层铺满画布；确认后上传图片并创建模板，成功后进入编辑器。未选图不建，取消不建。"

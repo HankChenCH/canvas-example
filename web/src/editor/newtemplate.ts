@@ -3,12 +3,13 @@
 // layers 空、帧名「第 1 帧」——形状与 §6.2 冒烟断言 4 同源（服务端保存预检与前端
 // decodeGraph 双吃）；底图图 = 画布宽高取图片像素宽高、单层 ImageLayer「底图」铺满
 // 画布（wire 逐键同 @hankchen/canvas encodeGraph canonical 输出，测试以往返恒等锁死）。
-// flowChain 显式 null = 空链 = 纯文档管线（spec §3.1）；不带 dataSourceId（spec
-// §2.4 #3，数据源是独立实体，后续经编辑器抽屉绑定）。与 Vue/DOM 解耦——尺寸解码
+// flowChain 显式 null = 空链 = 纯文档管线（spec §3.1）；dataSourceId 随建随绑
+// （新建弹窗可选数据源；null = 暂不绑定 → 载荷省略该键，稍后经编辑器抽屉绑定）。
+// 与 Vue/DOM 解耦——尺寸解码
 // （createImageBitmap）留宿主，编排消费已解码字节 + 像素尺寸；HTTP 客户端经调用方
 // 注入（测试免 mock fetch），失败文案稳定码在前、不向上抛。
 import { formatApiError } from '../api'
-import type { TemplateRecord, TemplateWritePayload } from '../api'
+import type { TemplateCreatePayload, TemplateRecord } from '../api'
 
 /** 空白帧名（域语言是帧，帧 tab 显同名） */
 export const BLANK_FRAME_NAME = '第 1 帧'
@@ -16,8 +17,10 @@ export const BLANK_FRAME_NAME = '第 1 帧'
 export const BLANK_CANVAS_WIDTH = 794
 export const BLANK_CANVAS_HEIGHT = 1123
 
-/** 空白模板载荷（spec §2.4 #3）：POST /api/templates 直接可用 */
-export function blankTemplatePayload(name: string): TemplateWritePayload {
+/** 空白模板载荷（spec §2.4 #3）：POST /api/templates 直接可用。dataSourceId
+ *  null = 暂不绑定 → 载荷省略该键（与服务端 *int64 缺省 nil 同语义），非 null =
+ *  随建随绑（服务端做存在性先验） */
+export function blankTemplatePayload(name: string, dataSourceId: number | null): TemplateCreatePayload {
     return {
         name,
         canvases: [
@@ -27,6 +30,7 @@ export function blankTemplatePayload(name: string): TemplateWritePayload {
             },
         ],
         flowChain: null,
+        ...(dataSourceId === null ? {} : { dataSourceId }),
     }
 }
 
@@ -42,7 +46,8 @@ export const BASE_IMAGE_PRIORITY = 100
 export function imageTemplatePayload(
     name: string,
     image: { src: string; width: number; height: number },
-): TemplateWritePayload {
+    dataSourceId: number | null,
+): TemplateCreatePayload {
     return {
         name,
         canvases: [
@@ -76,6 +81,7 @@ export function imageTemplatePayload(
             },
         ],
         flowChain: null,
+        ...(dataSourceId === null ? {} : { dataSourceId }),
     }
 }
 
@@ -83,15 +89,16 @@ export type CreateTemplateResult = { ok: true; record: TemplateRecord } | { ok: 
 
 /** 从零建模板编排：名字裁剪 → POST /templates → 全量记录。空名就地拒绝不打
  *  服务端（先问名再建；弃置模板可经列表页卡片删除回收，spec §2.4 #10）；
- *  失败返回稳定码在前的可读文案。 */
+ *  dataSourceId 随建随绑透传（null = 暂不绑定）；失败返回稳定码在前的可读文案。 */
 export async function createBlankTemplate(params: {
     name: string
-    createTemplate: (payload: TemplateWritePayload) => Promise<TemplateRecord>
+    dataSourceId: number | null
+    createTemplate: (payload: TemplateCreatePayload) => Promise<TemplateRecord>
 }): Promise<CreateTemplateResult> {
     const name = params.name.trim()
     if (!name) return { ok: false, message: '模板名不能为空' }
     try {
-        return { ok: true, record: await params.createTemplate(blankTemplatePayload(name)) }
+        return { ok: true, record: await params.createTemplate(blankTemplatePayload(name, params.dataSourceId)) }
     } catch (e) {
         return { ok: false, message: formatApiError(e) }
     }
@@ -108,14 +115,16 @@ export interface BaseImageFile {
 }
 
 /** 底图建模板编排（24 票）：名字与选图就地校验 → POST /assets 上传 →
- *  POST /templates 建模板。先传后建——上传打回则无模板落地；建模板打回时
- *  已传资源成为孤儿文件（/api/assets 无 DELETE，与编辑器上传即写 graph 同
- *  口径，demo 粒度接受）。失败返回稳定码在前的可读文案。 */
+ *  POST /templates 建模板（dataSourceId 随建随绑透传，null = 暂不绑定）。先传后建
+ *  ——上传打回则无模板落地；建模板打回时已传资源成为孤儿文件（/api/assets 无
+ *  DELETE，与编辑器上传即写 graph 同口径，demo 粒度接受）。失败返回稳定码在前的
+ *  可读文案。 */
 export async function createImageTemplate(params: {
     name: string
+    dataSourceId: number | null
     image: BaseImageFile | null
     uploadAsset: (file: { name: string; mime: string; bytes: Uint8Array }) => Promise<{ url: string }>
-    createTemplate: (payload: TemplateWritePayload) => Promise<TemplateRecord>
+    createTemplate: (payload: TemplateCreatePayload) => Promise<TemplateRecord>
 }): Promise<CreateTemplateResult> {
     const name = params.name.trim()
     if (!name) return { ok: false, message: '模板名不能为空' }
@@ -132,7 +141,7 @@ export async function createImageTemplate(params: {
                 src: url,
                 width: params.image.width,
                 height: params.image.height,
-            })),
+            }, params.dataSourceId)),
         }
     } catch (e) {
         return { ok: false, message: formatApiError(e) }
