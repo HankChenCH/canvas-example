@@ -34,6 +34,12 @@ import './tourDriver.css'
 /** popover 挂的令牌类名：样式在 tourDriver.css（cn-* 令牌暗色主题） */
 export const TOUR_POPOVER_CLASS = 'cn-tour-popover'
 
+/** driver.js popover 内容根节点的选择器：库创建 popover 时写死 id =
+ *  driver-popover-content（1.10.1 源码 S() 内 m.id 赋值）。宿主快捷键门（03 票）
+ *  以此识别「导游自身 UI 内的按键」放行焦点按钮激活；值锁库内契约，升级 driver.js
+ *  时按 spec §4 走查清单一并核对。 */
+export const TOUR_POPOVER_CONTENT_SELECTOR = '#driver-popover-content'
+
 /** driver.js 单步形态（TourStep 映射目标）：element 可省 = 居中弹层 */
 export type TourDriverStep = DriveStep
 

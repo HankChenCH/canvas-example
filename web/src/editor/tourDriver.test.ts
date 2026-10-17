@@ -5,7 +5,13 @@
 import { describe, expect, it } from 'vitest'
 
 import { TOUR_STEPS } from './tour'
-import { classifyDestroy, toDriverSteps, type TourDriverStep } from './tourDriver'
+import { TOUR_POPOVER_CONTENT_SELECTOR, classifyDestroy, toDriverSteps, type TourDriverStep } from './tourDriver'
+
+describe('TOUR_POPOVER_CONTENT_SELECTOR（库内契约锁）', () => {
+    it('指向 driver.js popover 内容根节点写死的 id（升级 driver.js 时按 spec §4 核对）', () => {
+        expect(TOUR_POPOVER_CONTENT_SELECTOR).toBe('#driver-popover-content')
+    })
+})
 
 describe('toDriverSteps（TourStep → DriveStep 映射）', () => {
     it('有锚步：裸 data-* 属性名包 [] 成属性选择器，文案进 popover', () => {

@@ -152,3 +152,16 @@ export function filterExistingSteps(steps: readonly TourStep[], doc: TourDoc): T
         }
     })
 }
+
+/** 触发门锚点半边（spec §2.4「轻导首尾锚点均在 DOM」，03 票宿主消费）：第一个与
+ *  最后一个带锚步的锚都在 doc 上查得到才起步——顶栏/工具栏静态锚就位的代理读数
+ *  （台面未挂/载入失败 = 锚缺席 → 触发门静默不弹）。中间锚缺席不挡起步——运行期
+ *  跳步归 driver 的 skipMissingElement（02 票）。判定对象是带锚步，无锚居中步
+ *  （欢迎/收尾）不参与；全为无锚步的异常配置与空清单恒 true（锚点判定不拦无锚
+ *  导游）。 */
+export function tourEndpointsReady(steps: readonly TourStep[], doc: TourDoc): boolean {
+    const anchored = steps.filter((step) => step.selector !== undefined)
+    if (anchored.length === 0) return true
+    const present = new Set(filterExistingSteps(anchored, doc))
+    return present.has(anchored[0]!) && present.has(anchored[anchored.length - 1]!)
+}

@@ -10,6 +10,8 @@ import {
     TOUR_STORAGE_KEY,
     TOUR_STEPS,
     TOUR_VERSION,
+    tourAnchorSelector,
+    tourEndpointsReady,
     writeSeenVersion,
     type TourDoc,
     type TourStep,
@@ -131,6 +133,55 @@ describe('filterExistingSteps（缺锚跳步纯函数）', () => {
 
     it('querySelector 抛错按缺锚跳步，不报错', () => {
         expect(filterExistingSteps(steps, { querySelector: () => { throw new Error('boom') } })).toEqual([steps[0]])
+    })
+})
+
+describe('tourEndpointsReady（触发门锚点半边「轻导首尾锚点均在 DOM」，03 票/spec §2.4）', () => {
+    const steps: TourStep[] = [
+        { id: 'welcome', title: '欢迎', text: '无锚居中步' },
+        { id: 'first', title: 'F', text: '…', selector: 'data-first' },
+        { id: 'mid', title: 'M', text: '…', selector: 'data-mid' },
+        { id: 'last', title: 'L', text: '…', selector: 'data-last' },
+        { id: 'finish', title: '收尾', text: '无锚居中步' },
+    ]
+
+    it('首尾锚点均在 → true（中间锚缺席不挡起步——运行期跳步归 driver）', () => {
+        expect(tourEndpointsReady(steps, fakeDoc(['[data-first]', '[data-last]']))).toBe(true)
+        expect(tourEndpointsReady(steps, fakeDoc(['[data-first]', '[data-mid]', '[data-last]']))).toBe(true)
+    })
+
+    it('首锚或尾锚缺席 → false（台面未挂/载入慢 = 触发门静默不弹）', () => {
+        expect(tourEndpointsReady(steps, fakeDoc(['[data-last]']))).toBe(false)
+        expect(tourEndpointsReady(steps, fakeDoc(['[data-first]']))).toBe(false)
+        expect(tourEndpointsReady(steps, fakeDoc([]))).toBe(false)
+    })
+
+    it('判定对象是带锚步的首尾，不是清单首尾步（无锚居中步不参与判定）', () => {
+        // 尾步无锚：按「清单尾步在 DOM」解释会恒真（无锚步查询恒保留）；按带锚步
+        // 解释，唯一带锚步（兼任首尾带锚步）缺席即 false
+        const tailUnanchored: TourStep[] = [
+            { id: 'welcome', title: '欢迎', text: '无锚居中步' },
+            { id: 'only', title: 'F', text: '…', selector: 'data-only' },
+            { id: 'finish', title: '收尾', text: '无锚居中步' },
+        ]
+        expect(tourEndpointsReady(tailUnanchored, fakeDoc(['[data-only]']))).toBe(true)
+        expect(tourEndpointsReady(tailUnanchored, fakeDoc([]))).toBe(false)
+    })
+
+    it('全为无锚步（异常配置）恒 true；空清单恒 true（锚点判定不拦无锚导游）', () => {
+        expect(tourEndpointsReady([steps[0]!, steps[4]!], fakeDoc([]))).toBe(true)
+        expect(tourEndpointsReady([], fakeDoc([]))).toBe(true)
+    })
+
+    it('querySelector 抛错按锚缺席处理，不报错', () => {
+        expect(tourEndpointsReady(steps, { querySelector: () => { throw new Error('boom') } })).toBe(false)
+    })
+
+    it('对真实 TOUR_STEPS：全锚在场 → true；缺任一首尾锚 → false', () => {
+        const all = TOUR_STEPS.flatMap((s) => (s.selector === undefined ? [] : [tourAnchorSelector(s.selector)]))
+        expect(tourEndpointsReady(TOUR_STEPS, fakeDoc(all))).toBe(true)
+        expect(tourEndpointsReady(TOUR_STEPS, fakeDoc(all.slice(1)))).toBe(false)
+        expect(tourEndpointsReady(TOUR_STEPS, fakeDoc(all.slice(0, -1)))).toBe(false)
     })
 })
 
