@@ -1,0 +1,122 @@
+/*
+ * 功能导游 popover 主题（feature-tour 票 02）：driver.js 弹层挂 cn-tour-popover
+ * 类（tourDriver.ts 的 TOUR_POPOVER_CLASS），用 cn-* 令牌对齐应用暗色视觉。
+ *
+ * - 双类名选择器（.driver-popover.cn-tour-popover）压过 driver.css 的单类基样式，
+ *   无需 !important（panel-theme.css 同款手法）；本文件在 driver.css 之后载入
+ *   （tourDriver.ts 的 import 序）。
+ * - 令牌值与 DataSourceDrawer 自带主题同源：popover 由 driver 直挂 body，脱离
+ *   宿主 DOM 子树，主题必须自带（HelpDialog 先例）。
+ * - z-index 不另设：driver.css 基样式自带 z-index: 1000000000，遮罩 svg 内联
+ *   10000，均高于 cn-* 浮层最高层（结果抽屉放大覆盖层 50）——层级表见
+ *   tourDriver.ts 文件头。
+ * - 箭头颜色只按四个 side 类各自覆写可见边：一次性覆写四边会以更高优先级压掉
+ *   driver.css side 类里其余三边的 transparent，箭头会变成方块。
+ */
+.driver-popover.cn-tour-popover {
+    --cn-bg: #0b1220;
+    --cn-bg-elevated: #101a2e;
+    --cn-fg: #e6edf7;
+    --cn-fg-2: #c3cddd;
+    --cn-muted: #7c8ca5;
+    --cn-line: #1e2a40;
+    --cn-line-strong: #2a3a58;
+    --cn-accent: #38bdf8;
+    --cn-on-accent: #06202b;
+    --cn-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    background-color: var(--cn-bg-elevated);
+    border: 1px solid var(--cn-line);
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(2, 6, 23, 0.6);
+    color: var(--cn-fg);
+    font-family: system-ui, sans-serif;
+    max-width: 320px;
+    min-width: 260px;
+}
+
+.driver-popover.cn-tour-popover .driver-popover-title {
+    color: var(--cn-fg);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.driver-popover.cn-tour-popover .driver-popover-description {
+    color: var(--cn-fg-2);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.driver-popover.cn-tour-popover .driver-popover-close-btn {
+    color: var(--cn-muted);
+}
+
+.driver-popover.cn-tour-popover .driver-popover-close-btn:hover,
+.driver-popover.cn-tour-popover .driver-popover-close-btn:focus-visible {
+    color: var(--cn-fg);
+}
+
+/* 进度读数「2 / 7」：应用状态栏读数同族的等宽小字 */
+.driver-popover.cn-tour-popover .driver-popover-progress-text {
+    color: var(--cn-muted);
+    font-family: var(--cn-font-mono);
+    font-size: 11px;
+}
+
+/* 底部按钮基座 = 顶栏 ghost 钮语言；下一步/完成 = 顶栏 primary accent 钮 */
+.driver-popover.cn-tour-popover .driver-popover-footer-btn {
+    background: transparent;
+    border: 1px solid var(--cn-line);
+    border-radius: 8px;
+    color: var(--cn-fg-2);
+    font-size: 13px;
+    padding: 5px 12px;
+}
+
+.driver-popover.cn-tour-popover .driver-popover-footer-btn:hover,
+.driver-popover.cn-tour-popover .driver-popover-footer-btn:focus {
+    background: rgba(148, 163, 184, 0.07);
+    border-color: var(--cn-line-strong);
+    color: var(--cn-fg);
+}
+
+.driver-popover.cn-tour-popover .driver-popover-next-btn {
+    background: var(--cn-accent);
+    border-color: var(--cn-accent);
+    color: var(--cn-on-accent);
+    font-weight: 600;
+}
+
+.driver-popover.cn-tour-popover .driver-popover-next-btn:hover,
+.driver-popover.cn-tour-popover .driver-popover-next-btn:focus {
+    background: var(--cn-accent);
+    color: var(--cn-on-accent);
+    filter: brightness(1.12);
+}
+
+/* 箭头可见边随弹层底色（说明见文件头，只覆写各 side 的可见边） */
+.driver-popover.cn-tour-popover .driver-popover-arrow-side-top {
+    border-top-color: var(--cn-bg-elevated);
+}
+
+.driver-popover.cn-tour-popover .driver-popover-arrow-side-bottom {
+    border-bottom-color: var(--cn-bg-elevated);
+}
+
+.driver-popover.cn-tour-popover .driver-popover-arrow-side-left {
+    border-left-color: var(--cn-bg-elevated);
+}
+
+.driver-popover.cn-tour-popover .driver-popover-arrow-side-right {
+    border-right-color: var(--cn-bg-elevated);
+}
+
+/* 减动效：应用氛围层同款姿态（style.css pc-rise 先例），只灭 CSS 淡入；
+   遮罩/弹层的位移动画是库内 rAF 驱动，轻导步间位移可接受 */
+@media (prefers-reduced-motion: reduce) {
+    .driver-fade .driver-overlay,
+    .driver-fade .driver-popover {
+        animation: none;
+    }
+}

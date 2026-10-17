@@ -133,14 +133,20 @@ export const TOUR_STEPS: TourStep[] = [
     },
 ]
 
+/** 裸 data-* 属性名 → 属性选择器（[data-*]）：锚点查询形态的单点（spec §2.5
+ *  锚点纪律的机械半边）——filterExistingSteps 与 driver 接线（tourDriver.ts）共用，
+ *  查询形态改动只落此处。 */
+export function tourAnchorSelector(selector: string): string {
+    return `[${selector}]`
+}
+
 /** 缺锚过滤（spec §2.2「缺锚跳步不报错」）：selector 在 doc 上查不到的步跳过、
- *  保序；无锚步（居中）恒保留。查询形态 = [selector] 属性选择器——selector 字段
- *  存裸 data-* 属性名，此处统一包 []，宿主接线不必再拼。 */
+ *  保序；无锚步（居中）恒保留。查询形态经 tourAnchorSelector 单点包 []。 */
 export function filterExistingSteps(steps: readonly TourStep[], doc: TourDoc): TourStep[] {
     return steps.filter((step) => {
         if (step.selector === undefined) return true
         try {
-            return doc.querySelector(`[${step.selector}]`) !== null
+            return doc.querySelector(tourAnchorSelector(step.selector)) !== null
         } catch {
             return false
         }

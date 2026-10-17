@@ -23,6 +23,9 @@ importers:
       '@hankchen/canvas-editor-vue':
         specifier: ^0.6.1
         version: 0.6.1(vue@3.5.43(typescript@5.9.3))
+      driver.js:
+        specifier: ^1.10.1
+        version: 1.10.1
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)
@@ -429,6 +432,9 @@ packages:
 
   dijkstrajs@1.0.3:
     resolution: {integrity: sha512-qiSlmBq9+BCdCA/L46dw8Uy93mloxsPSbwnm5yrKn2vMPiy8KyAskTF6zuV/j5BMsmOGZDPs7KjU+mjb670kfA==}
+
+  driver.js@1.10.1:
+    resolution: {integrity: sha512-mpcJ15eIRWnGMykeIWjr0CdQF00/JzImFOEXy/VponYgMbP/y46t24MPBDO3PV/rH6CjdSe3T7WQ9cP3GvEPdQ==}
 
   emoji-regex@8.0.0:
     resolution: {integrity: sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A==}
@@ -1204,6 +1210,8 @@ snapshots:
   detect-libc@2.1.2: {}
 
   dijkstrajs@1.0.3: {}
+
+  driver.js@1.10.1: {}
 
   emoji-regex@8.0.0: {}
 

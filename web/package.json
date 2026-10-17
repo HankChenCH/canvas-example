@@ -16,6 +16,7 @@
         "@hankchen/canvas-browser-renderer": "^0.1.0",
         "@hankchen/canvas-editor": "^0.7.1",
         "@hankchen/canvas-editor-vue": "^0.6.1",
+        "driver.js": "^1.10.1",
         "vue": "^3.5.43",
         "vue-router": "^4"
     },
