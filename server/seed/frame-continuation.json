@@ -130,7 +130,8 @@
                   "backgroundColor": "#e8ecef"
                 },
                 "align": { "horizontal": "center", "vertical": "center" },
-                "position": { "x": 0, "y": 0, "position": "top-left" }
+                "position": { "x": 0, "y": 0, "position": "top-left" },
+                "fit": "contain"
               },
               "data": { "valueType": "ExpressionValue", "expression": "{{row.photo}}", "value": "{{row.photo}}" }
             }

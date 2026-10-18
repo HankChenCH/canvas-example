@@ -2,7 +2,8 @@
 # spec §6.2 curl 冒烟(契约面),双轨通用:compose 轨(cd example && docker compose up
 # --build)或 dev 轨(cd example/server && go run .)任一起服务后运行。
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080(compose 轨验收口径)。
-# 断言 1–3(11 票)读路径;4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
+# 断言 1–3(11 票)读路径(组 3 另含图片层适配 contain 断言,image-layer-fit 06 票,
+# ADR 0023);4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
 # 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效;
 # 12(卡片操作修订 + 版本化)DELETE /api/templates/{id}:渲染前先 publish(缺省
 # 渲染语义 = 最新已发布,未发布 409,spec §4);204 + 渲染记录级联清 + 版本行
@@ -95,6 +96,26 @@ DS_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding
 get "/api/datasources/$DS_ID" "$TMP/ds.json"
 assert_json "$TMP/ds.json" 'd["schema"] is not None and d["data"] is not None'
 assert_json "$TMP/ds.json" 'd["data"]["certificates"] and len(d["data"]["certificates"]) == 5'
+# 图片层适配 contain(ADR 0023,本期 06 票):照片格(表格行内 160×400 表达式图片
+# {{row.photo}})spec.fit=contain,两帧同构;徽标位(72×72)保持 cover 缺省不落键,
+# 作现行裁切对照;dataset 行 1 照片换 320×160 横幅比例——错形进盒不再裁切、
+# 空隙露盒背景灰(渲染目验属人工轨,wire 契约面在此钉死)
+assert_json "$TMP/template.json" 'all(
+	(cells := next(l for l in c["graph"]["layers"] if l["name"] == "证书卡片区")["template"]["cells"])
+	and cells[0]["content"]["data"]["expression"] == "{{row.photo}}"
+	and cells[0]["content"]["spec"].get("fit") == "contain"
+	for c in d["canvases"]
+)'
+assert_json "$TMP/template.json" '"fit" not in next(l for l in d["canvases"][0]["graph"]["layers"] if l["name"] == "机构徽标")["spec"]'
+assert_json "$TMP/ds.json" 'd["data"]["certificates"][0]["photo"] == "assets/u/banner-photo.png"'
+get /assets/u/banner-photo.png "$TMP/banner.png"
+python3 -c '
+import struct, sys
+f = open(sys.argv[1], "rb")
+assert f.read(16) == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "不是 PNG 或头部异常"
+w, h = struct.unpack(">II", f.read(8))
+assert (w, h) == (320, 160), "横幅照片应为 320x160(与照片格 160x400 错形),实得 %dx%d" % (w, h)
+' "$TMP/banner.png"
 
 echo "== 4/13 POST /api/templates(最小模板 → 201 自增 id,未绑数据源) =="
 cat > "$TMP/min-template.json" <<'EOF'
