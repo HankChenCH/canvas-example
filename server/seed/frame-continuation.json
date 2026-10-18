@@ -1,23 +1,6 @@
 {
-  "canvas": { "width": 794, "height": 1123 },
+  "canvas": { "width": 794, "height": 1123, "background": { "color": "#ffffff" } },
   "layers": [
-    {
-      "type": "ImageLayer",
-      "name": "页面底色",
-      "priority": 100,
-      "spec": {
-        "shape": {
-          "width": 794, "height": 1123, "autoWidth": false, "autoHeight": false,
-          "lineHeight": 1,
-          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
-          "border": { "top": null, "bottom": null, "left": null, "right": null },
-          "backgroundColor": "#ffffff"
-        },
-        "align": { "horizontal": "left", "vertical": "top" },
-        "position": { "x": 0, "y": 0, "position": "top-left" }
-      },
-      "data": { "valueType": "StaticValue", "value": null }
-    },
     {
       "type": "ImageLayer",
       "name": "续页色带",

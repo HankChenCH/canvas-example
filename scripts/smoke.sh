@@ -16,9 +16,10 @@
 # 响应形状与 POST render 一致、draft 行 version null、无记录模板空数组。
 # 任一断言失败非零退出(spec §6.2)。出网注意:渲染走 picsum 徽标(spec §5.3)。
 # 注意:断言 3/8 依赖种子模板仍绑种子数据源(3 页容量数学)——UI 里重绑/改数据源
-# 后会失真,属预期;版本化轨断言依赖重置运行库(存量回填使 seed 持 v1,本轨首发
-# publish 拿 v2;发布幂等断言在复跑时变 duplicate),重置:停服删 server/data/app.db
-# 重启(播种自动补回)。
+# 后会失真,属预期;断言 3 的背景形态断言(ADR 0022 迁移)依赖种子已是画布背景
+# 新形态,存量库(升级前播种的旧「页面底色」层形态)同需重置;版本化轨断言依赖
+# 重置运行库(存量回填使 seed 持 v1,本轨首发 publish 拿 v2;发布幂等断言在复跑时
+# 变 duplicate),重置:停服删 server/data/app.db 重启(播种自动补回)。
 set -eu
 
 BASE="${1:-http://localhost:8080}"
@@ -84,6 +85,10 @@ echo "== 3/13 GET /api/templates/{SEED_ID} =="
 get "/api/templates/$SEED_ID" "$TMP/template.json"
 assert_json "$TMP/template.json" 'len(d["canvases"]) == 2 and [c["name"] for c in d["canvases"]] == ["主页", "续页"]'
 assert_json "$TMP/template.json" 'isinstance(d["flowChain"], list) and len(d["flowChain"]) == 2'
+# 画布背景迁移(ADR 0022):种子两帧白色底已迁 canvas.background——background
+# 落键且仅 color 分量(wire 条件写键),图层树不再有「页面底色」垫底层
+assert_json "$TMP/template.json" 'all(c["graph"]["canvas"].get("background") == {"color": "#ffffff"} for c in d["canvases"])'
+assert_json "$TMP/template.json" 'all(all(l["name"] != "页面底色" for l in c["graph"]["layers"]) for c in d["canvases"])'
 # 数据源是独立实体:模板持引用(spec §2.4 数据源段),引用的实体可回读且含 schema/data
 assert_json "$TMP/template.json" 'isinstance(d["dataSourceId"], int) and d["dataSourceId"] > 0'
 DS_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["dataSourceId"])' "$TMP/template.json")"

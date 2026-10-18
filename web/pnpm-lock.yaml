@@ -5,24 +5,24 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@hankchen/canvas-editor': ^0.7.1
+  '@hankchen/canvas-editor': ^0.8.0
 
 importers:
 
   .:
     dependencies:
       '@hankchen/canvas':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@hankchen/canvas-browser-renderer':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@hankchen/canvas-editor':
-        specifier: ^0.7.1
-        version: 0.7.1
+        specifier: ^0.8.0
+        version: 0.8.0
       '@hankchen/canvas-editor-vue':
-        specifier: ^0.6.1
-        version: 0.6.1(vue@3.5.43(typescript@5.9.3))
+        specifier: ^0.7.0
+        version: 0.7.0(vue@3.5.43(typescript@5.9.3))
       driver.js:
         specifier: ^1.10.1
         version: 1.10.1
@@ -77,19 +77,19 @@ packages:
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
 
-  '@hankchen/canvas-browser-renderer@0.1.0':
-    resolution: {integrity: sha512-MYt+uztz03wKitkOZUoWwhJU0ANxj/2Ah1XQGOGkBpWANN4NNoVFY0jbi8a+LchxiZJiWWbZso7vGTPQSgYcPA==}
+  '@hankchen/canvas-browser-renderer@0.2.0':
+    resolution: {integrity: sha512-des8VfOoht/k7rnnqNpxmOgtv3BB/s9lEZBLA1K9mi2/f8DRourW9TJXp/N4gpzaUubxw7tfhvyhz1ApXhCeHA==}
 
-  '@hankchen/canvas-editor-vue@0.6.1':
-    resolution: {integrity: sha512-K1/dL5xReOQ6Y6vTnxHx19foWdmsSaOUO7nyer5PltL50cxnmIUq+qR8rpqyNEp66WfHc1Fptcj3fWZNN5IX5A==}
+  '@hankchen/canvas-editor-vue@0.7.0':
+    resolution: {integrity: sha512-3ArcBdLbtMzVvPILHWB7TAjBiY1lMsLrFaxNOyYNTE5B6o0ZYdZjtSqf2N3HmW/xY0lnKWyrJ6tojwH7WSv4FQ==}
     peerDependencies:
       vue: ^3.5.0
 
-  '@hankchen/canvas-editor@0.7.1':
-    resolution: {integrity: sha512-89YtQvHyUkby839JJGbL6jNZWhAs4iodM1EFV61uFcWChNVTbru3tppQB+zgF5vv+yg3oMEF16KLx9sFPHAYmQ==}
+  '@hankchen/canvas-editor@0.8.0':
+    resolution: {integrity: sha512-QpSfXVwYDn02RLInHgF3ZEqgNGQJAqtO2ckCES9w6roc27mgu0eJdeI7ZBV2tptgm4g3HbCLoisCNvHEfsgIUQ==}
 
-  '@hankchen/canvas@0.1.0':
-    resolution: {integrity: sha512-bPdyA1TcfptqE6yVExqsZZjh9qNQHT3g2M4ecHXMId8/ZQLizUmqUejkwurrTMk+0cY59CD+ubRdjNqM1Z1i4Q==}
+  '@hankchen/canvas@0.2.0':
+    resolution: {integrity: sha512-PwxWyDiOZcyHUIjAlHSm7r8n8zDu/2lnXxIT/J2GPcOltMLzc4clC2tcagk8XwcVSwSXKKPNqbVRkPFcFn9bAw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -906,24 +906,24 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@hankchen/canvas-browser-renderer@0.1.0':
+  '@hankchen/canvas-browser-renderer@0.2.0':
     dependencies:
-      '@hankchen/canvas': 0.1.0
+      '@hankchen/canvas': 0.2.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-editor-vue@0.6.1(vue@3.5.43(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@0.7.0(vue@3.5.43(typescript@5.9.3))':
     dependencies:
-      '@hankchen/canvas-editor': 0.7.1
+      '@hankchen/canvas-editor': 0.8.0
       '@lucide/vue': 1.58.0(vue@3.5.43(typescript@5.9.3))
       vue: 3.5.43(typescript@5.9.3)
 
-  '@hankchen/canvas-editor@0.7.1':
+  '@hankchen/canvas-editor@0.8.0':
     dependencies:
-      '@hankchen/canvas': 0.1.0
-      '@hankchen/canvas-browser-renderer': 0.1.0
+      '@hankchen/canvas': 0.2.0
+      '@hankchen/canvas-browser-renderer': 0.2.0
       immer: 11.1.21
 
-  '@hankchen/canvas@0.1.0': {}
+  '@hankchen/canvas@0.2.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

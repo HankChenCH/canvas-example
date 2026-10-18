@@ -1,8 +1,9 @@
-// 新建模板纯逻辑（22 票空白入口 + 24 票底图快捷入口，spec §4.1 列表页新建）：
+// 新建模板纯逻辑（22 票空白入口 + 24 票图片快捷入口，spec §4.1 列表页新建）：
 // 载荷工厂 + 单调用编排。空白图 = 单帧 A4 竖版 794×1123（与证书场景 seed 同规格）、
 // layers 空、帧名「第 1 帧」——形状与 §6.2 冒烟断言 4 同源（服务端保存预检与前端
-// decodeGraph 双吃）；底图图 = 画布宽高取图片像素宽高、单层 ImageLayer「底图」铺满
-// 画布（wire 逐键同 @hankchen/canvas encodeGraph canonical 输出，测试以往返恒等锁死）。
+// decodeGraph 双吃）；图片建 = 画布宽高取图片像素宽高、图片声明为画布背景
+// （ADR 0022：canvas.background，cover 零裁切——底图图层惯例退役，spec Q6 迁移）
+// （wire 逐键同 @hankchen/canvas encodeGraph canonical 输出，测试以往返恒等锁死）。
 // flowChain 显式 null = 空链 = 纯文档管线（spec §3.1）；dataSourceId 随建随绑
 // （新建弹窗可选数据源；null = 暂不绑定 → 载荷省略该键，稍后经编辑器抽屉绑定）。
 // 与 Vue/DOM 解耦——尺寸解码
@@ -34,15 +35,11 @@ export function blankTemplatePayload(name: string, dataSourceId: number | null):
     }
 }
 
-/** 底图图层名（层面板显示与后续选中参照） */
-export const BASE_IMAGE_LAYER_NAME = '底图'
-/** 底图优先级：seed「页面底色」同约定（priority 最高 = 视觉最底）；编辑器画拉
- *  建层取现最小 −1，新层自然落底图之上 */
-export const BASE_IMAGE_PRIORITY = 100
-
-/** 底图模板载荷（24 票，spec §2.4 #3 载荷形状）：图片像素尺寸即画布与图层尺寸，
- *  src 为上传响应 url（前导斜杠形态，spec §2.2）原样进 data.value（StaticValue
- *  两键形态——PHP ImageLayer::fromGraph / Go n.Data.Value / JS decode 三端同源） */
+/** 图片模板载荷（24 票，spec §2.4 #3 载荷形状）：图片像素尺寸即画布尺寸，图片
+ *  声明为画布背景（ADR 0022：canvas.background，cover 铺满零裁切，不再产生底图
+ *  图层——spec Q6 迁移）；src 为上传响应 url（前导斜杠形态，spec §2.2）原样进
+ *  background.image。wire 条件写键：仅 image 分量落键（color 未设不落键，键序
+ *  color, image——与 @hankchen/canvas encodeGraph canonical 输出逐键一致） */
 export function imageTemplatePayload(
     name: string,
     image: { src: string; width: number; height: number },
@@ -54,29 +51,12 @@ export function imageTemplatePayload(
             {
                 name: BLANK_FRAME_NAME,
                 graph: {
-                    canvas: { width: image.width, height: image.height },
-                    layers: [
-                        {
-                            type: 'ImageLayer',
-                            name: BASE_IMAGE_LAYER_NAME,
-                            priority: BASE_IMAGE_PRIORITY,
-                            spec: {
-                                shape: {
-                                    width: image.width,
-                                    height: image.height,
-                                    autoWidth: false,
-                                    autoHeight: false,
-                                    lineHeight: 1,
-                                    padding: { top: 0, bottom: 0, left: 0, right: 0 },
-                                    border: { top: null, bottom: null, left: null, right: null },
-                                    backgroundColor: null,
-                                },
-                                align: { horizontal: 'left', vertical: 'top' },
-                                position: { x: 0, y: 0, position: 'top-left' },
-                            },
-                            data: { valueType: 'StaticValue', value: image.src },
-                        },
-                    ],
+                    canvas: {
+                        width: image.width,
+                        height: image.height,
+                        background: { image: image.src },
+                    },
+                    layers: [],
                 },
             },
         ],
@@ -104,9 +84,9 @@ export async function createBlankTemplate(params: {
     }
 }
 
-/** 底图图片描述：字节（上传用）+ 浏览器解码出的像素尺寸（画布/图层尺寸来源）。
+/** 待建背景图片描述：字节（上传用）+ 浏览器解码出的像素尺寸（画布尺寸来源）。
  *  由宿主在选图时经 createImageBitmap 解码组装（DOM 通道不进本模块）。 */
-export interface BaseImageFile {
+export interface BackgroundImageFile {
     name: string
     mime: string
     bytes: Uint8Array
@@ -114,7 +94,7 @@ export interface BaseImageFile {
     height: number
 }
 
-/** 底图建模板编排（24 票）：名字与选图就地校验 → POST /assets 上传 →
+/** 图片建模板编排（24 票）：名字与选图就地校验 → POST /assets 上传 →
  *  POST /templates 建模板（dataSourceId 随建随绑透传，null = 暂不绑定）。先传后建
  *  ——上传打回则无模板落地；建模板打回时已传资源成为孤儿文件（/api/assets 无
  *  DELETE，与编辑器上传即写 graph 同口径，demo 粒度接受）。失败返回稳定码在前的
@@ -122,13 +102,13 @@ export interface BaseImageFile {
 export async function createImageTemplate(params: {
     name: string
     dataSourceId: number | null
-    image: BaseImageFile | null
+    image: BackgroundImageFile | null
     uploadAsset: (file: { name: string; mime: string; bytes: Uint8Array }) => Promise<{ url: string }>
     createTemplate: (payload: TemplateCreatePayload) => Promise<TemplateRecord>
 }): Promise<CreateTemplateResult> {
     const name = params.name.trim()
     if (!name) return { ok: false, message: '模板名不能为空' }
-    if (!params.image) return { ok: false, message: '请先选择底图图片' }
+    if (!params.image) return { ok: false, message: '请先选择背景图片' }
     try {
         const { url } = await params.uploadAsset({
             name: params.image.name,

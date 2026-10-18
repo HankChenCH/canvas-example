@@ -13,9 +13,11 @@ import (
 	"example/server/internal/paths"
 )
 
-// normalizePages 渲染前把各页画布的本地资源引用归一为磁盘相对形态:对非远程
-// 引用把 paths.ToLocalPath 结果回写图层物化槽(SetResolvedSrc/SetResolvedFont),
-// 渲染端 DrawImage/DrawText 经 ResolvedSrc/ResolvedFont 读到的即是落盘路径。
+// normalizePages 渲染前把各页画布的本地资源引用归一为磁盘相对形态:画布级背景图
+// (ADR 0022,spec §5 example 段)与图层资源两条覆盖面——对非远程引用把
+// paths.ToLocalPath 结果回写(背景经画布级 SetBackground 重建实例,图层走物化槽
+// SetResolvedSrc/SetResolvedFont),渲染端 paintBackground/DrawImage/DrawText 读到
+// 的即是落盘路径。
 //
 // 时机在编译(hydrate 求值)之后:字面引用与表达式求值产物(dataset 行内上传
 // url,hydrate 改写 wire 后 FromGraph 重建产生)同一覆盖。容器下钻表→行→
@@ -24,14 +26,29 @@ import (
 // (layers 的 setter 标注「仅供 ResourceResolver 使用」对齐 PHP @internal,
 // 本步以组装层物化编排者身份行使同一职责,非业务方改图)。
 //
-// 只看图层原始引用(rawImg/font):远程 URL 不动(交回惰性物化下载),物化
-// 缓存路径(.cache/… 相对形态)天然不被剥斜杠,不存在误伤面。
+// 只看原始引用(背景 image 分量/图层 img/font):远程 URL 不动(交回惰性物化
+// 下载),物化缓存路径(.cache/… 相对形态)天然不被剥斜杠,不存在误伤面。
 func normalizePages(pages []*canvas.Canvas) {
 	for _, page := range pages {
+		normalizeBackground(page)
 		for _, l := range page.GetLayers() {
 			normalizeLayer(l)
 		}
 	}
+}
+
+// normalizeBackground 画布级背景图引用归一(ADR 0022 迁移;21 票图层级同门):
+// 本地引用剥前导斜杠,远程 URL 不动(渲染期经 resolver.ResolveBackground 惰性
+// 物化下载);无背景/背景图未设/空串不触碰。CanvasBackground 是不可变值对象
+// (无分量 setter),以重建实例整体回设——SetBackground 对空背景与无背景同态,
+// 此处归一只改 image 分量的路径形态,不改变有无背景语义
+func normalizeBackground(page *canvas.Canvas) {
+	bg := page.Background()
+	if bg == nil || bg.Image == nil || *bg.Image == "" || isRemoteURL(*bg.Image) {
+		return
+	}
+	local := paths.ToLocalPath(*bg.Image)
+	page.SetBackground(canvas.NewCanvasBackground(bg.Color, &local))
 }
 
 // normalizeLayer 递归归一单图层:图片/字体叶子就地回写,容器下钻;未知类型

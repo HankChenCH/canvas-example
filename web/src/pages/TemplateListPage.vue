@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 模板列表（spec §4.1 / 14 票目录页；22 票加从零新建入口；24 票加底图快捷入口；
+// 模板列表（spec §4.1 / 14 票目录页；22 票加从零新建入口；24 票加图片快捷入口；
 // 卡片操作修订加删除与直渲染；template-draft-publish 批 B ④ 加选版下拉）：卡片 =
 // name + updatedAt（GET /api/templates 摘要恰这三字段）+ 操作条。渲染：「渲染」直调
 // renderTemplate 缺省路径（POST /templates/{id}/render 无 body = 最新已发布，
@@ -16,8 +16,8 @@
 // null，spec §2.4 #3 载荷形状，22 票）；「＋ 以图片新建」弹名字 + 选图
 // （ImageTemplateDialog，选图即 createImageBitmap 解码像素尺寸就地回显）→
 // createImageTemplate 先 POST /api/assets 后 POST /api/templates（画布宽高 =
-// 图片像素宽高、单层「底图」铺满，24 票）→ 201 后跳 /editor/{id}。取消不建
-// （弃置模板可经卡片删除回收）。
+// 图片像素宽高、图片声明为画布背景，ADR 0022 迁移后不再产生底图图层，24 票）→
+// 201 后跳 /editor/{id}。取消不建（弃置模板可经卡片删除回收）。
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -68,7 +68,7 @@ function pickNewImage(): void {
     openImageTemplate()
 }
 
-// 底图新建弹窗态（24 票）：名字/错误/在途同惯例；已选底图持文件 + 浏览器解码出
+// 图片新建弹窗态（24 票）：名字/错误/在途同惯例；已选图片持文件 + 浏览器解码出
 // 的像素尺寸（createImageBitmap 属 DOM 通道，留在本页；尺寸同时作回显与载荷来源）
 const imageOpen = ref(false)
 const imageName = ref(NEW_TEMPLATE_DEFAULT_NAME)
@@ -166,7 +166,7 @@ async function onImageSelected(file: File): Promise<void> {
     }
 }
 
-/** 确认底图新建：字节读自已选文件 → createImageTemplate 内做名字/选图校验、
+/** 确认图片新建：字节读自已选文件 → createImageTemplate 内做名字/选图校验、
  *  先上传后建模板与失败归因（稳定码在前）；成功跳编辑器 */
 async function runCreateImage(): Promise<void> {
     if (imageCreating.value) return
@@ -358,7 +358,7 @@ function riseDelay(index: number): string {
                                 class="flex items-center gap-2 rounded-lg bg-gradient-to-b from-sky-400 to-sky-500 px-3.5 py-2 text-sm font-semibold text-[#06202b] shadow-[0_0_0_1px_rgba(56,189,248,0.35),0_8px_24px_rgba(56,189,248,0.18)] transition hover:brightness-110 active:translate-y-px"
                                 :aria-expanded="newMenuOpen"
                                 aria-haspopup="menu"
-                                title="新建模板：选择空白 A4 画布，或以图片为底图"
+                                title="新建模板：选择空白 A4 画布，或以图片设为画布背景"
                                 @click="newMenuOpen = !newMenuOpen"
                             >
                                 ＋ 新建模板
@@ -416,7 +416,7 @@ function riseDelay(index: number): string {
                                     role="menuitem"
                                     data-new-image-template
                                     class="pc-menu__item"
-                                    title="以图片新建模板：画布宽高取所选图片的像素宽高，图片作为「底图」图层铺满画布，成功后进入编辑器"
+                                    title="以图片新建模板：画布宽高取所选图片的像素宽高，图片设为画布背景铺满画布，成功后进入编辑器"
                                     @click="pickNewImage"
                                 >
                                     <span class="pc-menu__icon" aria-hidden="true">
@@ -428,7 +428,7 @@ function riseDelay(index: number): string {
                                     </span>
                                     <span class="min-w-0">
                                         <span class="pc-menu__title">以图片新建</span>
-                                        <span class="pc-menu__desc">画布宽高取所选图片像素宽高，图片铺满作「底图」</span>
+                                        <span class="pc-menu__desc">画布宽高取所选图片像素宽高，图片设为画布背景</span>
                                     </span>
                                 </button>
                             </div>
@@ -649,8 +649,8 @@ function riseDelay(index: number): string {
                 @cancel="closeNewTemplate"
             />
 
-            <!-- 以图片新建弹窗（spec §4.1，24 票）：名字/已选底图/错误/在途态本页持有；
-                 确认 = 先上传后建模板（画布宽高 = 图片像素宽高）+ 随建随绑数据源 -->
+            <!-- 以图片新建弹窗（spec §4.1，24 票）：名字/已选图/错误/在途态本页持有；
+                 确认 = 先上传后建模板（画布宽高 = 图片像素宽高，图片设为画布背景）+ 随建随绑数据源 -->
             <ImageTemplateDialog
                 v-model:name="imageName"
                 v-model:data-source-id="imageSourceId"
@@ -662,7 +662,7 @@ function riseDelay(index: number): string {
                 :data-source-options="newSources ?? undefined"
                 title="以图片新建模板"
                 label="模板名"
-                note="创建单帧模板：画布宽高取所选图片的像素宽高，图片作为「底图」图层铺满画布；确认后上传图片并创建模板，成功后进入编辑器。未选图不建，取消不建。"
+                note="创建单帧模板：画布宽高取所选图片的像素宽高，图片设为画布背景铺满画布；确认后上传图片并创建模板，成功后进入编辑器。未选图不建，取消不建。"
                 confirm-text="创建"
                 confirm-busy-text="上传并创建中…"
                 @select="onImageSelected"

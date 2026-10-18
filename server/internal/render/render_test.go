@@ -141,6 +141,10 @@ func TestRun_SeedDocument(t *testing.T) {
 		if w, h := pngSize(t, pages[i].PNG); w != 794 || h != 1123 {
 			t.Fatalf("pages[%d] 尺寸 = %dx%d, 期望 794x1123", i, w, h)
 		}
+		// 背景随 canvas 字段走(spec §4):ADR 0022 迁移后种子的白色底来自
+		// canvas.background(「页面底色」层退役),背景须经编译分页切页不丢、
+		// 渲染铺装为不透明白——左缘背景区(表格区外)取样三页全验
+		assertPixelColor(t, pages[i].PNG, 5, 600, 255, 255, 255, 255)
 	}
 }
 
@@ -202,6 +206,33 @@ func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
 		t.Fatalf("页数 = %d, 期望 1", len(pages))
 	}
 	ref, err := os.ReadFile(filepath.Join(seedDir, "assets", "u", "student-2.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 80, 200)
+}
+
+// TestRun_LeadingSlashBackgroundAsset 画布背景图前导斜杠引用归一(ADR 0022 迁移,
+// spec §5 example 段;21 票同门):「以图片新建模板」产出的 background.image 为
+// 上传 url 前导斜杠形态,归一前 DrawImage 按字面路径读盘必败(500);归一后
+// 整幅 cover 呈现该图——canvas 键序 width,height,background(spec §3 钉序)
+func TestRun_LeadingSlashBackgroundAsset(t *testing.T) {
+	chdirToSeedAssets(t)
+	svc := newService(t, &fakeDownloader{})
+	rec := &store.TemplateRecord{
+		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+			"canvas":{"width":160,"height":400,"background":{"image":"/assets/u/student-3.png"}},
+			"layers":[]}`)}},
+	}
+
+	pages, perr := svc.Run(t.Context(), rec, nil)
+	if perr != nil {
+		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
+	}
+	if len(pages) != 1 {
+		t.Fatalf("页数 = %d, 期望 1", len(pages))
+	}
+	ref, err := os.ReadFile(filepath.Join(seedDir, "assets", "u", "student-3.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +301,51 @@ func TestNormalizePages_RemoteUntouched(t *testing.T) {
 	}
 }
 
+// TestNormalizePages_BackgroundNormalized 画布级背景图引用归一(直测,ADR 0022
+// 迁移):背景图本地引用剥前导斜杠(画布级 SetBackground 重建实例——值对象不可变、
+// 无分量 setter),背景色与远程 URL 分量不触碰(远程交渲染期惰性物化下载)
+func TestNormalizePages_BackgroundNormalized(t *testing.T) {
+	var wire canvas.Graph
+	if err := json.Unmarshal([]byte(`{"canvas":{"width":10,"height":10,"background":{"color":"#ffffff","image":"/assets/u/x.png"}},"layers":[]}`), &wire); err != nil {
+		t.Fatal(err)
+	}
+	c, err := canvas.FromGraph(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizePages([]*canvas.Canvas{c})
+
+	bg := c.Background()
+	if bg == nil {
+		t.Fatal("背景不应被归一移除")
+	}
+	if bg.Image == nil || *bg.Image != "assets/u/x.png" {
+		t.Fatalf("背景图本地引用应归一为磁盘相对形态,实得 %v", bg.Image)
+	}
+	if bg.Color == nil || *bg.Color != "#ffffff" {
+		t.Fatalf("背景色分量不应被触碰,实得 %v", bg.Color)
+	}
+}
+
+// TestNormalizePages_BackgroundRemoteUntouched 归一只动本地背景图引用(直测):
+// 远程 URL 原样保留;以哨兵探针判定归一误触(21 票审查同款)
+func TestNormalizePages_BackgroundRemoteUntouched(t *testing.T) {
+	var wire canvas.Graph
+	if err := json.Unmarshal([]byte(`{"canvas":{"width":10,"height":10,"background":{"image":"https://remote.example/bg.png"}},"layers":[]}`), &wire); err != nil {
+		t.Fatal(err)
+	}
+	c, err := canvas.FromGraph(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalizePages([]*canvas.Canvas{c})
+
+	bg := c.Background()
+	if bg == nil || bg.Image == nil || *bg.Image != "https://remote.example/bg.png" {
+		t.Fatalf("远程背景图引用不应被归一,实得 %v", bg)
+	}
+}
+
 // assertPixelMatches 渲染产物 (x, y) 像素与参考图 (rx, ry) 像素一致——渲染
 // 成功之外的实质断言(终图包含该图,§6.3 第 4 项后半句);两图同为不透明
 // 8bit 色,cover 同尺寸恒等,像素应精确相等
@@ -288,6 +364,22 @@ func assertPixelMatches(t *testing.T, png []byte, x, y int, ref []byte, rx, ry i
 	if gr != wr || gg != wg || gb != wb || ga != wa {
 		t.Fatalf("渲染像素 (%d,%d) = (%d,%d,%d,%d), 参考图 (%d,%d) = (%d,%d,%d,%d)",
 			x, y, gr, gg, gb, ga, rx, ry, wr, wg, wb, wa)
+	}
+}
+
+// assertPixelColor 渲染产物 (x, y) 像素为指定 8bit RGBA 色——背景铺装断言用
+// (canvas.background 白底经编译分页切页不丢、渲染铺装不透明)
+func assertPixelColor(t *testing.T, png []byte, x, y int, r, g, b, a uint8) {
+	t.Helper()
+	img, _, err := image.Decode(bytes.NewReader(png))
+	if err != nil {
+		t.Fatalf("解码渲染 PNG: %v", err)
+	}
+	gr, gg, gb, ga := img.At(x, y).RGBA()
+	wr, wg, wb, wa := uint64(r)*0x101, uint64(g)*0x101, uint64(b)*0x101, uint64(a)*0x101
+	if uint64(gr) != wr || uint64(gg) != wg || uint64(gb) != wb || uint64(ga) != wa {
+		t.Fatalf("渲染像素 (%d,%d) = (%d,%d,%d,%d), 期望 (%d,%d,%d,%d)",
+			x, y, gr, gg, gb, ga, wr, wg, wb, wa)
 	}
 }
 
