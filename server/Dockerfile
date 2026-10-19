@@ -6,7 +6,7 @@
 # canvas 依赖走发布版本:go.mod require module proxy 的 github.com/HankChenCH/go-canvas
 # 与 image-renderer v1.0.0,构建期自 proxy 拉取。
 
-FROM golang:1.25-alpine AS build
+FROM golang:1.26-alpine AS build
 # 构建机网络到 proxy.golang.org 不可达时用国内 proxy(宿主开发机同款约定);
 # proxy 未缓存新版本时 go 回落 direct 直连拉取——alpine 需要 git
 ARG GOPROXY=https://goproxy.cn,direct

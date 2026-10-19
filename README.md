@@ -53,7 +53,7 @@ bash scripts/smoke.sh        # BASE 默认 http://localhost:8080
 ## 开发轨(双终端)
 
 ```sh
-# 终端 1:Go 服务端(监听 :8080;需要 Go 1.25+)
+# 终端 1:Go 服务端(监听 :8080;需要 Go 1.26+)
 cd server && go run .
 
 # 终端 2:web 编辑器(vite dev,需要 Node 22 + pnpm 10;/api 等已代理到 :8080)
