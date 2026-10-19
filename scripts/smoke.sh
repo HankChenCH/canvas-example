@@ -2,8 +2,9 @@
 # spec §6.2 curl 冒烟(契约面),双轨通用:compose 轨(cd example && docker compose up
 # --build)或 dev 轨(cd example/server && go run .)任一起服务后运行。
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080(compose 轨验收口径)。
-# 断言 1–3(11 票)读路径(组 3 另含图片层适配 contain 断言,image-layer-fit 06 票,
-# ADR 0023);4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
+# 断言 1–3(11 票)读路径(组 3 另含图片层适配断言:contain(image-layer-fit 06 票,
+# ADR 0023)+ fill/tile 四档同画布对照(image-fit-fill-tile 06 票,ADR 0024));
+# 4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
 # 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效;
 # 12(卡片操作修订 + 版本化)DELETE /api/templates/{id}:渲染前先 publish(缺省
 # 渲染语义 = 最新已发布,未发布 409,spec §4);204 + 渲染记录级联清 + 版本行
@@ -62,6 +63,19 @@ expect_error() {
 	assert_json "$TMP/err.json" "d['error']['code'] == '$6'"
 }
 
+# assert_png_size <file> <width> <height> <label>:PNG 头(IHDR)尺寸断言——
+# 直链素材内在尺寸的契约面(tile 平铺单元 = 内在尺寸,尺寸错即平铺语义错)
+assert_png_size() {
+	python3 - "$1" "$2" "$3" "$4" <<'PYEOF'
+import struct, sys
+f = open(sys.argv[1], "rb")
+assert f.read(16) == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "不是 PNG 或头部异常"
+w, h = struct.unpack(">II", f.read(8))
+assert (w, h) == (int(sys.argv[2]), int(sys.argv[3])), \
+	"%s 应为 %sx%s,实得 %dx%d" % (sys.argv[4], sys.argv[2], sys.argv[3], w, h)
+PYEOF
+}
+
 echo "== 1/13 GET /api/health =="
 get /api/health "$TMP/health.json"
 assert_json "$TMP/health.json" 'd.get("status") == "ok"'
@@ -109,13 +123,25 @@ assert_json "$TMP/template.json" 'all(
 assert_json "$TMP/template.json" '"fit" not in next(l for l in d["canvases"][0]["graph"]["layers"] if l["name"] == "机构徽标")["spec"]'
 assert_json "$TMP/ds.json" 'd["data"]["certificates"][0]["photo"] == "assets/u/banner-photo.png"'
 get /assets/u/banner-photo.png "$TMP/banner.png"
-python3 -c '
-import struct, sys
-f = open(sys.argv[1], "rb")
-assert f.read(16) == b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "不是 PNG 或头部异常"
-w, h = struct.unpack(">II", f.read(8))
-assert (w, h) == (320, 160), "横幅照片应为 320x160(与照片格 160x400 错形),实得 %dx%d" % (w, h)
-' "$TMP/banner.png"
+assert_png_size "$TMP/banner.png" 320 160 "横幅照片(与照片格 160x400 错形)"
+# 图片层适配四档同画布对照(ADR 0024,本期 06 票):主页 cover(徽标缺省不落
+# 键,上已钉)与 contain(照片格,上已钉两帧)存量保留,新增 fill 与 tile——
+# fill:装饰纹理带,192×192 纹理/渐变素材(比例失真不敏感)进 794×70 固定横带,
+# 整图拉伸无裁切无空隙;tile:防伪水印,128×128 印章按内在尺寸 1:1 平铺盖证书
+# 卡片区,left/top 首块锚定全铺、右/下边缘半块截断。渲染像素面(纹理拉伸形变、
+# 水印网格截断)经 dev/compose 双轨渲染产物取样验证,属人工目验轨不在 smoke
+# (沿本文件契约断言形态)
+assert_json "$TMP/template.json" '(
+	band := next(l for l in d["canvases"][0]["graph"]["layers"] if l["name"] == "装饰纹理带")
+) and band["spec"].get("fit") == "fill" and (band["spec"]["shape"]["width"], band["spec"]["shape"]["height"], band["spec"]["position"]["x"], band["spec"]["position"]["y"]) == (794, 70, 0, 120) and band["data"] == {"valueType": "StaticValue", "value": "assets/u/texture-fill.png"}'
+assert_json "$TMP/template.json" '(
+	mark := next(l for l in d["canvases"][0]["graph"]["layers"] if l["name"] == "防伪水印")
+) and mark["spec"].get("fit") == "tile" and mark["spec"]["align"] == {"horizontal": "left", "vertical": "top"} and mark["data"] == {"valueType": "StaticValue", "value": "assets/u/watermark-tile.png"}'
+# 两块 showcase 素材随 seed 补齐直链下发;tile 单元 = 内在尺寸(1:1 零参数),尺寸钉死
+get /assets/u/texture-fill.png "$TMP/texture.png"
+assert_png_size "$TMP/texture.png" 192 192 "纹理素材(fill 拉伸进 794x70 横带)"
+get /assets/u/watermark-tile.png "$TMP/watermark.png"
+assert_png_size "$TMP/watermark.png" 128 128 "水印素材(tile 平铺单元 = 内在尺寸)"
 
 echo "== 4/13 POST /api/templates(最小模板 → 201 自增 id,未绑数据源) =="
 cat > "$TMP/min-template.json" <<'EOF'

@@ -1,8 +1,10 @@
 package seed
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"image/png"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -42,6 +44,93 @@ func TestLoadRealSeed(t *testing.T) {
 	// 模板只持引用:绑定 id 由启动序接线,Load 不产引用
 	if tmpl.DataSourceID != nil {
 		t.Fatalf("Load 不得预设 data_source_id: %v", tmpl.DataSourceID)
+	}
+}
+
+// TestLoadRealSeed_FourFitShowcase 图片层适配四档同画布对照(image-fit-fill-tile
+// 06 票,ADR 0023/0024):主页帧四档 fit 各一——徽标 cover 缺省不落键、照片格
+// contain、装饰纹理带 fill、防伪水印 tile;fit 条件写键落键殿后(shape/align/
+// position/fit)。fill/tile 素材是静态引用,内在尺寸即 tile 平铺单元(1:1 零参数),
+// PNG 头尺寸一并钉死
+func TestLoadRealSeed_FourFitShowcase(t *testing.T) {
+	content, err := Load("../../seed")
+	if err != nil {
+		t.Fatalf("Load 真实 seed: %v", err)
+	}
+	if len(content.Template.Canvases) != 2 {
+		t.Fatalf("应有两帧: %d", len(content.Template.Canvases))
+	}
+	var main map[string]any
+	if err := json.Unmarshal(content.Template.Canvases[0].Graph, &main); err != nil {
+		t.Fatal(err)
+	}
+	layers := main["layers"].([]any)
+	byName := func(name string) map[string]any {
+		for _, raw := range layers {
+			l := raw.(map[string]any)
+			if l["name"] == name {
+				return l
+			}
+		}
+		t.Fatalf("主页帧缺图层 %q", name)
+		return nil
+	}
+
+	// cover:机构徽标(72×72)不落 fit 键 = 缺省裁切对照
+	badge := byName("机构徽标")["spec"].(map[string]any)
+	if _, has := badge["fit"]; has {
+		t.Fatal("徽标层不落 fit 键(cover 缺省,条件写键)")
+	}
+	// contain:照片格(表格行内表达式图片)两帧同构,此处钉主页
+	cell := byName("证书卡片区")["template"].(map[string]any)["cells"].([]any)[0].(map[string]any)
+	if got := cell["content"].(map[string]any)["spec"].(map[string]any)["fit"]; got != "contain" {
+		t.Fatalf("照片格 fit = %v, 期望 contain", got)
+	}
+
+	// fill:装饰纹理带(794×70 @ (0,120))——纹理/渐变素材进固定占位框,
+	// 比例失真不敏感(192×192 方图拉伸进 11.3:1 横带)
+	band := byName("装饰纹理带")
+	bandSpec := band["spec"].(map[string]any)
+	if got := bandSpec["fit"]; got != "fill" {
+		t.Fatalf("装饰纹理带 fit = %v, 期望 fill", got)
+	}
+	shape := bandSpec["shape"].(map[string]any)
+	if shape["width"] != float64(794) || shape["height"] != float64(70) {
+		t.Fatalf("装饰纹理带盒 = %vx%v, 期望 794x70", shape["width"], shape["height"])
+	}
+	if got := band["data"].(map[string]any)["value"]; got != "assets/u/texture-fill.png" {
+		t.Fatalf("装饰纹理带静态引用 = %v", got)
+	}
+
+	// tile:防伪水印(714×800 覆盖证书卡片区,left/top 锚定全铺、边缘半块截断)
+	mark := byName("防伪水印")
+	markSpec := mark["spec"].(map[string]any)
+	if got := markSpec["fit"]; got != "tile" {
+		t.Fatalf("防伪水印 fit = %v, 期望 tile", got)
+	}
+	if got := markSpec["align"].(map[string]any); got["horizontal"] != "left" || got["vertical"] != "top" {
+		t.Fatalf("防伪水印对齐 = %v, 期望 left/top(首块锚定盒左上,全铺无前缘空隙)", got)
+	}
+	if got := mark["data"].(map[string]any)["value"]; got != "assets/u/watermark-tile.png" {
+		t.Fatalf("防伪水印静态引用 = %v", got)
+	}
+
+	// 两块新素材随 seed 分发,内在尺寸 = tile 平铺单元(1:1 零参数)
+	for name, want := range map[string][2]int{
+		"texture-fill.png":   {192, 192},
+		"watermark-tile.png": {128, 128},
+	} {
+		b, err := os.ReadFile(filepath.Join("../../seed/assets/u", name))
+		if err != nil {
+			t.Fatalf("showcase 素材缺失 %s: %v", name, err)
+		}
+		cfg, err := png.DecodeConfig(bytes.NewReader(b))
+		if err != nil {
+			t.Fatalf("%s 不是合法 PNG: %v", name, err)
+		}
+		if cfg.Width != want[0] || cfg.Height != want[1] {
+			t.Fatalf("%s 内在尺寸 = %dx%d, 期望 %dx%d", name, cfg.Width, cfg.Height, want[0], want[1])
+		}
 	}
 }
 

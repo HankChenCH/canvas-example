@@ -42,9 +42,9 @@ docker compose up --build    # 构建期从 npm / go module proxy 拉发布依�
 对外端口可配置:拷贝 `.env.example` 为 `.env` 改 `CANVAS_EXAMPLE_PORT`(`.env` 不入 git);
 改了端口记得让 smoke 跟随:`bash scripts/smoke.sh http://localhost:<端口>`。
 
-功能验收脚本(15 组 curl 断言——1–14 通用组 + 15 版本化轨九断言,对 compose/dev
-任何轨道通用;版本化轨依赖重置运行库,复跑时首发 publish 幂等断言变 200
-duplicate,重置方法见 `scripts/smoke.sh` 头部注记):
+功能验收脚本(16 组 curl 断言——1–14 通用组 + 15 版本化轨九断言 + 16 渲染历史,
+对 compose/dev 任何轨道通用;版本化轨依赖重置运行库,复跑时首发 publish 幂等
+断言变 200 duplicate,重置方法见 `scripts/smoke.sh` 头部注记):
 
 ```sh
 bash scripts/smoke.sh        # BASE 默认 http://localhost:8080

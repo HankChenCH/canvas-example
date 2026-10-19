@@ -1,15 +1,17 @@
 # pnpm 12 设置文件（package.json 的 "pnpm" 字段不再被读取，见 pnpm.io/settings）。
 #
 # overrides 与 package.json#pnpm.overrides 保持同值：把 @hankchen/canvas-editor
-# 钉到 ^0.9.0（canvas-web 传递依赖的 range 尚未跟上）。双写是有意保留——本机已是
+# 钉到 ^2.0.0（canvas-web 传递依赖的 range 尚未跟上）。双写是有意保留——本机已是
 # pnpm 12（只读本文件），package.json 那份服务 pnpm ≤11 的环境；两边改其一必须同步，
 # 待团队钉死 pnpm ≥12 后删 package.json 侧。
 overrides:
-    '@hankchen/canvas-editor': ^0.9.0
+    '@hankchen/canvas-editor': ^2.0.0
 #
 # 首方包（本工作区自己发版）豁免 minimumReleaseAge 新鲜度等待——发布当天即可安装。
 # 用裸包名（作用于全版本）：name@version 形态在 pnpm 12.6 的 lockfile 校验段不生效
 # （resolution 段认、verify 段不认），裸名两段都认。
 minimumReleaseAgeExclude:
+    - '@hankchen/canvas'
+    - '@hankchen/canvas-browser-renderer'
     - '@hankchen/canvas-editor'
     - '@hankchen/canvas-editor-vue'

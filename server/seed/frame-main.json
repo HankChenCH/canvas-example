@@ -103,6 +103,24 @@
       }
     },
     {
+      "type": "ImageLayer",
+      "name": "装饰纹理带",
+      "priority": 60,
+      "spec": {
+        "shape": {
+          "width": 794, "height": 70, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": null
+        },
+        "align": { "horizontal": "left", "vertical": "top" },
+        "position": { "x": 0, "y": 120, "position": "top-left" },
+        "fit": "fill"
+      },
+      "data": { "valueType": "StaticValue", "value": "assets/u/texture-fill.png" }
+    },
+    {
       "type": "TableLayer",
       "name": "证书卡片区",
       "priority": 50,
@@ -252,6 +270,24 @@
           }
         ]
       }
+    },
+    {
+      "type": "ImageLayer",
+      "name": "防伪水印",
+      "priority": 40,
+      "spec": {
+        "shape": {
+          "width": 714, "height": 800, "autoWidth": false, "autoHeight": false,
+          "lineHeight": 1,
+          "padding": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+          "border": { "top": null, "bottom": null, "left": null, "right": null },
+          "backgroundColor": null
+        },
+        "align": { "horizontal": "left", "vertical": "top" },
+        "position": { "x": 40, "y": 190, "position": "top-left" },
+        "fit": "tile"
+      },
+      "data": { "valueType": "StaticValue", "value": "assets/u/watermark-tile.png" }
     }
   ]
 }
