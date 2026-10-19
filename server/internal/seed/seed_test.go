@@ -98,11 +98,16 @@ func TestLoadRealSeed_FourFitShowcase(t *testing.T) {
 	if shape["width"] != float64(794) || shape["height"] != float64(70) {
 		t.Fatalf("装饰纹理带盒 = %vx%v, 期望 794x70", shape["width"], shape["height"])
 	}
+	bandPos := bandSpec["position"].(map[string]any)
+	if bandPos["x"] != float64(0) || bandPos["y"] != float64(120) {
+		t.Fatalf("装饰纹理带位置 = (%v,%v), 期望 (0,120)", bandPos["x"], bandPos["y"])
+	}
 	if got := band["data"].(map[string]any)["value"]; got != "assets/u/texture-fill.png" {
 		t.Fatalf("装饰纹理带静态引用 = %v", got)
 	}
 
-	// tile:防伪水印(714×800 覆盖证书卡片区,left/top 锚定全铺、边缘半块截断)
+	// tile:防伪水印(714×800 @ (40,190),priority 40 压表上层——绘制序在表之后,
+	// 半透明水印盖表不夺文字;left/top 锚定全铺、边缘半块截断)
 	mark := byName("防伪水印")
 	markSpec := mark["spec"].(map[string]any)
 	if got := markSpec["fit"]; got != "tile" {
@@ -110,6 +115,17 @@ func TestLoadRealSeed_FourFitShowcase(t *testing.T) {
 	}
 	if got := markSpec["align"].(map[string]any); got["horizontal"] != "left" || got["vertical"] != "top" {
 		t.Fatalf("防伪水印对齐 = %v, 期望 left/top(首块锚定盒左上,全铺无前缘空隙)", got)
+	}
+	markShape := markSpec["shape"].(map[string]any)
+	if markShape["width"] != float64(714) || markShape["height"] != float64(800) {
+		t.Fatalf("防伪水印盒 = %vx%v, 期望 714x800", markShape["width"], markShape["height"])
+	}
+	markPos := markSpec["position"].(map[string]any)
+	if markPos["x"] != float64(40) || markPos["y"] != float64(190) {
+		t.Fatalf("防伪水印位置 = (%v,%v), 期望 (40,190)", markPos["x"], markPos["y"])
+	}
+	if got := mark["priority"]; got != float64(40) {
+		t.Fatalf("防伪水印 priority = %v, 期望 40(压表上层的设计点)", got)
 	}
 	if got := mark["data"].(map[string]any)["value"]; got != "assets/u/watermark-tile.png" {
 		t.Fatalf("防伪水印静态引用 = %v", got)

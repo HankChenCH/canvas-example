@@ -76,11 +76,11 @@ assert (w, h) == (int(sys.argv[2]), int(sys.argv[3])), \
 PYEOF
 }
 
-echo "== 1/13 GET /api/health =="
+echo "==1/16 GET /api/health =="
 get /api/health "$TMP/health.json"
 assert_json "$TMP/health.json" 'd.get("status") == "ok"'
 
-echo "== 2/13 GET /api/templates =="
+echo "==2/16 GET /api/templates =="
 get /api/templates "$TMP/templates.json"
 assert_json "$TMP/templates.json" 'isinstance(d, list) and len(d) >= 1'
 assert_json "$TMP/templates.json" '[t["updatedAt"] for t in d] == sorted((t["updatedAt"] for t in d), reverse=True)'
@@ -96,7 +96,7 @@ print(seeds[0]["id"])
 ' "$TMP/templates.json")"
 echo "   SEED_ID=$SEED_ID"
 
-echo "== 3/13 GET /api/templates/{SEED_ID} =="
+echo "==3/16 GET /api/templates/{SEED_ID} =="
 get "/api/templates/$SEED_ID" "$TMP/template.json"
 assert_json "$TMP/template.json" 'len(d["canvases"]) == 2 and [c["name"] for c in d["canvases"]] == ["主页", "续页"]'
 assert_json "$TMP/template.json" 'isinstance(d["flowChain"], list) and len(d["flowChain"]) == 2'
@@ -128,22 +128,22 @@ assert_png_size "$TMP/banner.png" 320 160 "横幅照片(与照片格 160x400 错
 # 键,上已钉)与 contain(照片格,上已钉两帧)存量保留,新增 fill 与 tile——
 # fill:装饰纹理带,192×192 纹理/渐变素材(比例失真不敏感)进 794×70 固定横带,
 # 整图拉伸无裁切无空隙;tile:防伪水印,128×128 印章按内在尺寸 1:1 平铺盖证书
-# 卡片区,left/top 首块锚定全铺、右/下边缘半块截断。渲染像素面(纹理拉伸形变、
-# 水印网格截断)经 dev/compose 双轨渲染产物取样验证,属人工目验轨不在 smoke
-# (沿本文件契约断言形态)
+# 卡片区(714×800 @ (40,190),priority 40 压表上层),left/top 首块锚定全铺、
+# 右/下边缘半块截断。渲染像素面(纹理拉伸形变、水印网格截断)经 dev/compose
+# 双轨渲染产物取样验证,属人工目验轨不在 smoke(沿本文件契约断言形态)
 assert_json "$TMP/template.json" '(
 	band := next(l for l in d["canvases"][0]["graph"]["layers"] if l["name"] == "装饰纹理带")
 ) and band["spec"].get("fit") == "fill" and (band["spec"]["shape"]["width"], band["spec"]["shape"]["height"], band["spec"]["position"]["x"], band["spec"]["position"]["y"]) == (794, 70, 0, 120) and band["data"] == {"valueType": "StaticValue", "value": "assets/u/texture-fill.png"}'
 assert_json "$TMP/template.json" '(
 	mark := next(l for l in d["canvases"][0]["graph"]["layers"] if l["name"] == "防伪水印")
-) and mark["spec"].get("fit") == "tile" and mark["spec"]["align"] == {"horizontal": "left", "vertical": "top"} and mark["data"] == {"valueType": "StaticValue", "value": "assets/u/watermark-tile.png"}'
+) and mark["spec"].get("fit") == "tile" and mark["spec"]["align"] == {"horizontal": "left", "vertical": "top"} and (mark["spec"]["shape"]["width"], mark["spec"]["shape"]["height"], mark["spec"]["position"]["x"], mark["spec"]["position"]["y"]) == (714, 800, 40, 190) and mark["priority"] == 40 and mark["data"] == {"valueType": "StaticValue", "value": "assets/u/watermark-tile.png"}'
 # 两块 showcase 素材随 seed 补齐直链下发;tile 单元 = 内在尺寸(1:1 零参数),尺寸钉死
 get /assets/u/texture-fill.png "$TMP/texture.png"
 assert_png_size "$TMP/texture.png" 192 192 "纹理素材(fill 拉伸进 794x70 横带)"
 get /assets/u/watermark-tile.png "$TMP/watermark.png"
 assert_png_size "$TMP/watermark.png" 128 128 "水印素材(tile 平铺单元 = 内在尺寸)"
 
-echo "== 4/13 POST /api/templates(最小模板 → 201 自增 id,未绑数据源) =="
+echo "==4/16 POST /api/templates(最小模板 → 201 自增 id,未绑数据源) =="
 cat > "$TMP/min-template.json" <<'EOF'
 {"name":"冒烟最小模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
 EOF
@@ -155,7 +155,7 @@ assert_json "$TMP/t1.json" "d['dataSourceId'] is None and d['flowChain'] is None
 T1="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/t1.json")"
 echo "   T1=$T1"
 
-echo "== 5/13 PUT /api/templates/{T1}(改 name;绑定引用不被触碰) =="
+echo "==5/16 PUT /api/templates/{T1}(改 name;绑定引用不被触碰) =="
 cat > "$TMP/put-t1.json" <<'EOF'
 {"name":"冒烟改名模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
 EOF
@@ -165,7 +165,7 @@ assert_json "$TMP/t1-put.json" "d['name'] == '冒烟改名模板'"
 assert_json "$TMP/t1-put.json" "d['dataSourceId'] is None"
 assert_json "$TMP/t1-put.json" "d['flowChain'] is None"
 
-echo "== 6/13 数据源实体 CRUD + 绑定通道(CRUD 校验码 / 绑定 / 解绑 / 404) =="
+echo "==6/16 数据源实体 CRUD + 绑定通道(CRUD 校验码 / 绑定 / 解绑 / 404) =="
 # 合法创建 → 201 全量记录
 cat > "$TMP/ds-ok.json" <<'EOF'
 {"name":"冒烟数据源","schema":{"$schema":"http://json-schema.org/draft-07/schema#","type":"object","properties":{"student":{"type":"string"}},"required":["student"]},"data":{"student":"林晚晴"}}
@@ -227,7 +227,7 @@ _status=$(request PUT "/api/templates/$T1/datasource" application/json "$TMP/unb
 [ "$_status" = "200" ] || die "PUT …/datasource(解绑)期望 200,实得 $_status"
 assert_json "$TMP/unbind-resp.json" "d['dataSourceId'] is None"
 
-echo "== 7/13 POST /api/templates 保存预检打回(未知图层类型 / 双 paged 链) =="
+echo "==7/16 POST /api/templates 保存预检打回(未知图层类型 / 双 paged 链) =="
 cat > "$TMP/bad-layer.json" <<'EOF'
 {"name":"坏图层模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}}]}
 EOF
@@ -241,7 +241,7 @@ cat > "$TMP/double-paged.json" <<'EOF'
 EOF
 expect_error POST /api/templates application/json "$TMP/double-paged.json" 400 flow_chain_invalid
 
-echo "== 10/13 POST /api/assets(multipart 上传 → url 形态 + 可 GET) =="
+echo "==10/16 POST /api/assets(multipart 上传 → url 形态 + 可 GET) =="
 PNG="$ROOT/server/seed/assets/u/student-1.png"
 [ -f "$PNG" ] || die "上传样张缺失: $PNG"
 _status=$(curl -sS -o "$TMP/upload.json" -w '%{http_code}' -F "file=@$PNG;type=image/png" "$BASE/api/assets")
@@ -251,7 +251,7 @@ UPLOAD_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], enc
 curl -fsS -o "$TMP/upload-roundtrip.png" "$BASE$UPLOAD_URL" || die "GET $UPLOAD_URL 失败"
 cmp -s "$TMP/upload-roundtrip.png" "$PNG" || die "上传回读字节与原文件不一致"
 
-echo "== 11/13 请求体上限与坏 body(413 / 400) =="
+echo "==11/16 请求体上限与坏 body(413 / 400) =="
 python3 -c 'import json,sys; sys.stdout.write(json.dumps({"name":"a" * (10 * 1024 * 1024)}))' > "$TMP/big.json"
 expect_error POST /api/templates application/json "$TMP/big.json" 413 request_too_large
 
@@ -260,7 +260,7 @@ expect_error POST /api/templates application/json "$TMP/not-json.json" 400 inval
 
 # ---- 断言 8–9(13 票):渲染管线 → RenderRecord + PNG 直链 ----
 
-echo "== 8/13 POST /api/templates/{SEED_ID}/render(渲染 → 201 RenderRecord) =="
+echo "==8/16 POST /api/templates/{SEED_ID}/render(渲染 → 201 RenderRecord) =="
 # 无 body POST(服务端不读,spec §2.4 #7);徽标走 picsum 物化(唯一外网点)
 _status=$(request POST "/api/templates/$SEED_ID/render" application/json /dev/null "$TMP/render1.json")
 [ "$_status" = "201" ] || die "POST render 期望 201,实得 $_status"
@@ -329,13 +329,13 @@ for u in $RENDER1_URLS; do
 	[ "$_ct" = "image/png" ] || die "旧渲染 GET $u Content-Type = $_ct, 期望 image/png"
 done
 
-echo "== 9/13 POST /api/templates/{不存在的id}/render(404) =="
+echo "==9/16 POST /api/templates/{不存在的id}/render(404) =="
 expect_error POST "/api/templates/999999/render" application/json /dev/null 404 template_not_found
 
 # ---- 断言 12(卡片操作修订):DELETE /api/templates/{id} → 204 无响应体;
 # 渲染记录行级联清;产物文件保留(keep-all 快照直链仍可用);再删/非整数 id 404 ----
 
-echo "== 12/13 DELETE /api/templates/{id}(删除 → 204,记录级联清,产物文件保留) =="
+echo "==12/16 DELETE /api/templates/{id}(删除 → 204,记录级联清,产物文件保留) =="
 cat > "$TMP/t3.json" <<'EOF'
 {"name":"冒烟删除模板","canvases":[{"name":"单页","graph":{"canvas":{"width":794,"height":1123},"layers":[]}}]}
 EOF
@@ -373,7 +373,7 @@ expect_error DELETE "/api/templates/abc" application/json /dev/null 404 template
 # data_source_in_use(引用不悬空)→ 解绑 → 204 无响应体 → 行消失 404;再删与
 # 非整数 id 404 ----
 
-echo "== 13/13 DELETE /api/datasources/{id}(被引用 409 → 解绑 → 204,404) =="
+echo "==13/16 DELETE /api/datasources/{id}(被引用 409 → 解绑 → 204,404) =="
 cat > "$TMP/ds-del.json" <<'EOF'
 {"name":"冒烟删除数据源","schema":{"type":"object"},"data":{"k":"v"}}
 EOF
@@ -406,7 +406,7 @@ expect_error DELETE "/api/datasources/abc" application/json /dev/null 404 data_s
 # ---- 断言 14(网络字体方案):GET /api/fonts —— seed/fonts.json 白名单只读下发,
 # 条目 {label, ref} 且 ref 为 https 直链(清单 ≠ 物化,服务端不下发字体字节) ----
 
-echo "== 14/14 GET /api/fonts(字体清单白名单) =="
+echo "==14/16 GET /api/fonts(字体清单白名单) =="
 get /api/fonts "$TMP/fonts.json"
 assert_json "$TMP/fonts.json" 'isinstance(d, list) and len(d) >= 1'
 assert_json "$TMP/fonts.json" 'all(set(f.keys()) == {"label", "ref"} and f["label"] and f["ref"].startswith("https://") for f in d)'
@@ -415,7 +415,7 @@ assert_json "$TMP/fonts.json" 'all(set(f.keys()) == {"label", "ref"} and f["labe
 # 前置:重置运行库后存量回填使 seed 持 v1(草稿列文本原样固化),本轨首发
 # publish 产生 v2;复跑不重置时 (1) 变 200 duplicate,依赖重置(见头部注记) ----
 
-echo "== 15/15 版本化轨:publish / versions / 渲染选版 / revert(spec §7 九断言) =="
+echo "==15/16 版本化轨:publish / versions / 渲染选版 / revert(spec §7 九断言) =="
 
 # (1) publish 201 → v2(seed 经回填已有 v1);201 新版本不带 duplicate 键
 _status=$(request POST "/api/templates/$SEED_ID/publish" application/json /dev/null "$TMP/pub1.json")
