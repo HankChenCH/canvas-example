@@ -23,7 +23,7 @@ web/  编辑器宿主(Vue 3 + vite)
         │ graph JSON(wire 契约,POST /api/templates 持久化)
         ▼
 server/  Go HTTP 后端(module example/server)
-  └─ github.com/HankChenCH/go-canvas + image-renderer v1.0.0                   (module proxy)
+  └─ github.com/HankChenCH/go-canvas 核心 + image-renderer 双 module              (module proxy)
         │ 预检(preflight)→ 数据填充(hydrate)→ 文档编译/分页 → 位图渲染(PNG)
         ▼
   renders/  每页 PNG,GET /renders/... 取图

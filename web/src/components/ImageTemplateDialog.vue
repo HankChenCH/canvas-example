@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * ImageTemplateDialog：底图快捷建模板弹窗（24 票，spec §4.1 列表页新建入口之一）。
+ * ImageTemplateDialog：图片快捷建模板弹窗（24 票，spec §4.1 列表页新建入口之一；
+ * ADR 0022 迁移后图片以画布背景形态入模板，弹窗本体不感知载荷形态）。
  *
  * 形态骨架与 NamePromptDialog 同款（模态名字输入 + Enter 确认 / Esc 取消 / 点遮罩
  * 取消 / 在途双禁用），增加本机选图区：选图事件把 File 交宿主解码像素尺寸
@@ -138,7 +139,7 @@ function onDataSourceChange(event: Event): void {
                         <path d="M12 15V4m0 0l-4 4m4-4l4 4" />
                         <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
                     </svg>
-                    选择底图图片…
+                    选择背景图片…
                 </label>
                 <p v-if="imageName" class="cn-itd__image" data-image-prompt-image>
                     {{ imageName }}<template v-if="imageInfo"> · {{ imageInfo }}</template>

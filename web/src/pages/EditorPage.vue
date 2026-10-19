@@ -67,6 +67,14 @@
 // （纯内容口径零改动）。另存为 POST 不带状态、内存映射随会话延续——replace 是
 // editor→editor 参数级导航不触发离开钩子，副本首写落下一 flush 时点、原模板状态
 // 不受扰动。
+// 功能导游（feature-tour 03 票，spec §2.4）：首访轻导触发门——台面首挂（template
+// null→record）后单次就绪判定（seen 资格 + 首尾锚点在 DOM + 无既有浮层/抽屉打开），
+// 不过静默不弹不重试（spec「数据加载慢下会话再遇」）；顶栏常驻「功能导游」重播钮
+// （data-tour-replay，无视 seen，先收既有浮层再开）；导游态快捷键门——window 捕获段
+// 拦 keydown（内核/宿主监听全在冒泡段；Tab 与 popover 内 Enter/Space 放行给导游
+// 自身 UI，Esc keydown 拦、keyup 放行归 driver）；卸载/路由离开守卫 destroy 句柄。
+// 纯逻辑在 src/editor/tour.ts、driver 接线在 tourDriver.ts（01/02 票），本页只做
+// 宿主状态编排。
 // 红线（01/07 票）：editor-vue 组件全 named 导入、不用 runtime template 字符串、
 // editor.store 非响应式（动态读数走 subscribe + shallowRef，禁深度 reactive）。
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue'
@@ -179,6 +187,8 @@ import {
 import { runRenderFlow, sanitizeFileBase } from '../editor/render'
 import { runPublishFlow, versionBadgeOf } from '../editor/publish'
 import { planRevertSession } from '../editor/revert'
+import { readSeenVersion, shouldShowTour, TOUR_STEPS, tourEndpointsReady } from '../editor/tour'
+import { startFeatureTour, TOUR_POPOVER_CONTENT_SELECTOR, type TourDriverHandle } from '../editor/tourDriver'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import DataSourceDrawer from '../components/DataSourceDrawer.vue'
 import FlowChainDrawer from '../components/FlowChainDrawer.vue'
@@ -1492,6 +1502,113 @@ async function runRender(): Promise<void> {
     }
 }
 
+// ---- 功能导游宿主编排（feature-tour 03 票，spec §2.4）：触发门 + 顶栏常驻重播
+//      入口 + 导游态快捷键门 + 生命周期收尾。宿主只做状态编排——seen 读写/资格/
+//      锚点判定在 tour.ts、driver 接线与销毁语义在 tourDriver.ts（01/02 票）。 ----
+
+/** 活动导游句柄：非 null 且 isActive() = 导游进行中。startFeatureTour 的
+ *  onFinish/onSkip 与宿主收尾路径都置回 null——02 票销毁语义里宿主主动 destroy 走
+ *  discard 路径不回调宿主，清线自理。 */
+let tourHandle: TourDriverHandle | null = null
+
+const clearTourHandle = (): void => {
+    tourHandle = null
+}
+
+function isTourActive(): boolean {
+    return tourHandle?.isActive() ?? false
+}
+
+/** 既有浮层/抽屉开合 ref 清单（单源）：anyOverlayOpen / closeAllOverlays 共用——
+ *  新增浮层只登记此处（spec §4「新增全屏浮层」升级走查项的机械半边）。内核瞬时层
+ *  （下拉/帮助面板）不在列——触发时点上无键盘焦点竞争，导游中又被快捷键门拦在
+ *  门外。 */
+const overlayOpenRefs = [
+    drawerOpen,
+    flowChainDrawerOpen,
+    versionDrawerOpen,
+    renderDrawerOpen,
+    saveAsOpen,
+    saveAsNewOpen,
+    revertOpen,
+]
+
+/** 既有浮层/抽屉是否开着（触发门条件三） */
+function anyOverlayOpen(): boolean {
+    return overlayOpenRefs.some((state) => state.value)
+}
+
+/** 收起全部既有浮层/抽屉（重播前奏）：导游与浮层互斥的宿主半边（spec §3 走查项
+ *  「导游与抽屉/对话框互斥」）——只收开合态，段内草稿/错误态原样保留。 */
+function closeAllOverlays(): void {
+    for (const state of overlayOpenRefs) state.value = false
+}
+
+/** 启动导游（触发门与重播共用出口）：单实例守卫（活动中不重启——driver 新实例
+ *  顶替旧实例走 replaced 销毁，语义浑浊）→ startFeatureTour；finish/skip 回调只
+ *  清句柄（落 seen 已由 02 票接线在 onDestroyed 单点自理）。 */
+function startTour(): void {
+    if (isTourActive()) return
+    tourHandle = startFeatureTour({ onFinish: clearTourHandle, onSkip: clearTourHandle })
+}
+
+/** 宿主侧收尾（卸载/路由离开守卫共用）：destroy 句柄 + 清线。02 票销毁语义：
+ *  discard 路径不回调宿主但同样落 seen——弹过即看过，中途路由离开不重播。 */
+function teardownTour(): void {
+    tourHandle?.destroy()
+    tourHandle = null
+}
+
+// 触发门（spec §2.4）：台面首挂（template null→record，首载与防御性重载同形）后
+// nextTick 单次判定——资格（seen < TOUR_VERSION）+ 轻导首尾锚点在 DOM + 无既有
+// 浮层/抽屉打开；判定不过静默不弹、不重试轰炸（spec「数据加载慢下会话再遇」）。
+// record→record 替换（保存/绑定/回滚/另存为回写 template）不触发——编辑中途不弹。
+watch(template, async (record, prev) => {
+    if (record === null || prev !== null) return
+    await nextTick()
+    if (!shouldShowTour(readSeenVersion()) || !tourEndpointsReady(TOUR_STEPS, document) || anyOverlayOpen()) {
+        return
+    }
+    startTour()
+})
+
+/** 重播入口（顶栏 data-tour-replay 钮，spec §2.4 常驻）：无视 seen 直接重播；
+ *  有既有浮层先收起再开。导游中按钮不可达（遮罩收点击），守卫只防路径外触发。 */
+function replayTour(): void {
+    if (isTourActive()) return
+    closeAllOverlays()
+    startTour()
+}
+
+/** 导游态快捷键门（spec §2.3「导游进行中抑制宿主快捷键」，Esc 归导游）：导游激活
+ *  期间在 window 捕获段拦 keydown——内核 useShortcuts / CanvasSurface 的 Esc /
+ *  帮助面板与宿主保存快捷键全在 window 冒泡段，捕获先于冒泡、与注册序无关；
+ *  preventDefault 防焦点残留在输入框时导游中继续打字。放行面（导游自身 UI 的
+ *  键盘操作，非宿主快捷键）：① Tab 无条件放行——driver 焦点圈（popover ⇄ 高亮
+ *  元素循环）在 keydown 收 Tab；内核注册表同键绑循环选层为已知共存副作用（纯
+ *  选中态、零数据变更，导游结束即无），换取焦点圈可用。② Enter/Space 仅在
+ *  popover 内放行（TOUR_POPOVER_CONTENT_SELECTOR 判定）——焦点按钮激活的合成
+ *  click 前提；内核注册表不绑这两键，放行无宿主副作用。popover 外拦下：防焦点
+ *  落在高亮宿主元素时按键激活宿主 UI（disableActiveInteraction 的键盘半边）。
+ *  其余 keydown 全拦：Esc 的 keydown 也拦（CanvasSurface 的 Esc 语义不越权），
+ *  driver 的 Esc/方向键收在 keyup（keyup 无门，天然放行）。句柄销毁即门失效
+ *  （isActive 读数）。 */
+function onTourKeydownGate(event: KeyboardEvent): void {
+    if (!isTourActive()) return
+    if (event.key === 'Tab') return
+    const target = event.target
+    if (
+        (event.key === 'Enter' || event.key === ' ') &&
+        target instanceof Element &&
+        target.closest(TOUR_POPOVER_CONTENT_SELECTOR) !== null
+    ) {
+        return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+}
+window.addEventListener('keydown', onTourKeydownGate, true)
+
 /** 输入法合成中的按键不触发保存 */
 function isImeComposing(event: KeyboardEvent): boolean {
     return event.isComposing || event.keyCode === 229
@@ -1500,6 +1617,7 @@ function isImeComposing(event: KeyboardEvent): boolean {
 /** 键盘：仅 Ctrl/Cmd+S（保存是宿主职责，不入内核注册表）。文本编辑中键盘路由
  *  进 textarea，保存不抢；其余快捷键已由 useShortcuts 统一处理。 */
 function onKeydown(event: KeyboardEvent): void {
+    if (isTourActive()) return // 导游态门（03 票）：宿主快捷键 early-return，Esc 归导游（捕获段门已拦，此为语义兜底）
     if (saveAsOpen.value || saveAsNewOpen.value || revertOpen.value) return // 名字/确认弹窗模态持有键盘（Enter/Esc 由弹窗自理）
     if (editor.store.ui.editing !== null) return
     const mod = event.ctrlKey || event.metaKey
@@ -1519,8 +1637,11 @@ window.addEventListener('keydown', onKeydown)
 onBeforeRouteLeave(() => {
     flushEditorState()
     computeDirty()
-    if (!isDirty.value) return true
-    return window.confirm('当前有未保存的变更，离开将丢失。确定离开吗？')
+    if (isDirty.value && !window.confirm('当前有未保存的变更，离开将丢失。确定离开吗？')) return false
+    // 导航成立才 destroy 导游句柄（03 票「路由离开守卫中 destroy」）——confirm 取消
+    // = 留在编辑器，进行中的导游不惊扰；discard 路径自身落 seen（弹过即看过）
+    teardownTour()
+    return true
 })
 
 /** 双保险之二：页签关闭 beforeunload（文案由浏览器定）。工程数据 flush（工单 05
@@ -1604,6 +1725,8 @@ async function exportPreview(): Promise<void> {
 
 onBeforeUnmount(() => {
     window.removeEventListener('keydown', onKeydown)
+    window.removeEventListener('keydown', onTourKeydownGate, true)
+    teardownTour() // 卸载中 destroy 导游句柄（03 票），防 overlay 残留
     window.removeEventListener('beforeunload', onBeforeUnload)
     if (dirtyTimer !== null) clearTimeout(dirtyTimer)
     unsubscribeAssets?.()
@@ -1640,7 +1763,8 @@ onBeforeUnmount(() => {
     <main v-else class="stage">
         <!-- 顶栏（spec §4.1）：← 返回列表｜模板名可编辑（内容进 dirty 口径）｜
              保存态｜保存 / 发布 + 版本徽标（tdp 批 B ②）/ 版本（批 B ③）/ 另存为
-             （18 票）/ 渲染终图（19 票，draft 哨兵）/ 导出预览图（预览与终图并存） -->
+             （18 票）/ 渲染终图（19 票，draft 哨兵）/ 导出预览图（预览与终图并存）/
+             功能导游重播钮（feature-tour 03 票，常驻入口） -->
         <header class="topbar" aria-label="编辑器顶栏">
             <div class="topbar-doc">
                 <RouterLink to="/" class="back-link" data-back-link>← 返回列表</RouterLink>
@@ -1738,6 +1862,18 @@ onBeforeUnmount(() => {
                     @click="exportPreview"
                 >
                     {{ exporting ? '导出中…' : '导出预览图' }}
+                </button>
+                <!-- 功能导游常驻重播入口（feature-tour 03 票，spec §2.4）：独立 ? 图标
+                     钮，点击无视 seen 直接重播；有既有浮层先收起再开导游（replayTour） -->
+                <button
+                    type="button"
+                    class="ghost tour-replay"
+                    data-tour-replay
+                    title="功能导游：重看编辑器引导（首访轻导，约 1 分钟）"
+                    aria-label="功能导游"
+                    @click="replayTour"
+                >
+                    ?
                 </button>
             </div>
         </header>
@@ -2196,6 +2332,16 @@ onBeforeUnmount(() => {
 .topbar .ghost:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+}
+
+/* 功能导游重播钮（feature-tour 03 票，spec §2.4）：顶栏独立 ? 图标钮——正方形
+   紧凑形态区别于文字 ghost 钮；常驻语义（无 seen 门、无 v-if，锁「常驻 + 点击
+   重播」） */
+.topbar .tour-replay {
+    width: 28px;
+    padding: 5px 0;
+    font-weight: 600;
+    text-align: center;
 }
 
 /* 版本徽标（template-draft-publish 批 B ②）：轻量 pill 同行随发布钮，「未发布」

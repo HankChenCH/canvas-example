@@ -1,6 +1,7 @@
 // 从零新建空白模板纯逻辑测试（22 票 TDD 缝，spec §4.1 列表页新建入口）：空白
 // 载荷工厂形状与编排——名字裁剪/空名就地拒绝、POST 失败稳定码文案。全部 Node
-// 无 DOM 环境。（24 票追加底图快捷建模板：载荷工厂 + 编排同缝测试。）
+// 无 DOM 环境。（24 票追加图片快捷建模板：载荷工厂 + 编排同缝测试；ADR 0022
+// 迁移后载荷为画布背景形态。）
 import { describe, expect, it } from 'vitest'
 
 import { decodeGraph, encodeGraph } from '@hankchen/canvas'
@@ -12,7 +13,7 @@ import {
     createBlankTemplate,
     createImageTemplate,
     imageTemplatePayload,
-    type BaseImageFile,
+    type BackgroundImageFile,
 } from './newtemplate'
 
 /** 模板记录造数器：只带编排消费的字段 */
@@ -121,8 +122,8 @@ describe('createBlankTemplate（从零建模板编排）', () => {
     })
 })
 
-/** 底图造数器：字节/尺寸由浏览器通道（选图解码）产出，这里给定值 */
-function baseImage(overrides: Partial<BaseImageFile> = {}): BaseImageFile {
+/** 待建背景图造数器：字节/尺寸由浏览器通道（选图解码）产出，这里给定值 */
+function backgroundImage(overrides: Partial<BackgroundImageFile> = {}): BackgroundImageFile {
     return {
         name: 'poster.png',
         mime: 'image/png',
@@ -133,40 +134,19 @@ function baseImage(overrides: Partial<BaseImageFile> = {}): BaseImageFile {
     }
 }
 
-describe('imageTemplatePayload（底图模板载荷，24 票）', () => {
-    it('单帧图：画布宽高 = 图片像素宽高，单层「底图」铺满画布 + StaticValue 引用（未绑数据源 = 键省略）', () => {
+describe('imageTemplatePayload（图片模板载荷：画布背景形态，24 票 + ADR 0022 迁移）', () => {
+    it('单帧图：画布宽高 = 图片像素宽高，图片声明为画布背景（background 只落 image 分量，color 未设不落键）+ layers 空', () => {
         expect(imageTemplatePayload('海报模板', { src: '/assets/u/abc.png', width: 1240, height: 1754 }, null)).toEqual({
             name: '海报模板',
             canvases: [
                 {
                     name: '第 1 帧',
                     graph: {
-                        canvas: { width: 1240, height: 1754 },
-                        layers: [
-                            {
-                                type: 'ImageLayer',
-                                name: '底图',
-                                // 最高优先级 = 视觉最底（seed「页面底色」同约定）
-                                priority: 100,
-                                spec: {
-                                    shape: {
-                                        width: 1240,
-                                        height: 1754,
-                                        autoWidth: false,
-                                        autoHeight: false,
-                                        lineHeight: 1,
-                                        padding: { top: 0, bottom: 0, left: 0, right: 0 },
-                                        border: { top: null, bottom: null, left: null, right: null },
-                                        backgroundColor: null,
-                                    },
-                                    align: { horizontal: 'left', vertical: 'top' },
-                                    position: { x: 0, y: 0, position: 'top-left' },
-                                },
-                                // 前导斜杠引用串原样进 data.value（StaticValue 两键形态，
-                                // 三端 wire 同源：PHP ImageLayer::fromGraph / Go n.Data.Value / JS decode）
-                                data: { valueType: 'StaticValue', value: '/assets/u/abc.png' },
-                            },
-                        ],
+                        // wire 逐键同 @hankchen/canvas encodeGraph canonical 输出：
+                        // canvas 键序 width,height,background；background 仅 image
+                        // 分量落键（条件写键，spec §3）
+                        canvas: { width: 1240, height: 1754, background: { image: '/assets/u/abc.png' } },
+                        layers: [],
                     },
                 },
             ],
@@ -185,25 +165,25 @@ describe('imageTemplatePayload（底图模板载荷，24 票）', () => {
         expect(encodeGraph(decodeGraph(graph))).toEqual(graph)
     })
 
-    it('解码语义：画布尺寸与底图 src 落域正确', () => {
+    it('解码语义：画布尺寸与背景图引用落域正确，背景不产生图层', () => {
         const payload = imageTemplatePayload('海报模板', { src: '/assets/u/abc.png', width: 800, height: 600 }, null)
         const doc = decodeGraph(payload.canvases[0]!.graph)
         expect(doc.width).toBe(800)
         expect(doc.height).toBe(600)
-        expect(doc.layers).toHaveLength(1)
-        expect(doc.layers[0]).toMatchObject({ type: 'ImageLayer', name: '底图', src: '/assets/u/abc.png' })
+        expect(doc.background).toEqual({ color: null, image: '/assets/u/abc.png' })
+        expect(doc.layers).toHaveLength(0)
     })
 })
 
-describe('createImageTemplate（底图建模板编排，24 票）', () => {
-    it('成功：先上传后建模板，url 进载荷 data.value，dataSourceId 随建随绑透传', async () => {
+describe('createImageTemplate（图片建模板编排，24 票）', () => {
+    it('成功：先上传后建模板，url 进画布背景 background.image，dataSourceId 随建随绑透传', async () => {
         const calls: string[] = []
         const uploaded: unknown[] = []
         let payloadSeen: TemplateCreatePayload | null = null
         const result = await createImageTemplate({
             name: '  海报模板  ',
             dataSourceId: 7,
-            image: baseImage(),
+            image: backgroundImage(),
             uploadAsset: async (file) => {
                 uploaded.push(file)
                 calls.push('upload')
@@ -216,9 +196,9 @@ describe('createImageTemplate（底图建模板编排，24 票）', () => {
             },
         })
         expect(calls).toEqual(['upload', 'create'])
-        expect(uploaded).toEqual([{ name: 'poster.png', mime: 'image/png', bytes: baseImage().bytes }])
+        expect(uploaded).toEqual([{ name: 'poster.png', mime: 'image/png', bytes: backgroundImage().bytes }])
         expect((payloadSeen as TemplateCreatePayload | null)?.canvases[0]?.graph).toMatchObject({
-            canvas: { width: 1240, height: 1754 },
+            canvas: { width: 1240, height: 1754, background: { image: '/assets/u/abc.png' } },
         })
         expect((payloadSeen as TemplateCreatePayload | null)?.dataSourceId).toBe(7)
         expect(result).toEqual({ ok: true, record: record(7) })
@@ -229,7 +209,7 @@ describe('createImageTemplate（底图建模板编排，24 票）', () => {
         const result = await createImageTemplate({
             name: '   ',
             dataSourceId: null,
-            image: baseImage(),
+            image: backgroundImage(),
             uploadAsset: async () => { called += 1; return { url: '/assets/u/x.png' } },
             createTemplate: async () => { called += 1; return record(1) },
         })
@@ -246,7 +226,7 @@ describe('createImageTemplate（底图建模板编排，24 票）', () => {
             uploadAsset: async () => { called += 1; return { url: '/assets/u/x.png' } },
             createTemplate: async () => { called += 1; return record(1) },
         })
-        expect(result).toEqual({ ok: false, message: '请先选择底图图片' })
+        expect(result).toEqual({ ok: false, message: '请先选择背景图片' })
         expect(called).toBe(0)
     })
 
@@ -255,7 +235,7 @@ describe('createImageTemplate（底图建模板编排，24 票）', () => {
         const result = await createImageTemplate({
             name: '海报模板',
             dataSourceId: null,
-            image: baseImage(),
+            image: backgroundImage(),
             uploadAsset: async () => {
                 throw new ApiError(413, 'request_too_large', '请求体超限')
             },
@@ -269,7 +249,7 @@ describe('createImageTemplate（底图建模板编排，24 票）', () => {
         const apiFailure = await createImageTemplate({
             name: '海报模板',
             dataSourceId: null,
-            image: baseImage(),
+            image: backgroundImage(),
             uploadAsset: async () => ({ url: '/assets/u/abc.png' }),
             createTemplate: async () => {
                 throw new ApiError(400, 'frames_empty', '模板不含任何帧')
@@ -280,7 +260,7 @@ describe('createImageTemplate（底图建模板编排，24 票）', () => {
         const networkFailure = await createImageTemplate({
             name: '海报模板',
             dataSourceId: null,
-            image: baseImage(),
+            image: backgroundImage(),
             uploadAsset: async () => ({ url: '/assets/u/abc.png' }),
             createTemplate: async () => {
                 throw new TypeError('failed to fetch')
