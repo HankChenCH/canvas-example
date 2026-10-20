@@ -57,7 +57,7 @@ func mustJSONEqual(t *testing.T, got json.RawMessage, want string) {
 	}
 }
 
-// TestCompile_LegalPages 帧序 = 页序(graph 原文透传)、flow 节点按键面构造
+// TestCompile_LegalPages 帧序 = 页序(逐帧解码非空)、flow 节点按键面构造
 // (mode/quota/omitIfEmpty 原样 + 注入 frame)、页 id 与 name 不进编译产物
 func TestCompile_LegalPages(t *testing.T) {
 	// 链上帧须各有一张模板态槽位表且 rowsPath 链内一致(引擎语义)
@@ -66,18 +66,22 @@ func TestCompile_LegalPages(t *testing.T) {
 		pageWire(t, fmt.Sprintf(`{"id":"pg_main","name":"主页","graph":%s,"flow":{"mode":"fixed","quota":3}}`, g0)),
 		pageWire(t, fmt.Sprintf(`{"id":"pg_cont","graph":%s,"flow":{"mode":"paged","omitIfEmpty":true}}`, g1)),
 	}
-	graphs, chain, verr := Compile(pages)
+	products, verr := Compile(pages)
 	if verr != nil {
 		t.Fatalf("合法页序列应通过: %v", verr)
 	}
-	if len(graphs) != 2 || !bytes.Equal(graphs[0], g0) || !bytes.Equal(graphs[1], g1) {
-		t.Fatalf("帧序应等于页序且 graph 原文透传,实得 %s", graphs)
+	if len(products.Frames) != 2 || products.Frames[0] == nil || products.Frames[1] == nil {
+		t.Fatalf("帧序应等于页序且逐帧解码非空,实得 %+v", products.Frames)
 	}
-	mustJSONEqual(t, chain, `[{"frame":0,"mode":"fixed","quota":3},{"frame":1,"mode":"paged","omitIfEmpty":true}]`)
+	chainJSON, err := json.Marshal(products.Chain)
+	if err != nil {
+		t.Fatalf("流链序列化: %v", err)
+	}
+	mustJSONEqual(t, chainJSON, `[{"frame":0,"mode":"fixed","quota":3},{"frame":1,"mode":"paged","omitIfEmpty":true}]`)
 	// 页 id 与 name 是编辑层字段,不出编译产物
 	for _, needle := range []string{"pg_main", "pg_cont", "主页"} {
-		if bytes.Contains(chain, []byte(needle)) {
-			t.Fatalf("编译产物不得携带页 id/name:%q 混入流链 %s", needle, chain)
+		if bytes.Contains(chainJSON, []byte(needle)) {
+			t.Fatalf("编译产物不得携带页 id/name:%q 混入流链 %s", needle, chainJSON)
 		}
 	}
 }
@@ -102,15 +106,15 @@ func TestCompile_AllPagesWithoutFlow_EmptyChainLegal(t *testing.T) {
 		"零页": nil,
 	}
 	for name, pages := range cases {
-		graphs, chain, verr := Compile(pages)
+		products, verr := Compile(pages)
 		if verr != nil {
 			t.Fatalf("%s:全页无 flow 应按纯文档管线通过: %v", name, verr)
 		}
-		if chain != nil {
-			t.Fatalf("%s:全页无 flow 的流链应为空链缺省形态(nil),实得 %s", name, chain)
+		if products.Chain != nil {
+			t.Fatalf("%s:全页无 flow 的流链应为空链缺省形态(nil),实得 %v", name, products.Chain)
 		}
-		if len(graphs) != len(pages) {
-			t.Fatalf("%s:帧数应等于页数(无 flow 页照常占帧位),实得 %d 帧", name, len(graphs))
+		if len(products.Frames) != len(pages) {
+			t.Fatalf("%s:帧数应等于页数(无 flow 页照常占帧位),实得 %d 帧", name, len(products.Frames))
 		}
 	}
 }
@@ -164,23 +168,24 @@ func TestCompile_PageShapeCodes(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		_, _, verr := Compile(tc.pages)
+		_, verr := Compile(tc.pages)
 		mustCode(t, verr, tc.wantCode)
 	}
 }
 
-// TestCompile_ShapeMessageCarriesIndexAndID 失败消息带页下标与 id(定位作者改哪页)
+// TestCompile_ShapeMessageCarriesIndexAndID 失败消息带页序号(1 起,对齐前端
+// 页签「第 N 页」)与 id(定位作者改哪页)
 func TestCompile_ShapeMessageCarriesIndexAndID(t *testing.T) {
 	g := graphWire(``)
 	pages := []Page{
 		pageWire(t, fmt.Sprintf(`{"id":"pg_ok","graph":%s}`, g)),
 		pageWire(t, fmt.Sprintf(`{"id":"pg_2","name":123,"graph":%s}`, g)),
 	}
-	_, _, verr := Compile(pages)
+	_, verr := Compile(pages)
 	mustCode(t, verr, codes.PageInvalid)
-	for _, needle := range []string{"第 1 页", "pg_2"} {
+	for _, needle := range []string{"第 2 页", "pg_2"} {
 		if !strings.Contains(verr.Message, needle) {
-			t.Fatalf("失败消息应带页下标与 id(缺 %q):%s", needle, verr.Message)
+			t.Fatalf("失败消息应带页序号与 id(缺 %q):%s", needle, verr.Message)
 		}
 	}
 }
@@ -251,7 +256,7 @@ func TestCompile_FlowSemanticCodesPassthrough(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		_, _, verr := Compile(tc.pages)
+		_, verr := Compile(tc.pages)
 		mustCode(t, verr, tc.wantCode)
 	}
 }
@@ -280,40 +285,9 @@ func TestCompile_GraphDecodeKeepsExistingCodes(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		_, _, verr := Compile([]Page{pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s}`, tc.graph))})
+		_, verr := Compile([]Page{pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s}`, tc.graph))})
 		mustCode(t, verr, tc.wantCode)
 	}
-}
-
-// TestDecodeProducts 编译产物解码段(渲染管线消费面):帧序不变、链解码透传、
-// 空链缺省形态(nil)回空链;防御性失败沿用既有 code 分流
-func TestDecodeProducts(t *testing.T) {
-	g0, g1 := graphWire(``), graphWire(``)
-	graphs := []json.RawMessage{g0, g1}
-	chainRaw := json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`)
-
-	// 合法产物:两帧 + 两节点;空链缺省形态(nil)回 nil 链
-	frames, chain, verr := DecodeProducts(graphs, chainRaw)
-	if verr != nil {
-		t.Fatalf("合法产物应解码通过: %v", verr)
-	}
-	if len(frames) != 2 || frames[0] == nil || frames[1] == nil {
-		t.Fatalf("帧序列应两帧非空: %+v", frames)
-	}
-	if len(chain) != 2 || chain[0].Frame != 0 || chain[1].Frame != 1 || !chain[1].OmitIfEmpty {
-		t.Fatalf("流链节点应原样解码: %+v", chain)
-	}
-	frames2, chain2, verr := DecodeProducts(graphs, nil)
-	if verr != nil || chain2 != nil || len(frames2) != 2 {
-		t.Fatalf("空链缺省形态应回 nil 链: %+v %+v %v", chain2, frames2, verr)
-	}
-
-	// 防御性失败:graph 非 wire 形态归 invalid_json(Compile 已裁决同批 pages,
-	// 此处只兜存储态被绕过写端点直改的路径)
-	_, _, verr = DecodeProducts([]json.RawMessage{json.RawMessage(`42`)}, nil)
-	mustCode(t, verr, codes.InvalidJSON)
-	_, _, verr = DecodeProducts(graphs, json.RawMessage(`["fixed"]`))
-	mustCode(t, verr, codes.InvalidJSON)
 }
 
 // TestPageName 页显示名解码:字符串原名、缺席/null/非字符串归空串(编译期已

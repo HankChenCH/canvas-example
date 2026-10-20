@@ -79,12 +79,12 @@ describe('loadPageSlots（载入逐页 decode→canonical encode + 宽容归一�
         }
     })
 
-    it('任一页解码失败抛错并带页下标（0 起，对齐服务端预检消息序号）', () => {
+    it('任一页解码失败抛错并带页序号（1 起，对齐服务端预检消息与前端页签「第 N 页」）', () => {
         const pages = [
             { id: 'pg_a', graph: frameGraph('ok') },
             { id: 'pg_b', graph: { canvas: { width: 10, height: 10 }, layers: [{ type: 'NoSuchLayer' }] } },
         ]
-        expect(() => loadPageSlots(pages)).toThrow(/第 1 页/)
+        expect(() => loadPageSlots(pages)).toThrow(/第 2 页/)
     })
 
     it('宽容归一：name 缺省/空串归 null（显示层渲染「第 N 页」）；id 缺失防御性补号；flow 非法归 null', () => {

@@ -171,8 +171,8 @@ func postRenderBody(t *testing.T, h http.Handler, id, body string) (int, map[str
 	return doRequest(t, h, http.MethodPost, fmt.Sprintf("/api/templates/%s/render", id), "application/json", []byte(body))
 }
 
-// rewriteDraftCanvas 整存替换草稿为单页指定名(改 pages 文本,发布不 duplicate)
-func rewriteDraftCanvas(t *testing.T, h http.Handler, id int64, pageName string) {
+// rewriteDraftPages 整存替换草稿为单页指定名(改 pages 文本,发布不 duplicate)
+func rewriteDraftPages(t *testing.T, h http.Handler, id int64, pageName string) {
 	t.Helper()
 	put := mustJSONFile(t, map[string]any{
 		"name":  "渲染用本地模板",
@@ -211,11 +211,11 @@ func TestPostRender_SelectionMatrix(t *testing.T) {
 	h, _ := newTestServer(t)
 	t.Chdir(t.TempDir())
 	id := newLocalRenderTemplate(t, h) // v1 = 主页/续页 + 流策略
-	rewriteDraftCanvas(t, h, id, "主页改")
+	rewriteDraftPages(t, h, id, "主页改")
 	if got := publishDraft(t, h, id); got != 2 {
 		t.Fatalf("改版后发布应得 v2, 实得 %v", got)
 	}
-	rewriteDraftCanvas(t, h, id, "草稿页") // 草稿领先于 v2,不发布
+	rewriteDraftPages(t, h, id, "草稿页") // 草稿领先于 v2,不发布
 
 	// 缺省(无 body)= 最新已发布 v2,而非草稿
 	code, body := postRender(t, h, fmt.Sprintf("%d", id))

@@ -101,13 +101,13 @@ describe('planRevertSession（回滚会话转移，spec §5）', () => {
         expect(plan.baseline.pages[1]!.flow).toBe('{"mode":"fixed","quota":3}')
     })
 
-    it('任一页解码失败抛错并带页下标（会话替换前成算失败 → 调用方原会话零变更）', () => {
+    it('任一页解码失败抛错并带页序号（1 起，对齐页签序号；会话替换前成算失败 → 调用方原会话零变更）', () => {
         const record = revertRecord({
             pages: [
                 { id: 'pg_a', graph: frameGraph('ok') },
                 { id: 'pg_b', graph: { canvas: { width: 10, height: 10 }, layers: [{ type: 'NoSuchLayer' }] } },
             ],
         })
-        expect(() => planRevertSession(record)).toThrow(/第 1 页/)
+        expect(() => planRevertSession(record)).toThrow(/第 2 页/)
     })
 })

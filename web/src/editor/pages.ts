@@ -48,11 +48,17 @@ export interface PageBaseline {
     pages: PageBaselineEntry[]
 }
 
-/** 页 id 前端生成（spec 定案）：`pg_` + crypto.randomUUID（浏览器与 Node 19+ 原生
- *  可用，零第三方依赖）。只活编辑层与工程数据键，随保存载荷上行、编译时服务端丢弃
+/** 页 id 前端生成（spec 定案）：`pg_` + uuid v4 形态串。不用 crypto.randomUUID：
+ *  它只在 secure context（https 或 localhost）可用，http 内网部署即抛错；
+ *  crypto.getRandomValues 无 secure-context 前置（浏览器与 Node 19+ 原生可用，
+ *  零第三方依赖）。只活编辑层与工程数据键，随保存载荷上行、编译时服务端丢弃
  *  不出 wire */
 export function newPageId(): string {
-    return `pg_${crypto.randomUUID()}`
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6]! & 0x0f) | 0x40 // version 4
+    bytes[8] = (bytes[8]! & 0x3f) | 0x80 // variant 10x
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+    return `pg_${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 /** 文档 → canonical JSON 串（切出快照与 dirty 现值共用同一条缝） */
@@ -95,16 +101,17 @@ export function canonicalPageFlow(flow: PageFlow | null): string {
 }
 
 /** 载入页序列（spec 页形状契约接「decodeGraph 逐页」）：每页解码即验 + canonical 化
- *  ——基线与页槽位同形，切页往返不产生伪 dirty；任一页解码失败抛错（消息带页下标，
- *  0 起，对齐服务端预检消息序号），由调用方做载入错误面。宽容面：id 缺失/空（服务端
- *  校验非空+唯一，此处只是防御性修复不丢会话）、name 空串、flow 非法均归一修复。 */
+ *  ——基线与页槽位同形，切页往返不产生伪 dirty；任一页解码失败抛错（消息带页序号，
+ *  1 起，对齐服务端预检消息与前端页签「第 N 页」），由调用方做载入错误面。宽容面：
+ *  id 缺失/空（服务端校验非空+唯一，此处只是防御性修复不丢会话）、name 空串、
+ *  flow 非法均归一修复。 */
 export function loadPageSlots(pages: ReadonlyArray<TemplatePageWire>): PageSlot[] {
     return pages.map((page, index) => {
         let graphJson: string
         try {
             graphJson = encodeGraphJson(decodeGraph(page.graph))
         } catch (e) {
-            throw new Error(`第 ${index} 页解码失败：${e instanceof Error ? e.message : String(e)}`)
+            throw new Error(`第 ${index + 1} 页解码失败：${e instanceof Error ? e.message : String(e)}`)
         }
         return {
             id: typeof page.id === 'string' && page.id !== '' ? page.id : newPageId(),

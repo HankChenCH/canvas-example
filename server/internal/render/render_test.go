@@ -418,10 +418,10 @@ func minimalTemplateTable() string {
 		 "cells":[{"type":"TableCellLayer","priority":0,"spec":{"shape":{"width":714,"height":400}}}]}}]}`
 }
 
-// TestRun_NullFlowChain 全页无 flow = 空链 = 纯文档管线(spec §3.1):逐帧
+// TestRun_AllPagesWithoutFlow 全页无 flow = 空链 = 纯文档管线(spec §3.1):逐帧
 // 全量填充直通分页,各页单页。用 2 行 dataset(表顶 190 + 2×400 = 990 ≤ 1123
 // 不溢出;5 行全量会按分页关语义合法报 content_overflow,不属本用例)
-func TestRun_NullFlowChain(t *testing.T) {
+func TestRun_AllPagesWithoutFlow(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
 	rec, _ := newOfflineRecord(t)
@@ -475,7 +475,7 @@ func TestRun_EmptyRowsOmitSkip(t *testing.T) {
 
 // TestRun_ExternalPagesPageOnce 链外页分页关恒单页:三页文档只把中页挂链,
 // 前后链外页各 1 页(页归属覆盖链间链外页的切段对齐)
-func TestRun_ExternalFramesPageOnce(t *testing.T) {
+func TestRun_ExternalPagesPageOnce(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
 

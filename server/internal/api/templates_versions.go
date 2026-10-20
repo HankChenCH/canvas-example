@@ -56,7 +56,7 @@ func (s *Server) handlePublishTemplate(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err, "读取模板失败")
 		return
 	}
-	if _, _, verr := pages.Compile(rec.Pages); verr != nil {
+	if _, verr := pages.Compile(rec.Pages); verr != nil {
 		writeError(w, http.StatusUnprocessableEntity, codes.InvalidGraph, verr.Message)
 		return
 	}

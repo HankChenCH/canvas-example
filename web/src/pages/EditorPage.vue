@@ -8,7 +8,6 @@
 //     + attachContentBackend + setOverlayPainter + materializer 双订阅
 //     （doc 变更 → materialize；物化状态变更 → invalidate both）
 //   → decodeGraph 逐页 → openDocument 第 0 页 → fitToSurface
-//   → decodeGraph 逐页 → openDocument 第 0 页 → fitToSurface
 // 页序列（模板页序列工票 03，spec 页形状契约 / ADR 0025；16 票多帧 / 26 票尾部增页 /
 // 27 票删页的交互能力面沿用）：画布上方页 tab 条；切页即进宿主内存页槽序列——切出前
 // encodeGraph(editor.store.doc) 快照该页、换页 openDocument 重建会话文档（openDocument
@@ -239,7 +238,7 @@ async function loadTemplate(id: string): Promise<void> {
             errorText.value = e instanceof Error ? e.message : String(e)
             return
         }
-        flowChainBaselineFlows.value = pageSlots.value.map((slot) => canonicalPageFlow(slot.flow))
+        pageFlowBaseline.value = pageSlots.value.map((slot) => canonicalPageFlow(slot.flow))
         // 工程数据快照恢复编排（工单 04，spec §6 首载序「GET editorState → 逐页
         // decode → openDocument(页0, 切片) → applyEditorPrefs 一次性」的宿主半边）：
         // 宽容解析（editorState null/形状不合法 = 全默认态起步，零报错）→ 悬空页键
@@ -490,11 +489,11 @@ const drawerOpen = ref(false)
 // 保存预检。 ----
 
 const flowChainDrawerOpen = ref(false)
-const flowChainBaselineFlows = shallowRef<string[]>([])
+const pageFlowBaseline = shallowRef<string[]>([])
 const flowChainSegmentDirty = computed(
     () =>
-        pageSlots.value.length !== flowChainBaselineFlows.value.length ||
-        pageSlots.value.some((slot, i) => canonicalPageFlow(slot.flow) !== flowChainBaselineFlows.value[i]),
+        pageSlots.value.length !== pageFlowBaseline.value.length ||
+        pageSlots.value.some((slot, i) => canonicalPageFlow(slot.flow) !== pageFlowBaseline.value[i]),
 )
 // 页摘要（编辑器行标 + rowsPath 提示/表校验输入）：graphJson 取页槽现值
 // （含未保存编辑，提示与校验跟着现场走）；行序 = 页序、行 key = 页 id
@@ -1008,7 +1007,7 @@ async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<boolean>
         // 继续编辑保持 dirty
         savedBaseline = baselineFromPages(sentName, sentSlots)
         // flow 已随本次文档级 PUT 落库：段基线同步各页 flow canonical 串，段内标记归灭
-        flowChainBaselineFlows.value = sentSlots.map((slot) => canonicalPageFlow(slot.flow))
+        pageFlowBaseline.value = sentSlots.map((slot) => canonicalPageFlow(slot.flow))
         flowChainError.value = null
         computeDirty()
         docNote.value = '已保存到服务端'
@@ -1154,7 +1153,7 @@ async function runRevert(): Promise<void> {
         pageSlots.value = plan.slots
         activePage.value = 0
         savedBaseline = plan.baseline
-        flowChainBaselineFlows.value = plan.slots.map((slot) => canonicalPageFlow(slot.flow))
+        pageFlowBaseline.value = plan.slots.map((slot) => canonicalPageFlow(slot.flow))
         flowChainError.value = null
         // 数据源绑定按全量记录如实重注 schema（applyBoundSource 同入口）
         applyBoundSource(source)
@@ -1302,7 +1301,7 @@ async function runSaveAs(): Promise<void> {
         templateName.value = sentName
         // 流链编辑器基线：flow 已随 POST 落库 → 段基线同步各页 flow canonical 串
         // （段内标记归灭）；数据源实体未动（引用随行），内容段基线与文本域保持
-        flowChainBaselineFlows.value = sentSlots.map((slot) => canonicalPageFlow(slot.flow))
+        pageFlowBaseline.value = sentSlots.map((slot) => canonicalPageFlow(slot.flow))
         flowChainError.value = null
         computeDirty()
         saveAsOpen.value = false

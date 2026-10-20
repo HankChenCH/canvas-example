@@ -74,7 +74,7 @@ func TestLoadRealSeed(t *testing.T) {
 		t.Fatalf("Load 不得预设 data_source_id: %v", tmpl.DataSourceID)
 	}
 	// 编译哨兵:seed 页序列应过编译边界(种子模板直接就是可渲染的页形状)
-	if _, _, verr := pages.Compile(tmpl.Pages); verr != nil {
+	if _, verr := pages.Compile(tmpl.Pages); verr != nil {
 		t.Fatalf("seed 页序列应过编译: %v", verr)
 	}
 }

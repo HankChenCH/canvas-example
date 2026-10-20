@@ -72,22 +72,20 @@ type PipelineErr struct {
 func (e *PipelineErr) Error() string { return e.Code + ": " + e.Message }
 
 // Run 渲染一跳(spec §2.4 #7):页序列经编译边界防御性复跑保存预检段(spec
-// §3.4 同一实现,ADR 0025)→ 产物续跑文档编译 → 逐页渲染为 PNG。datasetRaw 为
-// 模板所引数据源实体的 data 列(handler 解析引用后传入),null/缺省按未绑直通
-// 编译,零行空壳页合法。ctx 携带渲染期 30s deadline(handler 叠加,spec §2.6),
-// 穿引到绘制检查点与物化下载;编译为纯结构计算不设检查点。
+// §3.4 同一实现,ADR 0025)——一次解码产出帧序列与流链,渲染期零二次解码
+// → 文档编译 → 逐页渲染为 PNG。datasetRaw 为模板所引数据源实体的 data 列
+// (handler 解析引用后传入),null/缺省按未绑直通编译,零行空壳页合法。ctx 携带
+// 渲染期 30s deadline(handler 叠加,spec §2.6),穿引到绘制检查点与物化下载;
+// 编译为纯结构计算不设检查点。
 func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord, datasetRaw json.RawMessage) ([]Page, *PipelineErr) {
 	// 防御性复跑与保存预检同一段编译实现(页级形状 + 逐帧解码 + 流链校验):
-	// 正常由写端点先行打回,此处覆盖绕过写端点直改存储态的路径
-	graphs, chainRaw, verr := pages.Compile(rec.Pages)
+	// 正常由写端点先行打回,此处覆盖绕过写端点直改存储态的路径;编译即完成
+	// 全部解码(Products),不对同批 graph 二次解码
+	products, verr := pages.Compile(rec.Pages)
 	if verr != nil {
 		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: verr.Code, Message: verr.Message}
 	}
-	// 编译产物续跑(机械解码段,与预检产物同形):帧序列 + 流链直入编译管线
-	frames, chain, derr := pages.DecodeProducts(graphs, chainRaw)
-	if derr != nil {
-		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: derr.Code, Message: derr.Message}
-	}
+	frames, chain := products.Frames, products.Chain
 
 	dataset, jerr := decodeDataset(datasetRaw)
 	if jerr != nil {
@@ -269,8 +267,8 @@ func mapPipelineErr(ctx context.Context, err error) *PipelineErr {
 	case errors.Is(err, resolver.ErrQRGenerateFailed):
 		return &PipelineErr{Status: http.StatusInternalServerError, Code: codes.QRGenerateFailed,
 			Message: fmt.Sprintf("二维码生成失败: %v", err)}
-	// 解码(FromGraph,spec §2.5 三码;正常由 pages.Compile/DecodeProducts 先行
-	// 对号,此处覆盖编译产物续跑段 FromGraph 的防御性复现)
+	// 解码(FromGraph,spec §2.5 三码;正常由 pages.Compile 先行对号,此处覆盖
+	// 编译产物续跑段 FromGraph 的防御性复现——如求值产物回写后 FromGraph 重建)
 	case errors.Is(err, layer.ErrUnknownLayerType):
 		return pipeline400(err, codes.UnknownLayerType)
 	case errors.Is(err, layer.ErrTemplateRowsConflict):

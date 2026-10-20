@@ -14,6 +14,7 @@
  * 三事件上抛（单向数据流，DataSourceDrawer 先例）。Teleport body + 自带令牌块；
  * 非模态，画布保持可交互。
  */
+import { flowRoleOf } from '../editor/pageflow'
 import type { PageFlowRole, PageFlowRow, PageTableInfo } from '../editor/pageflow'
 
 defineProps<{
@@ -103,9 +104,9 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
                             :key="r.value"
                             type="button"
                             class="cn-fcd__role"
-                            :class="{ 'is-active': (row.flow === null ? 'off' : row.flow.mode) === r.value }"
+                            :class="{ 'is-active': flowRoleOf(row.flow) === r.value }"
                             :data-chain-role="r.value"
-                            :aria-pressed="(row.flow === null ? 'off' : row.flow.mode) === r.value"
+                            :aria-pressed="flowRoleOf(row.flow) === r.value"
                             @click="emit('setRole', i, r.value)"
                         >
                             {{ r.label }}

@@ -81,7 +81,7 @@ func decodeTemplatePayload(w http.ResponseWriter, r *http.Request) (templateWrit
 		writeDecodeError(w, err)
 		return payload, false
 	}
-	if _, _, verr := pages.Compile(payload.Pages); verr != nil {
+	if _, verr := pages.Compile(payload.Pages); verr != nil {
 		writeError(w, http.StatusBadRequest, verr.Code, verr.Message)
 		return payload, false
 	}
