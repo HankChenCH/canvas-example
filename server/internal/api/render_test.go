@@ -42,9 +42,9 @@ func templateTableGraph() map[string]any {
 	}
 }
 
-// newLocalRenderTemplate 造一个离线可渲染的模板(双帧模板表 + 默认链),
-// 创建即绑定数据源(单调用,spec §2.4 #3)并发布 v1(缺省渲染语义 = 最新已发布,
-// 明示 breaking change,spec §4)后返回模板 id
+// newLocalRenderTemplate 造一个离线可渲染的模板(双页模板表 + 流策略,ADR 0025
+// 页序列形状),创建即绑定数据源(单调用,spec §2.4 #3)并发布 v1(缺省渲染语义 =
+// 最新已发布,明示 breaking change,spec §4)后返回模板 id
 func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 	t.Helper()
 	ds := mustJSONFile(t, map[string]any{
@@ -58,13 +58,9 @@ func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 	}
 	payload := mustJSONFile(t, map[string]any{
 		"name": "渲染用本地模板",
-		"canvases": []any{
-			map[string]any{"name": "主页", "graph": templateTableGraph()},
-			map[string]any{"name": "续页", "graph": templateTableGraph()},
-		},
-		"flowChain": []any{
-			map[string]any{"frame": 0, "mode": "fixed"},
-			map[string]any{"frame": 1, "mode": "paged", "omitIfEmpty": true},
+		"pages": []any{
+			map[string]any{"id": "pg_main", "name": "主页", "graph": templateTableGraph(), "flow": map[string]any{"mode": "fixed"}},
+			map[string]any{"id": "pg_cont", "name": "续页", "graph": templateTableGraph(), "flow": map[string]any{"mode": "paged", "omitIfEmpty": true}},
 		},
 		"dataSourceId": body["id"],
 	})
@@ -80,8 +76,9 @@ func newLocalRenderTemplate(t *testing.T, h http.Handler) int64 {
 	return id
 }
 
-// TestPostRender_201SeedShape 渲染 → 201 RenderRecord:images 帧序×页序扁平、
-// url 前导斜杠形态;逐 url GET 200 且 Content-Type image/png(spec §2.3/§2.4 #7)
+// TestPostRender_201SeedShape 渲染 → 201 RenderRecord:images 页序扁平(页归属
+// 字段 frame 语义延续为页下标,ADR 0025)、url 前导斜杠形态;逐 url GET 200 且
+// Content-Type image/png(spec §2.3/§2.4 #7)
 func TestPostRender_201Shape(t *testing.T) {
 	h, _ := newTestServer(t)
 	t.Chdir(t.TempDir())
@@ -99,7 +96,7 @@ func TestPostRender_201Shape(t *testing.T) {
 	}
 	images, ok := body["images"].([]any)
 	if !ok || len(images) != 1 {
-		t.Fatalf("单帧空链渲染应 1 页: %v", body["images"])
+		t.Fatalf("单行 dataset 下 paged 续页应 omitIfEmpty 跳帧,仅主页 1 页: %v", body["images"])
 	}
 	img := images[0].(map[string]any)
 	if img["frame"] != float64(0) || img["name"] != "主页" {
@@ -145,8 +142,8 @@ func TestPostRender_KeepAll(t *testing.T) {
 	// 改模板(整存替换)后再渲染:新渲染记录新 id(缺省渲染 = 最新已发布 v1,
 	// 与草稿改动无关——keep-all 旧图快照仍服务)
 	put := mustJSONFile(t, map[string]any{
-		"name":     "改名后的渲染模板",
-		"canvases": []any{map[string]any{"name": "主页", "graph": templateTableGraph()}},
+		"name":  "改名后的渲染模板",
+		"pages": []any{map[string]any{"id": "pg_main", "name": "主页", "graph": templateTableGraph()}},
 	})
 	code, body := doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d", id), "application/json", put)
 	if code != http.StatusOK {
@@ -174,12 +171,12 @@ func postRenderBody(t *testing.T, h http.Handler, id, body string) (int, map[str
 	return doRequest(t, h, http.MethodPost, fmt.Sprintf("/api/templates/%s/render", id), "application/json", []byte(body))
 }
 
-// rewriteDraftCanvas 整存替换草稿为单帧指定名(改 canvases 文本,发布不 duplicate)
-func rewriteDraftCanvas(t *testing.T, h http.Handler, id int64, frameName string) {
+// rewriteDraftPages 整存替换草稿为单页指定名(改 pages 文本,发布不 duplicate)
+func rewriteDraftPages(t *testing.T, h http.Handler, id int64, pageName string) {
 	t.Helper()
 	put := mustJSONFile(t, map[string]any{
-		"name":     "渲染用本地模板",
-		"canvases": []any{map[string]any{"name": frameName, "graph": templateTableGraph()}},
+		"name":  "渲染用本地模板",
+		"pages": []any{map[string]any{"id": "pg_draft", "name": pageName, "graph": templateTableGraph()}},
 	})
 	code, body := doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d", id), "application/json", put)
 	if code != http.StatusOK {
@@ -197,7 +194,7 @@ func publishDraft(t *testing.T, h http.Handler, id int64) float64 {
 	return body["version"].(float64)
 }
 
-// firstPageName 渲染记录首页的帧名(选版内容断言位)
+// firstPageName 渲染记录首页的页名(选版内容断言位)
 func firstPageName(t *testing.T, body map[string]any) string {
 	t.Helper()
 	images, ok := body["images"].([]any)
@@ -213,12 +210,12 @@ func firstPageName(t *testing.T, body map[string]any) string {
 func TestPostRender_SelectionMatrix(t *testing.T) {
 	h, _ := newTestServer(t)
 	t.Chdir(t.TempDir())
-	id := newLocalRenderTemplate(t, h) // v1 = 主页/续页 + 链
-	rewriteDraftCanvas(t, h, id, "主页改")
+	id := newLocalRenderTemplate(t, h) // v1 = 主页/续页 + 流策略
+	rewriteDraftPages(t, h, id, "主页改")
 	if got := publishDraft(t, h, id); got != 2 {
 		t.Fatalf("改版后发布应得 v2, 实得 %v", got)
 	}
-	rewriteDraftCanvas(t, h, id, "草稿帧") // 草稿领先于 v2,不发布
+	rewriteDraftPages(t, h, id, "草稿页") // 草稿领先于 v2,不发布
 
 	// 缺省(无 body)= 最新已发布 v2,而非草稿
 	code, body := postRender(t, h, fmt.Sprintf("%d", id))
@@ -252,7 +249,7 @@ func TestPostRender_SelectionMatrix(t *testing.T) {
 	if body["version"] != nil {
 		t.Fatalf("draft 渲染记录 version 应 null 透传: %v", body["version"])
 	}
-	if got := firstPageName(t, body); got != "草稿帧" {
+	if got := firstPageName(t, body); got != "草稿页" {
 		t.Fatalf("draft 渲染应踩草稿列现值, 实得 %q", got)
 	}
 
@@ -335,12 +332,12 @@ func TestPostRender_TemplateMissingWithBody404(t *testing.T) {
 	}
 }
 
-// newUnpublishedTemplate 造一个离线可渲染但从未发布的模板(空链单帧直通)
+// newUnpublishedTemplate 造一个离线可渲染但从未发布的模板(无 flow 单页直通)
 func newUnpublishedTemplate(t *testing.T, h http.Handler) int64 {
 	t.Helper()
 	payload := mustJSONFile(t, map[string]any{
-		"name":     "未发布渲染模板",
-		"canvases": []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"name":  "未发布渲染模板",
+		"pages": []any{map[string]any{"id": "pg_unpub", "name": "单页", "graph": minimalGraph()}},
 	})
 	code, body := doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
 	if code != http.StatusCreated {

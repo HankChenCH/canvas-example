@@ -55,13 +55,18 @@ func minimalGraph() map[string]any {
 	}
 }
 
+// minimalPage 最小合法页(id + 名 + 最小画布 graph,无 flow = 链外页)
+func minimalPage(id, name string) map[string]any {
+	return map[string]any{"id": id, "name": name, "graph": minimalGraph()}
+}
+
 // --- POST /api/templates(spec §2.4 #3) ---
 
 func TestPostTemplate_Minimal201(t *testing.T) {
 	h, seedID := newTestServer(t)
 	payload := mustJSONFile(t, map[string]any{
-		"name":     "冒烟最小模板",
-		"canvases": []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"name":  "冒烟最小模板",
+		"pages": []any{minimalPage("pg_smoke", "单页")},
 	})
 	code, body := doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
 	if code != http.StatusCreated {
@@ -71,9 +76,14 @@ func TestPostTemplate_Minimal201(t *testing.T) {
 	if !ok || id <= float64(seedID) {
 		t.Fatalf("id 应为自增整数且大于种子 id %d: %v", seedID, body["id"])
 	}
-	// POST 载荷缺省未绑数据源(spec §2.4 #3):dataSourceId null、flowChain 缺省 null
-	if body["dataSourceId"] != nil || body["flowChain"] != nil {
-		t.Fatalf("新模板 dataSourceId/flowChain 应为 null: %v", body)
+	// POST 载荷缺省未绑数据源(spec §2.4 #3):dataSourceId null、无 flow 页照常
+	// 存储(pages 恒数组)
+	if body["dataSourceId"] != nil {
+		t.Fatalf("新模板 dataSourceId 应为 null: %v", body)
+	}
+	pages, ok := body["pages"].([]any)
+	if !ok || len(pages) != 1 {
+		t.Fatalf("响应应回显单页 pages: %v", body["pages"])
 	}
 	if body["createdAt"] != body["updatedAt"] {
 		t.Fatalf("createdAt 应等于 updatedAt: %v / %v", body["createdAt"], body["updatedAt"])
@@ -97,8 +107,10 @@ func listCount(t *testing.T, h http.Handler) int {
 	return len(list)
 }
 
-// TestPostTemplate_PreflightRejects 保存即预检:400 打回不落库(spec §3.4);
-// 错误码逐一对号在 preflight 包单测,此处压 HTTP 映射与不落库
+// TestPostTemplate_PreflightRejects 保存即预检(编译边界 pages.Compile):
+// 400 打回不落库(spec §3.4);Compile 返回的 Code 原样上信封——页级形状错
+// page_invalid、流语义错透传引擎 sentinel、解码错沿用既有码。错误码逐项矩阵在
+// pages 包单测,此处压 HTTP 映射与不落库
 func TestPostTemplate_PreflightRejects(t *testing.T) {
 	h, _ := newTestServer(t)
 	cases := map[string]struct {
@@ -106,34 +118,44 @@ func TestPostTemplate_PreflightRejects(t *testing.T) {
 		wantCode string
 	}{
 		"未知图层类型": {
-			map[string]any{"name": "坏图层", "canvases": []any{map[string]any{
+			map[string]any{"name": "坏图层", "pages": []any{map[string]any{
+				"id":   "pg_ghost",
 				"name": "单页",
 				"graph": map[string]any{"canvas": map[string]any{"width": 100, "height": 100},
 					"layers": []any{map[string]any{"type": "GhostLayer", "priority": 0}}},
 			}}},
 			"unknown_layer_type",
 		},
-		"双paged流链": {
+		"双paged": {
 			map[string]any{
 				"name": "坏链",
-				"canvases": []any{
-					map[string]any{"name": "帧一", "graph": minimalGraph()},
-					map[string]any{"name": "帧二", "graph": minimalGraph()},
-				},
-				"flowChain": []any{
-					map[string]any{"frame": 0, "mode": "paged"},
-					map[string]any{"frame": 1, "mode": "paged"},
+				"pages": []any{
+					map[string]any{"id": "pg_a", "name": "页一", "graph": minimalGraph(), "flow": map[string]any{"mode": "paged"}},
+					map[string]any{"id": "pg_b", "name": "页二", "graph": minimalGraph(), "flow": map[string]any{"mode": "paged"}},
 				},
 			},
 			"flow_chain_invalid",
 		},
-		"流链节点非JSON对象": {
+		"页id缺失": {
 			map[string]any{
-				"name":      "坏节点",
-				"canvases":  []any{map[string]any{"name": "帧一", "graph": minimalGraph()}},
-				"flowChain": []any{"fixed"},
+				"name":  "坏页",
+				"pages": []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
 			},
-			"invalid_json",
+			"page_invalid",
+		},
+		"页id页内重复": {
+			map[string]any{
+				"name":  "重id",
+				"pages": []any{minimalPage("pg_x", "页一"), minimalPage("pg_x", "页二")},
+			},
+			"page_invalid",
+		},
+		"flow非对象": {
+			map[string]any{
+				"name":  "坏flow",
+				"pages": []any{map[string]any{"id": "pg_a", "name": "单页", "graph": minimalGraph(), "flow": "fixed"}},
+			},
+			"page_invalid",
 		},
 	}
 	for name, tc := range cases {
@@ -178,10 +200,10 @@ func TestPutTemplate_PreservesBinding(t *testing.T) {
 		t.Fatalf("PUT datasource 绑定 status = %d, 期望 200(%v)", code, body)
 	}
 
-	// 再 PUT 模板:name/canvases/flowChain 整存替换,flowChain 键缺省视同 null
+	// 再 PUT 模板:name/pages 整存替换
 	putPayload := mustJSONFile(t, map[string]any{
-		"name":     "改名后的模板",
-		"canvases": []any{map[string]any{"name": "新帧", "graph": minimalGraph()}},
+		"name":  "改名后的模板",
+		"pages": []any{minimalPage("pg_new", "新页")},
 	})
 	code, body = doRequest(t, h, http.MethodPut, path, "application/json", putPayload)
 	if code != http.StatusOK {
@@ -193,17 +215,19 @@ func TestPutTemplate_PreservesBinding(t *testing.T) {
 	if got, ok := body["dataSourceId"].(float64); !ok || int64(got) != dsID {
 		t.Fatalf("dataSourceId 不得被触碰(spec §2.4 #5): %v", body["dataSourceId"])
 	}
-	if body["flowChain"] != nil {
-		t.Fatalf("flowChain 键缺省应视同 null: %v", body["flowChain"])
+	pages, ok := body["pages"].([]any)
+	if !ok || len(pages) != 1 {
+		t.Fatalf("pages 应整存替换: %v", body["pages"])
 	}
-	if len(body["canvases"].([]any)) != 1 {
-		t.Fatalf("canvases 应整存替换: %v", body["canvases"])
+	first := pages[0].(map[string]any)
+	if first["name"] != "新页" || first["id"] != "pg_new" {
+		t.Fatalf("pages[0] 应回显写入内容: %v", first)
 	}
 }
 
 func TestPutTemplate_NotFound404(t *testing.T) {
 	h, _ := newTestServer(t)
-	payload := mustJSONFile(t, map[string]any{"name": "不存在", "canvases": []any{}})
+	payload := mustJSONFile(t, map[string]any{"name": "不存在", "pages": []any{}})
 	code, body := doRequest(t, h, http.MethodPut, "/api/templates/999", "application/json", payload)
 	if code != http.StatusNotFound || errCode(t, body) != "template_not_found" {
 		t.Fatalf("status/code = %d/%s, 期望 404/template_not_found", code, errCode(t, body))
@@ -371,7 +395,7 @@ func TestPostTemplate_WithDataSourceId(t *testing.T) {
 
 	payload := mustJSONFile(t, map[string]any{
 		"name":         "带绑定的模板",
-		"canvases":     []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"pages":        []any{minimalPage("pg_bind", "单页")},
 		"dataSourceId": dsID,
 	})
 	code, body := doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
@@ -384,7 +408,7 @@ func TestPostTemplate_WithDataSourceId(t *testing.T) {
 
 	payload = mustJSONFile(t, map[string]any{
 		"name":         "坏引用模板",
-		"canvases":     []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"pages":        []any{minimalPage("pg_bad", "单页")},
 		"dataSourceId": 999,
 	})
 	code, body = doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)

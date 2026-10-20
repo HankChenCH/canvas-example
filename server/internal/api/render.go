@@ -122,11 +122,11 @@ func resolveRenderSelection(w http.ResponseWriter, r *http.Request) (renderSelec
 	return renderSelection{mode: selectionExplicit, version: version}, true
 }
 
-// versionedRunRecord 版本化路径的渲染输入(spec §4:版本行只快照文档整体,
-// 数据源取当前绑定)——render.Run 仅消费 rec.Canvases/rec.FlowChain,零值壳
-// 即可,不带 id/时间戳等无关字段
+// versionedRunRecord 版本化路径的渲染输入(spec §4:版本行只快照文档整体——
+// pages 列文本,页 id 在内,数据源取当前绑定)——render.Run 仅消费 rec.Pages,
+// 零值壳即可,不带 id/时间戳等无关字段
 func versionedRunRecord(ver *store.TemplateVersionRecord) *store.TemplateRecord {
-	return &store.TemplateRecord{Canvases: ver.Canvases, FlowChain: ver.FlowChain}
+	return &store.TemplateRecord{Pages: ver.Pages}
 }
 
 // handleRenderTemplate 渲染一跳:寻址模板 → 解析可选 body 选版 → 解析数据源
@@ -153,7 +153,7 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 选版落位:版本化路径用版本行 canvases/flow_chain + 当前数据源绑定;
+	// 选版落位:版本化路径用版本行 pages(页 id 在内)+ 当前数据源绑定;
 	// draft 哨兵用草稿列现值(rec 原样),渲染记 version NULL(未对应任何发布
 	// 版本,诚实语义)。三态显式分支(latest 原隐身 default,评审修复 F5 显式化),
 	// default 仅兜底未知态——mode 只产自上述三常量,理论不可达

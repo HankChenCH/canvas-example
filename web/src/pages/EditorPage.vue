@@ -7,19 +7,21 @@
 //   → CanvasSurface @ready 内 Canvas2DBackend（基类，不搬 gridBackdrop）+ Materializer
 //     + attachContentBackend + setOverlayPainter + materializer 双订阅
 //     （doc 变更 → materialize；物化状态变更 → invalidate both）
-//   → decodeGraph 逐帧 → openDocument 第 0 帧 → fitToSurface
-// 多帧（spec §4.2，16 票升级多帧 / 26 票放开尾部增帧 / 27 票删帧）：画布上方帧 tab 条；
-// 切帧即进宿主内存帧缓冲——切出前 encodeGraph(editor.store.doc) 快照该帧、换帧
-// openDocument 重建会话文档（openDocument 不重置 schema，无需重复注入——01 票）；tab
-// 双击重命名（改 canvases[i].name，进 dirty）；帧 tab 条尾部「＋」钮尾部追加空白帧
-// （「第 N 帧」、幅面随追加时活动帧、层空，追加即切并进文档级 dirty）；tab hover「✕」
-// 删帧（流链随帧下标重写：被删帧节点丢弃、其后下标减一、空链归一 null）；不做中插/
-// 复制（需链重写之外的落位语义）；帧间切换不提示。帧缓冲纯逻辑在 src/editor/frames.ts（TDD 缝）。
-// 保存面（spec §4.4，16 票文档级口径）：纯手动——按钮 + Ctrl/Cmd+S，无防抖自动保存；
-// 保存 = 全量 PUT（name + 当前帧 ∪ 帧缓冲各帧 + flowChain 原样）；dirty 跟文档级——
-// 当前帧 ∪ 帧缓冲任一帧 ∪ flowChain ∪ 模板名；dirty 基线 = 载入时各帧快照；路由离开
-// onBeforeRouteLeave confirm + 页签关闭 beforeunload 双保险；保存成功归 clean、基线
-// 同步本次发送各帧。
+//   → decodeGraph 逐页 → openDocument 第 0 页 → fitToSurface
+// 页序列（模板页序列工票 03，spec 页形状契约 / ADR 0025；16 票多帧 / 26 票尾部增页 /
+// 27 票删页的交互能力面沿用）：画布上方页 tab 条；切页即进宿主内存页槽序列——切出前
+// encodeGraph(editor.store.doc) 快照该页、换页 openDocument 重建会话文档（openDocument
+// 不重置 schema，无需重复注入——01 票）；tab 双击重命名（改 page.name，进 dirty；页 id
+// 稳定不随改名/重排变——工程数据键与 tab key 都引用 id，无迁移记账）；页 tab 条尾部
+// 「＋」钮尾部追加空白页（未命名、显示层渲染「第 N 页」缺省名，幅面随追加时活动页、
+// 层空，追加即切并进文档级 dirty）；tab hover「✕」删页（flow 附着于页对象随页一并
+// 移除，「流链随帧下标重写」随平行数组模型退役）；不做中插/重排/复制（数据结构本次
+// 解锁，落位 UI 另立工单）；页间切换不提示。页槽位纯逻辑在 src/editor/pages.ts（TDD 缝）。
+// 保存面（spec §4.4 + 页形状契约，16 票文档级口径沿用）：纯手动——按钮 + Ctrl/Cmd+S，
+// 无防抖自动保存；保存 = 全量 PUT（name + 当前页 ∪ 页序列各页，页形状 id/name/graph/
+// flow）；dirty 跟文档级——当前页 ∪ 页序列任一页（id/name/graph/flow）∪ 模板名；
+// dirty 基线 = 载入时各页快照；路由离开 onBeforeRouteLeave confirm + 页签关闭
+// beforeunload 双保险；保存成功归 clean、基线同步本次发送各页。
 // 数据源抽屉（spec §4.3 两段式，23 票重构：数据源为独立实体、模板持引用；
 // 29 票流链段迁出）：绑定段（数据源列表下拉 + 绑定/解绑 → PUT
 // /templates/{id}/datasource，引用列整存替换）、内容段（编辑绑定的数据源实体
@@ -27,15 +29,15 @@
 // 所有引用模板；未绑时「创建并绑定」→ POST + 绑定；已绑另有「另存为新数据源」
 // → 弹名字框 POST + 重绑）；抽屉段内独立未保存标记（文本域 vs 载入基线）不混
 // 全局指示灯；数据源实体与绑定均不进全局 dirty 口径（spec §4.4）。
-// 流链编辑器（spec §4.2，29 票）：帧 tab 条「流链」钮开合 FlowChainDrawer——
-// 流链按帧下标引用、与帧强相关，不再寄居数据源抽屉。结构化帧列表（每帧一行：
-// 不在链/fixed/paged 三选 + quota + omitIfEmpty）取代 JSON 文本域，草稿真值源 =
-// 结构化条目数组（src/editor/flowchain.ts 纯逻辑，TDD 缝），wire 链在保存/比较时
-// 派生；本地校验（双 paged/paged 链尾/模板表/rowsPath）只做 UI 拦截面（保存禁用
-// + 行内报错），权威仍在服务端保存预检；「保存流链」与顶栏保存是同一文档级 PUT
-// 通道，flow_chain_invalid 等编译码在编辑器段内回显；流链草稿进全局 dirty 口径。
-// 另存为（spec §4.5，23 票改单调用）：弹名字输入 → POST /templates（name +
-// canvases + flowChain + dataSourceId 引用随行，副本与原模板引用同一数据源实体）
+// 流链编辑器（29 票引入，模板页序列工票 03 改「页 flow 编辑」）：页 tab 条「流链」
+// 钮开合 FlowChainDrawer——结构化页列表（每页一行：不在链/fixed/paged 三选 + quota +
+// omitIfEmpty），flow 真值源 = 逐页 page.flow（PageSlot.flow，「条目下标 = 帧下标」
+// 平行链草稿数组退役）；本地校验（双 paged/paged 链尾/模板表/rowsPath，
+// src/editor/pageflow.ts 纯逻辑，TDD 缝）只做 UI 拦截面（保存禁用 + 行内报错），权威
+// 仍在服务端保存预检；「保存流链」与顶栏保存是同一文档级 PUT 通道，flow_chain_invalid
+// 等编译码在编辑器段内回显；页 flow 进全局 dirty 口径。
+// 另存为（spec §4.5，23 票改单调用）：弹名字输入 → POST /templates（name + pages +
+// dataSourceId 引用随行，副本与原模板引用同一数据源实体）
 // → 成功后会话延续式重绑（dirty 基线重置为新模板）+ router.replace('/editor/<newId>')
 // 不重走载入——App.vue 去 :key 后 editor→editor 参数级导航复用本页实例，路由 id
 // 与会话脱钩的导航走防御性重载兜底；中途失败错误归因弹窗内回显，不重绑不导航。
@@ -54,14 +56,15 @@
 // 顶栏「版本」钮开合 VersionHistoryDrawer（版本史 = 发布史），行内回滚 →
 // ConfirmDialog（spec 定死文案）→ POST revert 全量记录 → src/editor/revert.ts
 // planRevertSession 成算 → 会话延续式替换（dirty 基线重置为新内容即归 clean、
-// 流链草稿与基线重置、工程数据零特殊处理——悬空帧键宽容读丢弃、幸存同名帧
-// 参考线原样保留；spec §5），徽标/版本列表刷新 + docNote 反馈。
-// 工程数据（project-data spec §6，工单 04/05）：编辑器状态随模板聚合持久化——宿主
-// 拼装快照 TemplateEditorStateSnapshot（schemaVersion + frames[帧名切片] + prefs），
-// 切片/常量从内核导入、宿主只拼装不解释。首载宽容恢复（null/悬空帧键 = 全默认态
-// 起步）+ 切帧缝内存映射（exportEditorState 写回、openDocument(canvas, frames[帧名])
-// 同型恢复）+ 写入三时点 flush（均无条件幂等——无脏跟踪每次全量快照、无常驻定时器、
-// 失败静默 console.warn）：① 切帧缝顺带 PUT（fire-and-forget 小载荷写，工单 05）；
+// 工程数据零特殊处理——页 id 随发布快照整体定着、按稳定 id 对叁，对不上的悬空键
+// 宽容读丢弃；spec §5），徽标/版本列表刷新 + docNote 反馈。
+// 工程数据（project-data spec §6，工单 04/05；键切页 id 工票 03）：编辑器状态随模板
+// 聚合持久化——宿主拼装快照 TemplateEditorStateSnapshot（schemaVersion + frames[页 id
+// 切片] + prefs），切片自内核导入、宿主只拼装不解释。首载宽容恢复（null/悬空页键 =
+// 全默认态起步）+ 切页缝内存映射（exportEditorState 写回、openDocument(canvas,
+// frames[页 id]) 同型恢复；页 id 稳定，改名/重排零迁移记账）+ 写入三时点 flush（均
+// 无条件幂等——无脏跟踪每次全量快照、无常驻定时器、失败静默 console.warn）：① 切页
+// 缝顺带 PUT（fire-and-forget 小载荷写，工单 05）；
 // ② 内容保存成功搭车 PUT（工单 04）；③ 路由离开静默 flush（不进 confirm、不拦
 // 导航）+ 页签关闭 beforeunload 经 fetch keepalive 发出（工单 05）。状态不计 dirty
 // （纯内容口径零改动）。另存为 POST 不带状态、内存映射随会话延续——replace 是
@@ -150,34 +153,27 @@ import {
 } from '../api'
 import {
     buildEditorStateSnapshot,
-    dropFrameStateKey,
-    migrateFrameStateKey,
     parseTemplateEditorStateSnapshot,
-    pickFrameStates,
+    pickPageStates,
 } from '../editor/editorState'
 import {
-    baselineFromSlots,
-    blankFrameSlot,
+    baselineFromPages,
+    blankPageSlot,
     buildSavePayload,
-    canonicalFlowChain,
+    canonicalPageFlow,
     decodeGraphJson,
     encodeGraphJson,
     isDocDirty,
-    loadFrameSlots,
-    type FrameBaseline,
-    type FrameSlot,
-} from '../editor/frames'
+    loadPageSlots,
+    type PageBaseline,
+    type PageSlot,
+} from '../editor/pages'
 import {
-    appendFrameToDraft,
-    deleteFrameFromDraft,
-    draftFromFlowChain,
-    flowChainFromDraft,
-    frameTableInfo,
-    validateFlowChainDraft,
-    type ChainRole,
-    type FlowChainDraft,
-    type FrameChainFrameInfo,
-} from '../editor/flowchain'
+    pageTableInfo,
+    validatePageFlows,
+    type PageFlowRole,
+    type PageFlowRow,
+} from '../editor/pageflow'
 import {
     dataSourceDraftPayload,
     isBindingChange,
@@ -216,15 +212,15 @@ async function loadTemplate(id: string): Promise<void> {
     try {
         const record = await api.getTemplate(id)
         if (seq !== loadSeq) return
-        if (record.canvases.length === 0) {
-            errorText.value = '模板不含任何帧，无法编辑'
+        if (record.pages.length === 0) {
+            errorText.value = '模板不含任何页，无法编辑'
             return
         }
         // 会话建立即注入数据源 schema（spec §4.2 接线序）：模板持引用——按
         // dataSourceId 取数据源实体注入其 schema；未绑 = null = 清除声明 = 无候选，
         // 与会话初始态一致。声明只进编辑器会话态，不进 graph、不动 wire；注入失败
         // 内核静默降级 + console.warn 已内建，宿主不重复处理。openDocument 不重置
-        // schema（01 票），切帧重建会话文档无需重复注入；数据源保存/绑定变更后走
+        // schema（01 票），切页重建会话文档无需重复注入；数据源保存/绑定变更后走
         // 同一入口 applyBoundSource 更新。
         if (record.dataSourceId === null) {
             applyBoundSource(null)
@@ -233,41 +229,38 @@ async function loadTemplate(id: string): Promise<void> {
             if (seq !== loadSeq) return
             applyBoundSource(source)
         }
-        // 流链编辑器草稿初值 = 模板记录 flowChain 的结构化归一（spec §4.2，29 票）；
-        // 基线取同一归一口径的派生链——结构化编辑的归一（丢键/宽容键）不产生伪 dirty
-        flowChainDraft.value = draftFromFlowChain(record.flowChain, record.canvases.length)
-        const normalizedChain = flowChainFromDraft(flowChainDraft.value)
-        flowChainBaselineChain.value = normalizedChain
-        // 帧缓冲载入（spec §4.2「decodeGraph 逐帧」）：逐帧解码即验 + canonical 化，
-        // 基线与帧缓冲同形；任一帧解码失败 = 载入错误面（16 票）
+        // 页槽序列载入（spec 页形状契约「decodeGraph 逐页」）：逐页解码即验 + canonical
+        // 化，基线与页槽同形；任一页解码失败 = 载入错误面（16 票口径沿用）；flow 随页
+        // 宽容归一（flowFromWire），流链段基线 = 各页 flow canonical 串
         try {
-            frameSlots.value = loadFrameSlots(record.canvases)
+            pageSlots.value = loadPageSlots(record.pages)
         } catch (e) {
             errorText.value = e instanceof Error ? e.message : String(e)
             return
         }
-        // 工程数据快照恢复编排（工单 04，spec §6 首载序「GET editorState → 逐帧
-        // decode → openDocument(帧0, 切片) → applyEditorPrefs 一次性」的宿主半边）：
-        // 宽容解析（editorState null/形状不合法 = 全默认态起步，零报错）→ 悬空帧键
-        // （帧改名遗留）剔除后种子进内存映射（切帧往返 / 后续 flush 载荷所需）→
-        // prefs 一次性应用。prefs 应用先于帧 0 的 openDocument（spec §6 字面序相反）
+        pageFlowBaseline.value = pageSlots.value.map((slot) => canonicalPageFlow(slot.flow))
+        // 工程数据快照恢复编排（工单 04，spec §6 首载序「GET editorState → 逐页
+        // decode → openDocument(页0, 切片) → applyEditorPrefs 一次性」的宿主半边）：
+        // 宽容解析（editorState null/形状不合法 = 全默认态起步，零报错）→ 悬空页键
+        // （删页/回滚遗留）剔除后种子进内存映射（切页往返 / 后续 flush 载荷所需）→
+        // prefs 一次性应用。prefs 应用先于页 0 的 openDocument（spec §6 字面序相反）
         // ——openDocument reset 保留标尺等偏好（内核自持，工单 01 已验 reset 语义），
-        // 先后等价；快照无 prefs 则不应用（内核自持，不重置）。帧 0 切片实际入会话
-        // 在 openFrameDocument 的 openDocument(canvas, frames[帧名])（onReady 或
+        // 先后等价；快照无 prefs 则不应用（内核自持，不重置）。页 0 切片实际入会话
+        // 在 openPageDocument 的 openDocument(canvas, frames[页 id])（onReady 或
         // 重载路径收口）。
         const restored = parseTemplateEditorStateSnapshot(record.editorState)
-        frameStates.value = pickFrameStates(restored.frames, frameSlots.value.map((slot) => slot.name))
+        pageStates.value = pickPageStates(restored.frames, pageSlots.value.map((slot) => slot.id))
         if (restored.prefs) editor.applyEditorPrefs(restored.prefs)
-        savedBaseline = baselineFromSlots(record.name, frameSlots.value, normalizedChain)
-        activeFrame.value = 0
+        savedBaseline = baselineFromPages(record.name, pageSlots.value)
+        activePage.value = 0
         template.value = record
         templateName.value = record.name
         // 版本徽标数据（批 B ②）：载入取一次 GET /versions，fire-and-forget——
         // 拉取失败徽标隐藏（null = 未知），不阻塞编辑器会话建立
         void refreshVersions()
-        // 重载路径（画布已就绪，onReady 不会再来）：换文档重开当前帧；首载路径由
+        // 重载路径（画布已就绪，onReady 不会再来）：换文档重开当前页；首载路径由
         // onReady 收口（CanvasSurface 在 template 置位后才挂载）
-        if (contentBackend !== null) openFrameDocument()
+        if (contentBackend !== null) openPageDocument()
     } catch (e) {
         if (seq !== loadSeq) return
         if (e instanceof ApiError && e.code === 'template_not_found') {
@@ -297,159 +290,156 @@ watch(
     },
 )
 
-// ---- 多帧帧缓冲（spec §4.2，16 票 / 26 票增帧 / 27 票删帧）：宿主内存帧缓冲 =
-// canvases 的宿主镜像，graphJson 以 canonical encode 字符串持有（dirty 比较/保存
-// 载荷直接消费字符串）；activeFrame 当前帧下标；增帧 = 尾部追加（见 appendBlankFrame），
-// 删帧 = 链下标重写（见 deleteFrame），不做中插/复制。 ----
+// ---- 页槽序列（模板页序列工票 03；spec §4.2 16 票 / 26 票增页 / 27 票删页交互面
+// 沿用）：宿主内存页槽序列 = record.pages 的宿主镜像，graphJson 以 canonical encode
+// 字符串持有（dirty 比较/保存载荷直接消费字符串）；activePage 当前页下标（页身份由
+// slot.id 承载）；增页 = 尾部追加（见 appendBlankPage），删页 = 从页序列 splice（flow
+// 随页一并移除，见 deletePage），不做中插/重排/复制。 ----
 
-const frameSlots = ref<FrameSlot[]>([])
-const activeFrame = ref(0)
+const pageSlots = ref<PageSlot[]>([])
+const activePage = ref(0)
 
-// ---- 工程数据内存映射（工单 04，spec §6）：会话内存帧状态切片映射，键 = 帧名
-// （CanvasEntry.name，spec §3 快照形状）。切帧缝 exportEditorState 写回/恢复维护
-// （切帧正确性所需、零额外成本），载入时自快照种子（pickFrameStates 悬空键剔除），
-// flush 时与活动帧现取切片拼装成完整快照。不进 dirty 口径（纯内容口径零改动）、
-// 不驱动渲染——纯切帧/flush 正确性记账。 ----
+// ---- 工程数据内存映射（工单 04；键切页 id 工票 03，spec §6）：会话内存页状态切片
+// 映射，键 = 页 id（稳定不随改名/重排变，spec 页形状契约）。切页缝 exportEditorState
+// 写回/恢复维护（切页正确性所需、零额外成本），载入时自快照种子（pickPageStates 悬空
+// 键剔除），flush 时与活动页现取切片拼装成完整快照。不进 dirty 口径（纯内容口径零改
+// 动）、不驱动渲染——纯切页/flush 正确性记账。 ----
 
-const frameStates = ref<Record<string, CanvasEditorState>>({})
+const pageStates = ref<Record<string, CanvasEditorState>>({})
 
-/** 当前会话的完整工程数据快照（flush 载荷）：活动帧切片现取（exportEditorState 的
- *  ui 现值，映射写回值可能滞后到切出时刻），其余帧取映射（切帧缝写回值，未访问帧
+/** 当前会话的完整工程数据快照（flush 载荷）：活动页切片现取（exportEditorState 的
+ *  ui 现值，映射写回值可能滞后到切出时刻），其余页取映射（切页缝写回值，未访问页
  *  = 种子值或无切片）；prefs 现读。组装与拷贝语义在 editorState.ts 纯逻辑单测。 */
 function currentEditorStateSnapshot(): TemplateEditorStateSnapshot {
     return buildEditorStateSnapshot({
-        frameNames: frameSlots.value.map((slot) => slot.name),
-        slices: frameSlots.value.map((slot, i) =>
-            i === activeFrame.value ? editor.exportEditorState() : (frameStates.value[slot.name] ?? null),
+        pageIds: pageSlots.value.map((slot) => slot.id),
+        slices: pageSlots.value.map((slot, i) =>
+            i === activePage.value ? editor.exportEditorState() : (pageStates.value[slot.id] ?? null),
         ),
         prefs: editor.getEditorPrefs(),
     })
 }
 
-/** 切出帧状态切片写回映射（切帧缝）：ui 现值 exportEditorState，键 = 帧名 */
-function stashActiveFrameState(): void {
-    const leavingName = frameSlots.value[activeFrame.value]?.name
-    if (leavingName) frameStates.value[leavingName] = editor.exportEditorState()
+/** 切出页状态切片写回映射（切页缝）：ui 现值 exportEditorState，键 = 页 id */
+function stashActivePageState(): void {
+    const leavingId = pageSlots.value[activePage.value]?.id
+    if (leavingId) pageStates.value[leavingId] = editor.exportEditorState()
 }
 
-/** 切出缝 = graph 快照入槽 + 状态切片写回映射 + 工程数据 flush（spec §4.2 切帧
- *  快照 + 工单 04 状态写回 + 工单 05 时点一，同一时刻、同一帧）：switchToFrame /
- *  appendBlankFrame / deleteFrame 共用；保存缝（runDocumentSave/runSaveAs）只取
- *  graph 快照——状态现取（currentEditorStateSnapshot 的活动帧现读），不走映射。
- *  缝尾顺带 flush（时点一）：载荷含切出帧现场切片（活动帧现读 = 刚写回映射的
- *  同值）+ 映射其余帧 + prefs，fire-and-forget 不等结果、不阻塞切帧。deleteFrame
- *  的 flush 载荷瞬时含将删帧键（stash 先于 splice/dropFrameStateKey）——悬空键由
- *  恢复端宽容读丢弃 + 下次 flush 覆盖自愈（spec §3 既定代价，记档）。 */
-function stashActiveFrame(): void {
-    snapshotActiveFrame()
-    stashActiveFrameState()
+/** 切出缝 = graph 快照入槽 + 状态切片写回映射 + 工程数据 flush（spec §4.2 切页
+ *  快照 + 工单 04 状态写回 + 工单 05 时点一，同一时刻、同一页）：switchToPage /
+ *  appendBlankPage / deletePage 共用；保存缝（runDocumentSave/runSaveAs）只取
+ *  graph 快照——状态现取（currentEditorStateSnapshot 的活动页现读），不走映射。
+ *  缝尾顺带 flush（时点一）：载荷含切出页现场切片（活动页现读 = 刚写回映射的
+ *  同值）+ 映射其余页 + prefs，fire-and-forget 不等结果、不阻塞切页。deletePage
+ *  的 flush 载荷瞬时含将删页键（stash 先于 splice/键剔除）——悬空键由恢复端宽容
+ *  读丢弃 + 下次 flush 覆盖自愈（记档）。 */
+function stashActivePage(): void {
+    snapshotActivePage()
+    stashActivePageState()
     flushEditorState()
 }
 
-/** 切出前快照当前帧（spec §4.2：encodeGraph(editor.store.doc) 快照该帧进缓冲） */
-function snapshotActiveFrame(): void {
+/** 切出前快照当前页（spec §4.2：encodeGraph(editor.store.doc) 快照该页进序列） */
+function snapshotActivePage(): void {
     const doc = editor.store.doc
     if (!doc) return
-    const index = activeFrame.value
-    const slot = frameSlots.value[index]
+    const index = activePage.value
+    const slot = pageSlots.value[index]
     if (!slot) return
-    frameSlots.value[index] = { ...slot, graphJson: encodeGraphJson(doc) }
+    pageSlots.value[index] = { ...slot, graphJson: encodeGraphJson(doc) }
 }
 
-/** 切帧（spec §4.2）：快照切出帧 → decodeGraph 重建会话文档（ui 选择/撤销历史等
+/** 切页（spec §4.2）：快照切出页 → decodeGraph 重建会话文档（ui 选择/撤销历史等
  *  会话态随 openDocument 重置）。视口保留不 refit；schema 不重置无需重复注入；
- *  materialize 与 dirty 重算由 doc 订阅顺带驱动；帧间切换不提示。
- *  工程数据（工单 04）：切出帧状态切片写回映射 → 切入帧切片随 openDocument(canvas,
- *  frames[帧名]) 同型恢复（reset → apply → prune 原子管线；无切片 = 全默认态），
- *  帧间往返参考线/锁定随映射回来。 */
-function switchToFrame(index: number): void {
-    if (index === activeFrame.value || !frameSlots.value[index]) return
-    stashActiveFrame()
-    const doc = decodeGraphJson(frameSlots.value[index]!.graphJson)
-    activeFrame.value = index
-    editor.openDocument(doc, frameStates.value[frameSlots.value[index]!.name])
+ *  materialize 与 dirty 重算由 doc 订阅顺带驱动；页间切换不提示。
+ *  工程数据（工单 04）：切出页状态切片写回映射 → 切入页切片随 openDocument(canvas,
+ *  frames[页 id]) 同型恢复（reset → apply → prune 原子管线；无切片 = 全默认态），
+ *  页间往返参考线/锁定随映射回来。 */
+function switchToPage(index: number): void {
+    if (index === activePage.value || !pageSlots.value[index]) return
+    stashActivePage()
+    const doc = decodeGraphJson(pageSlots.value[index]!.graphJson)
+    activePage.value = index
+    editor.openDocument(doc, pageStates.value[pageSlots.value[index]!.id])
 }
 
-/** 尾部追加空白帧（spec §4.2 增帧，26 票）：追加位置恒为尾部与活动帧位置无关——
- *  flowChain 节点按帧数组下标引用，尾部追加既有节点下标无一失效（链零改写即仍
- *  合法；中插会整体位移下标，仍不做）。时序复用 16 票切帧缝：先快照当前帧
- *  入槽（防丢未保存编辑）+ 状态切片写回映射（工单 04 切帧缝同款）→ push 新槽位
- *  （「第 N 帧」、幅面 = 追加时活动帧画布宽高、层空）→ activeFrame 指向新帧 →
- *  openDocument 空白文档（新帧无切片 = 全默认态；schema 不重置无需注入；与活动帧
- *  同幅，切帧惯例视口保留不 refit）。dirty 重算与 materialize 由 openDocument
- *  的 doc 通知顺带驱动（store 契约：openDocument 必发 doc 通知，switchToFrame 同款），
+/** 尾部追加空白页（spec §4.2 增页，26 票口径沿用）：追加位置恒为尾部与活动页位置
+ *  无关——flow 附着于页对象，页序列追加零连带改写（平行链草稿同步随模型退役）。
+ *  时序复用 16 票切页缝：先快照当前页入槽（防丢未保存编辑）+ 状态切片写回映射
+ *  （工单 04 切页缝同款）→ push 新槽位（未命名、显示层渲染「第 N 页」，幅面 = 追加
+ *  时活动页画布宽高、层空、flow null 链外页起步）→ activePage 指向新页 →
+ *  openDocument 空白文档（新页无切片 = 全默认态；schema 不重置无需注入；与活动页
+ *  同幅，切页惯例视口保留不 refit）。dirty 重算与 materialize 由 openDocument
+ *  的 doc 通知顺带驱动（store 契约：openDocument 必发 doc 通知，switchToPage 同款），
  *  槽位数超基线在 isDocDirty 长度收紧处成立。 */
-function appendBlankFrame(): void {
+function appendBlankPage(): void {
     const doc = editor.store.doc
     if (!template.value || !doc) return
-    stashActiveFrame()
-    const index = frameSlots.value.length
-    frameSlots.value.push(blankFrameSlot(doc.width, doc.height, index))
-    flowChainDraft.value = appendFrameToDraft(flowChainDraft.value)
-    activeFrame.value = index
-    editor.openDocument(decodeGraphJson(frameSlots.value[index]!.graphJson))
+    stashActivePage()
+    const index = pageSlots.value.length
+    pageSlots.value.push(blankPageSlot(doc.width, doc.height))
+    activePage.value = index
+    editor.openDocument(decodeGraphJson(pageSlots.value[index]!.graphJson))
 }
 
-// ---- 删帧（spec §4.2 删帧，27 票 / 29 票结构化承接）：flowChain 按帧下标引用，
-// 删除即链重写——被删帧条目剔除、其余条目下标自动前移（结构化草稿的 splice 语义，
-// 升序与 paged 链尾由数组结构保持）；草稿恒为合法结构，无解析失败分支。
-// 中插/复制仍不做。 ----
+// ---- 删页（spec §4.2 删页，27 票口径沿用；页模型工票 03）：flow 附着于页对象，
+// 删除即从页序列 splice——被删页与其 flow、工程数据键一并移除，无第二份数据要同步
+// （「流链随帧下标重写」随平行数组模型退役）。中插/重排/复制仍不做（UI 另立工单）。 ----
 
-/** 删帧确认文案（title 单点，确认框同口径） */
-const DELETE_FRAME_TITLE =
-    '删除该帧：其后各帧下标前移，流链随帧下标重写（被删帧若在链内，其条目剔除）；该帧内容删除后不可恢复'
+/** 删页确认文案（title 单点，确认框同口径）：「下标前移/流链重写」措辞随模型退役
+ *  改写——flow 与工程数据键都引用页 id，随页一并移除，其余页不受影响 */
+const DELETE_PAGE_TITLE = '删除该页：该页的行分配策略（flow）与工程数据（参考线/锁定）随页一并移除；该页内容删除后不可恢复'
 
-/** 删帧入口：唯一帧不可删（canvases 空是非法态）；confirm 前置即防误删（帧级操作
+/** 删页入口：唯一页不可删（pages 空是非法态）；confirm 前置即防误删（页级操作
  *  不进撤销历史，宿主态同 16/26 票边界） */
-function confirmDeleteFrame(index: number): void {
-    if (frameSlots.value.length <= 1) return
-    const name = frameSlots.value[index]?.name || `帧 ${index + 1}`
-    if (!window.confirm(`删除帧「${name}」？${DELETE_FRAME_TITLE.replace('删除该帧：', '')}`)) return
-    deleteFrame(index)
+function confirmDeletePage(index: number): void {
+    if (pageSlots.value.length <= 1) return
+    const label = pageSlots.value[index]?.name || `第 ${index + 1} 页`
+    if (!window.confirm(`删除「${label}」？${DELETE_PAGE_TITLE.replace('删除该页：', '')}`)) return
+    deletePage(index)
 }
 
-/** 删帧执行：切出缝 stash（graph 快照 + 状态写回——删活动帧之前的帧时活动帧会被
- *  openDocument 重建，现场切片必须先进映射，否则随映射恢复的是上次切帧的旧值）→
- *  splice 删槽位（被删帧切片随帧出映射——无同名幸存帧时，工单 04；帧名非唯一键
- *  下取保守清理，映射记账在 editorState.ts 纯逻辑）→ 流链草稿同步剔除条目（watch
- *  顺带清编辑器错误 + 计入 dirty）→ 活动帧重定向（删活动帧之前的前移一位；删活动
- *  帧的取同位、末位越界缩一；命中活动帧变化才 openDocument 重建会话文档，切片随
- *  映射恢复同切帧，schema 不重置、视口保留不 refit）→ 显式 syncDirty（删活动帧之
- *  后的帧不产生文档事件，槽位数变化需手动触发重算）。 */
-function deleteFrame(index: number): void {
-    if (!template.value || frameSlots.value.length <= 1) return
-    if (renamingFrame.value !== null) cancelFrameRename()
-    stashActiveFrame()
-    const deletedName = frameSlots.value[index]?.name
-    frameSlots.value.splice(index, 1)
-    if (deletedName) {
-        frameStates.value = dropFrameStateKey(
-            frameStates.value,
-            deletedName,
-            frameSlots.value.map((slot) => slot.name),
-        )
+/** 删页执行：切出缝 stash（graph 快照 + 状态写回——删活动页之前的页时活动页会被
+ *  openDocument 重建，现场切片必须先进映射，否则随映射恢复的是上次切页的旧值）→
+ *  splice 删槽位 → 被删页切片按 id 无条件出映射（id 页内唯一，无「同名幸存」歧义，
+ *  帧名键时代的保守清理补丁撤销）→ 活动页重定向按页身份处理（删活动页之前：同一页
+ *  id 保持活动，仅下标前移一位；删活动页：取同位即后继页、末位越界缩一；命中活动页
+ *  变化才 openDocument 重建会话文档，切片随映射恢复同切页，schema 不重置、视口保留
+ *  不 refit）→ 显式 syncDirty（删活动页之后的页不产生文档事件，槽位数变化需手动
+ *  触发重算）。 */
+function deletePage(index: number): void {
+    if (!template.value || pageSlots.value.length <= 1) return
+    if (renamingPage.value !== null) cancelPageRename()
+    stashActivePage()
+    const deletedId = pageSlots.value[index]?.id
+    pageSlots.value.splice(index, 1)
+    if (deletedId) {
+        const next = { ...pageStates.value }
+        delete next[deletedId]
+        pageStates.value = next
     }
-    flowChainDraft.value = deleteFrameFromDraft(flowChainDraft.value, index)
-    const wasActive = index === activeFrame.value
-    const beforeActive = index < activeFrame.value
+    const wasActive = index === activePage.value
+    const beforeActive = index < activePage.value
     if (beforeActive) {
-        activeFrame.value -= 1
+        activePage.value -= 1
     } else if (wasActive) {
-        activeFrame.value = Math.min(index, frameSlots.value.length - 1)
+        activePage.value = Math.min(index, pageSlots.value.length - 1)
     }
     if (wasActive || beforeActive) {
         editor.openDocument(
-            decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson),
-            frameStates.value[frameSlots.value[activeFrame.value]!.name],
+            decodeGraphJson(pageSlots.value[activePage.value]!.graphJson),
+            pageStates.value[pageSlots.value[activePage.value]!.id],
         )
     }
     syncDirty()
 }
 
-// ---- tab 双击重命名（spec §4.2）：改 canvases[i].name（帧缓冲 name 即它）进 dirty；
-// 与 graph 无关，活动帧重命名不动文档。空名拒绝提交。 ----
+// ---- tab 双击重命名（spec §4.2 + 页形状契约）：改 page.name（可选字段，进 dirty
+// ——name 随保存载荷上行）；页 id 不动，工程数据键零迁移记账（帧名键时代的改名迁移
+// 补丁撤销）。空名拒绝提交。 ----
 
-const renamingFrame = ref<number | null>(null)
+const renamingPage = ref<number | null>(null)
 const renamingValue = ref('')
 const renameInputEl = ref<HTMLInputElement | null>(null)
 
@@ -457,35 +447,31 @@ function setRenameInputEl(el: unknown): void {
     renameInputEl.value = el instanceof HTMLInputElement ? el : null
 }
 
-watch(renamingFrame, async (index) => {
+watch(renamingPage, async (index) => {
     if (index === null) return
     await nextTick()
     renameInputEl.value?.focus()
     renameInputEl.value?.select()
 })
 
-function beginFrameRename(index: number): void {
-    renamingFrame.value = index
-    renamingValue.value = frameSlots.value[index]?.name ?? ''
+function beginPageRename(index: number): void {
+    renamingPage.value = index
+    renamingValue.value = pageSlots.value[index]?.name ?? ''
 }
 
-function commitFrameRename(): void {
-    const index = renamingFrame.value
-    renamingFrame.value = null
+function commitPageRename(): void {
+    const index = renamingPage.value
+    renamingPage.value = null
     if (index === null) return
     const next = renamingValue.value.trim()
-    const slot = frameSlots.value[index]
+    const slot = pageSlots.value[index]
     if (!slot || !next || next === slot.name) return
-    // 切片映射键随帧名迁移（工单 04，记账在 editorState.ts 纯逻辑）：已访问帧的
-    // 会话内切片不因重命名丢失（活动帧的现场切片本就不在映射、切出时才写回，迁移
-    // 的是其种子/上次写回值）；同名目标键覆盖（帧名非唯一键的既定代价）
-    frameStates.value = migrateFrameStateKey(frameStates.value, slot.name, next)
-    frameSlots.value[index] = { ...slot, name: next }
+    pageSlots.value[index] = { ...slot, name: next }
     syncDirty()
 }
 
-function cancelFrameRename(): void {
-    renamingFrame.value = null
+function cancelPageRename(): void {
+    renamingPage.value = null
 }
 
 // ---- 数据源抽屉（spec §4.3 两段式，23 票：数据源为独立实体、模板持引用）。
@@ -495,32 +481,42 @@ function cancelFrameRename(): void {
 
 const drawerOpen = ref(false)
 
-// ---- 流链编辑器（spec §4.2，29 票）：帧 tab 条「流链」钮开合 FlowChainDrawer。
-// 草稿真值源 = 结构化条目数组（条目下标 = 帧下标，增删帧同步维护），wire 链只在
-// 保存载荷与 dirty 比较时派生（flowChainDerived）；段内基线 = 载入（或保存成功）
-// 时的派生链，独立未保存标记与全局指示灯分离——草稿本身在全局 dirty 口径内
-// （spec §4.4，经 syncDirty 计入）。本地校验只是 UI 拦截面（保存禁用 + 行内报错），
-// 权威仍在服务端保存预检（spec §3.4）。 ----
+// ---- 流链编辑器（29 票引入；工票 03 改「页 flow 编辑」）：页 tab 条「流链」钮
+// 开合 FlowChainDrawer。flow 真值源 = 逐页 page.flow（PageSlot.flow，附着于页对象，
+// 平行链草稿数组退役）；段内基线 = 载入（或保存成功）时的各页 flow canonical 串，
+// 独立未保存标记与全局指示灯分离——flow 本身在全局 dirty 口径内（spec §4.4，经
+// syncDirty 计入）。本地校验只是 UI 拦截面（保存禁用 + 行内报错），权威仍在服务端
+// 保存预检。 ----
 
 const flowChainDrawerOpen = ref(false)
-const flowChainDraft = ref<FlowChainDraft>([])
-const flowChainBaselineChain = shallowRef<unknown>(null)
-const flowChainDerived = computed(() => flowChainFromDraft(flowChainDraft.value))
+const pageFlowBaseline = shallowRef<string[]>([])
 const flowChainSegmentDirty = computed(
-    () => canonicalFlowChain(flowChainDerived.value) !== canonicalFlowChain(flowChainBaselineChain.value),
+    () =>
+        pageSlots.value.length !== pageFlowBaseline.value.length ||
+        pageSlots.value.some((slot, i) => canonicalPageFlow(slot.flow) !== pageFlowBaseline.value[i]),
 )
-// 帧摘要（编辑器行首帧名 + rowsPath 提示/表校验输入）：graphJson 取帧缓冲现值
-// （含未保存编辑，提示与校验跟着现场走）
-const flowChainFrames = computed<FrameChainFrameInfo[]>(() =>
-    frameSlots.value.map((slot, i) => ({ name: slot.name || `帧 ${i + 1}`, table: frameTableInfo(slot.graphJson) })),
+// 页摘要（编辑器行标 + rowsPath 提示/表校验输入）：graphJson 取页槽现值
+// （含未保存编辑，提示与校验跟着现场走）；行序 = 页序、行 key = 页 id
+const flowChainPages = computed<PageFlowRow[]>(() =>
+    pageSlots.value.map((slot, i) => ({
+        id: slot.id,
+        label: slot.name || `第 ${i + 1} 页`,
+        table: pageTableInfo(slot.graphJson),
+        flow: slot.flow,
+    })),
 )
-const flowChainLocalErrors = computed(() => validateFlowChainDraft(flowChainDraft.value, flowChainFrames.value))
-// 链上帧下标集合（tab 角标）——链上帧数徽标直用 .size
-const onChainFrames = computed(() => {
-    const set = new Set<number>()
-    flowChainDraft.value.forEach((entry, i) => {
-        if (entry.role !== 'off') set.add(i)
-    })
+const flowChainLocalErrors = computed(() =>
+    validatePageFlows(
+        pageSlots.value.map((slot) => slot.flow),
+        flowChainPages.value,
+    ),
+)
+// 链上页 id 集合（tab 角标）——链上页数徽标直用 .size
+const onChainPages = computed(() => {
+    const set = new Set<string>()
+    for (const slot of pageSlots.value) {
+        if (slot.flow !== null) set.add(slot.id)
+    }
     return set
 })
 
@@ -575,12 +571,9 @@ watch(drawerOpen, async (open) => {
     }
 })
 
-// 段内错误随再编辑清空（陈旧错误误导）；流链草稿变更计入全局 dirty 口径
+// 段内错误随再编辑清空（陈旧错误误导）；页 flow 变更计入全局 dirty 口径
+// （flow 真值源在页槽，三事件 handler 末尾直接清错误 + syncDirty 收口——见 setPageFlow*）
 const flowChainError = ref<string | null>(null)
-watch(flowChainDraft, () => {
-    flowChainError.value = null
-    syncDirty()
-})
 watch([nameText, schemaText, dataText], () => {
     contentError.value = null
 })
@@ -886,20 +879,21 @@ function onReady({ contentCanvas, overlayCanvas }: CanvasSurfaceReady) {
         syncDirty()
     })
 
-    // 载入当前帧（spec §4.2 接线序收口）：帧缓冲 graphJson → decodeGraph →
-    // openDocument → fit；首载（第 0 帧）与另存为/防御性重载后的换文档共用
-    openFrameDocument()
+    // 载入当前页（spec §4.2 接线序收口）：页槽 graphJson → decodeGraph →
+    // openDocument → fit；首载（第 0 页）与另存为/防御性重载后的换文档共用
+    openPageDocument()
 }
 
-/** 打开当前帧文档（spec §4.2）：帧缓冲 graphJson → decodeGraph → openDocument →
+/** 打开当前页文档（spec §4.2）：页槽 graphJson → decodeGraph → openDocument →
  *  计一次 dirty 让守卫立即可用 → 物化 → 整页 fit（初始进入与重载同语义）。
- *  工程数据（工单 04）：切片自内存映射按帧名取，随 openDocument(canvas, frames[帧名])
- *  原子应用（载入种子 = 首载恢复编排的帧 0 恢复；无切片 = 全默认态）。 */
-function openFrameDocument(): void {
-    if (!template.value || frameSlots.value.length === 0) return
-    const doc = decodeGraphJson(frameSlots.value[activeFrame.value]!.graphJson)
-    editor.openDocument(doc, frameStates.value[frameSlots.value[activeFrame.value]!.name])
-    // dirty 基线已在载入时打快照（各帧 canonical 串）；此处即算一次让守卫立即可用
+ *  工程数据（工单 04；键切页 id 工票 03）：切片自内存映射按页 id 取，随
+ *  openDocument(canvas, frames[页 id]) 原子应用（载入种子 = 首载恢复编排的页 0
+ *  恢复；无切片 = 全默认态）。 */
+function openPageDocument(): void {
+    if (!template.value || pageSlots.value.length === 0) return
+    const doc = decodeGraphJson(pageSlots.value[activePage.value]!.graphJson)
+    editor.openDocument(doc, pageStates.value[pageSlots.value[activePage.value]!.id])
+    // dirty 基线已在载入时打快照（各页 canonical 串）；此处即算一次让守卫立即可用
     computeDirty()
     materializer?.materialize(doc)
     editor.fitToSurface()
@@ -916,25 +910,24 @@ const templateName = ref('')
 const isDirty = ref(false)
 const DIRTY_DEBOUNCE_MS = 500
 let dirtyTimer: ReturnType<typeof setTimeout> | null = null
-/** dirty 基线 = 载入（或保存成功）时的文档级快照（spec §4.4 文档级口径）：
- *  模板名 + 各帧名 + 各帧 canonical 串 + flowChain canonical 串 */
-let savedBaseline: FrameBaseline | null = null
+/** dirty 基线 = 载入（或保存成功）时的文档级快照（spec §4.4 文档级口径，页模型）：
+ *  模板名 + 各页载荷字节（id/name/graph/flow canonical 串） */
+let savedBaseline: PageBaseline | null = null
 
 function computeDirty(): void {
     if (savedBaseline === null || template.value === null) {
         isDirty.value = false
         return
     }
-    // flowChain 现值 = 流链编辑器草稿的派生链（spec §4.4 口径含 flowChain，29 票
-    // 结构化草稿恒可序列化，无半成品占位分支）
+    // flow 现值随页槽参与比较（spec §4.4 口径含 flow；页模型下 flow 附着于页对象，
+    // 无独立草稿分支）
     const doc = editor.store.doc
     isDirty.value = isDocDirty({
         baseline: savedBaseline,
-        slots: frameSlots.value,
-        activeIndex: activeFrame.value,
+        slots: pageSlots.value,
+        activeIndex: activePage.value,
         activeGraphJson: doc ? encodeGraphJson(doc) : null,
         templateName: templateName.value,
-        flowChain: flowChainDerived.value,
     })
 }
 
@@ -951,7 +944,7 @@ watch(templateName, () => syncDirty())
 const saving = ref(false)
 
 /** 保存按钮共享 title（顶栏/工具栏两处同文案，单点维护） */
-const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档各帧 + flowChain）'
+const SAVE_TITLE = '保存到服务端（Ctrl/Cmd+S；全量 PUT：name + 文档各页）'
 
 /** 工程数据搭车写（工单 04，spec §6 写入时点二）：内容保存成功的同一用户动作缝随发
  *  PUT editor-state（载荷 = schemaVersion + frames + prefs 整存替换）。fire-and-forget：
@@ -966,7 +959,7 @@ function putEditorState(id: number, snapshot: TemplateEditorStateSnapshot): void
 }
 
 /** 工程数据 flush（工单 05，spec §6 写入时点一/三之一共用）：当前会话全量快照
- *  无条件 PUT——状态不设脏跟踪，flush 幂等，每次全量（小载荷，切帧/离开频率下
+ *  无条件 PUT——状态不设脏跟踪，flush 幂等，每次全量（小载荷，切页/离开频率下
  *  可接受）。fire-and-forget：不等结果、不阻塞动作；失败静默 console.warn。
  *  template 未绑（载入中/载入失败）跳过。 */
 function flushEditorState(): void {
@@ -986,41 +979,35 @@ function flushEditorStateKeepalive(): void {
     api.updateTemplateEditorStateKeepalive(record.id, currentEditorStateSnapshot())
 }
 
-/** 保存 = 全量 PUT（spec §2.4 #5 整存替换语义，spec §4.4 文档级口径）：当前帧
- *  快照并入帧缓冲（与切出同一条缝）→ 载荷 = name + 帧缓冲各帧 + flowChain。
- *  flowChain 以流链编辑器草稿的派生链为准随载荷整存（29 票）——「保存流链」与
- *  顶栏保存是同一条文档级通道，区别只在错误回显面（编辑器段内 vs 状态栏）；本地
- *  校验不过不发货（顶栏入口就地提示，编辑器入口保存钮已禁用）。基线 = 本次发送
- *  字节，保存期间的继续编辑保持 dirty。工程数据（工单 04）：快照随同一保存缝组装，
- *  内容 PUT 成功后搭车写。返回 true = 保存成功（发布编排的促存链需要感知成败；
- *  常规入口忽略返回值）。 */
+/** 保存 = 全量 PUT（spec 页形状契约 + §2.4 #5 整存替换语义，§4.4 文档级口径）：当前页
+ *  快照并入页序列（与切出同一条缝）→ 载荷 = name + 页序列各页（id/name/graph/flow）。
+ *  flow 以各页现值随载荷整存（工票 03，附着于页对象）——「保存流链」与顶栏保存是
+ *  同一条文档级通道，区别只在错误回显面（编辑器段内 vs 状态栏）；本地校验不过不发货
+ *  （顶栏入口就地提示，编辑器入口保存钮已禁用）。基线 = 本次发送字节，保存期间的
+ *  继续编辑保持 dirty。工程数据（工单 04）：快照随同一保存缝组装，内容 PUT 成功后
+ *  搭车写。返回 true = 保存成功（发布编排的促存链需要感知成败；常规入口忽略返回值）。 */
 async function runDocumentSave(origin: 'topbar' | 'flowchain'): Promise<boolean> {
     const record = template.value
     if (!record || !editor.store.doc || saving.value) return false
     if (flowChainLocalErrors.value.length > 0) {
-        if (origin === 'topbar') docNote.value = '保存失败：流链未通过本地校验（打开帧条「流链」编辑器修复后再保存）'
+        if (origin === 'topbar') docNote.value = '保存失败：流链未通过本地校验（打开页条「流链」编辑器修复后再保存）'
         return false
     }
-    snapshotActiveFrame()
+    snapshotActivePage()
     const sentName = templateName.value
-    const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
-    const sentChain = flowChainDerived.value
+    const sentSlots = pageSlots.value.map((slot) => ({ ...slot }))
     const editorState = currentEditorStateSnapshot()
-    const payload = buildSavePayload({
-        slots: sentSlots,
-        templateName: sentName,
-        flowChain: sentChain,
-    })
+    const payload = buildSavePayload({ slots: sentSlots, templateName: sentName })
     saving.value = true
     docNote.value = '保存中…'
     try {
         const updated = await api.updateTemplate(record.id, payload)
         template.value = updated
-        // 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），保存期间的
+        // 基线 = 本次发送字节（各页 id/name/graph/flow canonical 串），保存期间的
         // 继续编辑保持 dirty
-        savedBaseline = baselineFromSlots(sentName, sentSlots, sentChain)
-        // 流链已随本次文档级 PUT 落库：段基线同步派生链，段内标记归灭
-        flowChainBaselineChain.value = sentChain
+        savedBaseline = baselineFromPages(sentName, sentSlots)
+        // flow 已随本次文档级 PUT 落库：段基线同步各页 flow canonical 串，段内标记归灭
+        pageFlowBaseline.value = sentSlots.map((slot) => canonicalPageFlow(slot.flow))
         flowChainError.value = null
         computeDirty()
         docNote.value = '已保存到服务端'
@@ -1134,20 +1121,20 @@ function closeRevert(): void {
     revertTarget.value = null
 }
 
-/** 回滚执行（spec §5 / 票 04，批 B ③）：POST revert 200 回全量模板记录（与
- *  GET /templates/{id} 同形，无需二次 GET），拿记录做**会话替换**——会话延续式
- *  （另存为先例，不整页重载、内容后端已就绪走 openFrameDocument 重开当前帧）：
- *  - template/模板名/帧槽/活动帧归 0 整体切换；savedBaseline = plan.baseline
+/** 回滚执行（spec §5 / 票 04，批 B ③；页模型工票 03）：POST revert 200 回全量模板
+ *  记录（与 GET /templates/{id} 同形，无需二次 GET），拿记录做**会话替换**——会话
+ *  延续式（另存为先例，不整页重载、内容后端已就绪走 openPageDocument 重开当前页）：
+ *  - template/模板名/页槽序列/活动页归 0 整体切换；savedBaseline = plan.baseline
  *    （**dirty 基线重置为新内容**——回滚后立即归 clean，与 loadTemplate/另存为
  *    同口径；继续编辑才再 dirty，满意后发布成新版本，版本线线性）；
- *  - 流链草稿与段基线同步重置（plan.flowChainDraft / plan.normalizedChain）；
- *  - **工程数据零特殊处理**（spec §5）：frameStates 不动——悬空帧键由宽容读丢弃
- *    （pickFrameStates 精神），幸存同名帧参考线原样保留（best-effort），flush
- *    载荷按现役帧名组装自愈；
+ *  - flow 随页槽载入（宽容归一），段基线同步各页 flow canonical 串；
+ *  - **工程数据零特殊处理**（spec §5）：pageStates 不动——页 id 随发布快照整体定着，
+ *    与现会话页按稳定 id 对叁（id 同 = 参考线/锁定跟对页，spec US9 语义）；对不上
+ *    的悬空键由宽容读丢弃（pickPageStates 精神），flush 载荷按现役页 id 组装自愈；
  *  - 数据源绑定：revert 不碰绑定列（dataSourceId 理论不变），仍按全量记录如实
  *    重取/重注 schema（applyBoundSource 同入口，与 loadTemplate 同口径）；
  *  - 徽标/版本列表刷新 + docNote 反馈「已回滚到 vN」。
- *  成算先行：planRevertSession 任一帧解码失败抛错时会话零变更，错误留在确认框内
+ *  成算先行：planRevertSession 任一页解码失败抛错时会话零变更，错误留在确认框内
  *  可重试/取消；API 失败同样框内回显。 */
 async function runRevert(): Promise<void> {
     const record = template.value
@@ -1156,23 +1143,22 @@ async function runRevert(): Promise<void> {
     reverting.value = true
     try {
         const updated = await api.revertTemplate(record.id, target.version)
-        // 成算先行（全有或全无）：planRevertSession 任一帧解码失败、数据源实体重取
+        // 成算先行（全有或全无）：planRevertSession 任一页解码失败、数据源实体重取
         // 失败都发生在任何会话变更之前——失败时原会话零变更，错误留在确认框内
         const plan = planRevertSession(updated)
         const source = updated.dataSourceId === null ? null : await api.getDataSource(updated.dataSourceId)
         // ---- 会话替换（同步赋值段，以上均成功后才执行）----
         template.value = updated
         templateName.value = updated.name
-        frameSlots.value = plan.slots
-        activeFrame.value = 0
+        pageSlots.value = plan.slots
+        activePage.value = 0
         savedBaseline = plan.baseline
-        flowChainDraft.value = plan.flowChainDraft
-        flowChainBaselineChain.value = plan.normalizedChain
+        pageFlowBaseline.value = plan.slots.map((slot) => canonicalPageFlow(slot.flow))
         flowChainError.value = null
         // 数据源绑定按全量记录如实重注 schema（applyBoundSource 同入口）
         applyBoundSource(source)
         revertOpen.value = false
-        openFrameDocument()
+        openPageDocument()
         await refreshVersions()
         revertTarget.value = null
         docNote.value = `已回滚到 v${target.version}`
@@ -1211,38 +1197,52 @@ async function runVersionRender(v: TemplateVersionSummary): Promise<void> {
     }
 }
 
-// ---- 流链编辑器三事件（29 票）：草稿不可变更新（ref 整体替换触发 watch——
-// 错误清空 + dirty 防抖），quota 交编辑器钳制后的非负整数（null = 不携带） ----
+// ---- 流链编辑器三事件（29 票；工票 03 页 flow 编辑）：页槽不可变更新（slot 整体
+// 替换触发响应），flow 直接写回该页（off = 无 flow 键 = flow null；quota 交编辑器
+// 钳制后的非负整数，null = 不携带）；末尾清段内错误 + dirty 防抖收口 ----
 
-function setFrameChainRole(index: number, role: ChainRole): void {
-    const next = [...flowChainDraft.value]
-    const entry = next[index]
-    if (!entry) return
-    next[index] = { ...entry, role, quota: role === 'fixed' ? entry.quota : null }
-    flowChainDraft.value = next
+/** flow 段编辑共用收尾：段内错误清空（陈旧错误误导）+ dirty 重算（防抖） */
+function afterFlowEdit(): void {
+    flowChainError.value = null
+    syncDirty()
 }
 
-function setFrameChainQuota(index: number, quota: number | null): void {
-    const next = [...flowChainDraft.value]
-    const entry = next[index]
-    if (!entry) return
-    next[index] = { ...entry, quota }
-    flowChainDraft.value = next
+function setPageFlowRole(index: number, role: PageFlowRole): void {
+    const slot = pageSlots.value[index]
+    if (!slot) return
+    const flow =
+        role === 'off'
+            ? null
+            : {
+                  mode: role,
+                  // quota 仅 fixed 有意义（paged 携带归 null，wire 不输出）；
+                  // off→fixed 起步 null（不携带 = 容量型）
+                  quota: role === 'fixed' ? (slot.flow?.quota ?? null) : null,
+                  omitIfEmpty: slot.flow?.omitIfEmpty ?? false,
+              }
+    pageSlots.value[index] = { ...slot, flow }
+    afterFlowEdit()
 }
 
-function setFrameChainOmitIfEmpty(index: number, value: boolean): void {
-    const next = [...flowChainDraft.value]
-    const entry = next[index]
-    if (!entry) return
-    next[index] = { ...entry, omitIfEmpty: value }
-    flowChainDraft.value = next
+function setPageFlowQuota(index: number, quota: number | null): void {
+    const slot = pageSlots.value[index]
+    if (!slot || slot.flow === null || slot.flow.mode !== 'fixed') return
+    pageSlots.value[index] = { ...slot, flow: { ...slot.flow, quota } }
+    afterFlowEdit()
+}
+
+function setPageFlowOmitIfEmpty(index: number, value: boolean): void {
+    const slot = pageSlots.value[index]
+    if (!slot || slot.flow === null) return
+    pageSlots.value[index] = { ...slot, flow: { ...slot.flow, omitIfEmpty: value } }
+    afterFlowEdit()
 }
 
 // ---- 另存为（spec §4.5，23 票改单调用：副本引用同一数据源实体，不再复制）：
-// 弹名字输入 → POST /templates（name + canvases + flowChain + dataSourceId 引用
+// 弹名字输入 → POST /templates（name + pages + dataSourceId 引用
 // 随行）。成功 = 会话延续式重绑：template / dirty 基线 / 抽屉基线整体切到副本后
-// router.replace——App.vue 去 :key，本页实例承接参数级导航，不重走载入；「帧缓冲
-// 重挂」以基线重绑承载（帧缓冲字节 = 发送字节 = 服务端存储字节，重建是恒等操作）；
+// router.replace——App.vue 去 :key，本页实例承接参数级导航，不重走载入；「页槽序列
+// 重挂」以基线重绑承载（页槽字节 = 发送字节 = 服务端存储字节，重建是恒等操作）；
 // dirty 基线 = 本次发送字节（与保存同缝），另存后不改任何东西 saveState 即 clean。
 // 绑定是存储态引用，不进 dirty 口径——副本与原模板从落库起即引用同一数据源实体，
 // 对实体的后续编辑两模板同享。中途失败回显弹窗内不重绑不导航，重试为全新调用。 ----
@@ -1284,25 +1284,24 @@ async function runSaveAs(): Promise<void> {
     docNote.value = '另存为中…'
     let savedAsId: number | null = null
     try {
-        // 与保存同一条缝：当前帧快照并入帧缓冲，载荷只消费已快照槽位；
+        // 与保存同一条缝：当前页快照并入页序列，载荷只消费已快照槽位；
         // dataSourceId = 存储态引用原样随行（单调用，副本即刻可渲染）
-        snapshotActiveFrame()
+        snapshotActivePage()
         const sentName = name
-        const sentSlots = frameSlots.value.map((slot) => ({ ...slot }))
-        const sentChain = flowChainDerived.value
+        const sentSlots = pageSlots.value.map((slot) => ({ ...slot }))
         const newRecord = await api.createTemplate({
-            ...buildSavePayload({ slots: sentSlots, templateName: sentName, flowChain: sentChain }),
+            ...buildSavePayload({ slots: sentSlots, templateName: sentName }),
             dataSourceId: record.dataSourceId,
         })
         // ---- 成功：会话延续式重绑（spec §4.5）----
         template.value = newRecord
-        // dirty 基线 = 本次发送字节（帧名 ∪ 各帧 canonical 串 ∪ flowChain），与保存
+        // dirty 基线 = 本次发送字节（各页 id/name/graph/flow canonical 串），与保存
         // 同缝；另存期间的继续编辑保持 dirty
-        savedBaseline = baselineFromSlots(sentName, sentSlots, sentChain)
+        savedBaseline = baselineFromPages(sentName, sentSlots)
         templateName.value = sentName
-        // 流链编辑器基线：流链已随 POST 落库 → 段基线同步派生链（段内标记归灭）；
-        // 数据源实体未动（引用随行），内容段基线与文本域保持
-        flowChainBaselineChain.value = sentChain
+        // 流链编辑器基线：flow 已随 POST 落库 → 段基线同步各页 flow canonical 串
+        // （段内标记归灭）；数据源实体未动（引用随行），内容段基线与文本域保持
+        pageFlowBaseline.value = sentSlots.map((slot) => canonicalPageFlow(slot.flow))
         flowChainError.value = null
         computeDirty()
         saveAsOpen.value = false
@@ -1832,7 +1831,7 @@ onBeforeUnmount(() => {
                     type="button"
                     class="ghost"
                     data-save-as-template
-                    title="另存为：以当前内容创建副本模板（各帧 + 流链 + 数据源随行），成功后跳转到副本继续编辑"
+                    title="另存为：以当前内容创建副本模板（各页 + 流链 + 数据源随行），成功后跳转到副本继续编辑"
                     :disabled="saveAsSaving"
                     @click="openSaveAs"
                 >
@@ -1957,55 +1956,56 @@ onBeforeUnmount(() => {
 
         <section class="workbench" aria-label="画布与面板">
             <LayerPanel :editor="editor" />
-            <!-- canvas-area：帧 tab 条（顶）+ canvas-holder（画布覆盖物定位上下文） -->
+            <!-- canvas-area：页 tab 条（顶）+ canvas-holder（画布覆盖物定位上下文） -->
             <div class="canvas-area">
-                <!-- 帧 tab 条（spec §4.2 多帧，16 票 / 26 票增帧 / 27 票删帧 / 29 票流链
-                     入口）：画布上方；单击切帧（帧间切换不提示），双击重命名（改
-                     canvases[i].name，进 dirty）；尾部「＋」钮追加空白帧并切为活动帧
-                     （普通 button 非 tab 角色——它不是页签）；tab hover「✕」删帧
-                     （confirm 前置、链草稿条目剔除，唯一帧不出现）；链上帧 tab 带角标；
-                     最右「流链」钮开合流链编辑器；不做中插/复制 -->
-                <div class="frame-tabs" role="tablist" aria-label="文档帧">
+                <!-- 页 tab 条（spec 页形状契约；16 票 / 26 票增页 / 27 票删页 / 29 票流链
+                     入口沿用）：画布上方；单击切页（页间切换不提示），双击重命名（改
+                     page.name，进 dirty）；tab key = 页 id（工票 03——改名/删页/重排后
+                     行身份稳定，数组下标 key 退役）；尾部「＋」钮追加空白页并切为活动页
+                     （普通 button 非 tab 角色——它不是页签）；tab hover「✕」删页
+                     （confirm 前置、flow 随页移除，唯一页不出现）；链上页 tab 带角标；
+                     最右「流链」钮开合流链编辑器；不做中插/重排/复制（UI 另立工单） -->
+                <div class="page-tabs" role="tablist" aria-label="文档页">
                     <div
-                        v-for="(slot, i) in frameSlots"
-                        :key="i"
-                        class="frame-tab"
-                        :class="{ 'is-active': i === activeFrame, 'is-on-chain': onChainFrames.has(i) }"
+                        v-for="(slot, i) in pageSlots"
+                        :key="slot.id"
+                        class="page-tab"
+                        :class="{ 'is-active': i === activePage, 'is-on-chain': onChainPages.has(slot.id) }"
                         role="tab"
-                        :aria-selected="i === activeFrame"
-                        :title="`帧 ${i + 1}：${slot.name || '（未命名）'}${onChainFrames.has(i) ? '（流链）' : ''}`"
-                        :data-frame-tab="i"
-                        @click="switchToFrame(i)"
-                        @dblclick="beginFrameRename(i)"
+                        :aria-selected="i === activePage"
+                        :title="`第 ${i + 1} 页：${slot.name || '（未命名）'}${onChainPages.has(slot.id) ? '（流链）' : ''}`"
+                        :data-page-tab="i"
+                        @click="switchToPage(i)"
+                        @dblclick="beginPageRename(i)"
                     >
                         <input
-                            v-if="renamingFrame === i"
+                            v-if="renamingPage === i"
                             :ref="setRenameInputEl"
                             v-model="renamingValue"
-                            class="frame-tab-input"
-                            data-frame-rename-input
-                            aria-label="帧名"
+                            class="page-tab-input"
+                            data-page-rename-input
+                            aria-label="页名"
                             spellcheck="false"
                             @click.stop
                             @dblclick.stop
-                            @keydown.enter.prevent="commitFrameRename"
-                            @keydown.esc.prevent="cancelFrameRename"
-                            @blur="commitFrameRename"
+                            @keydown.enter.prevent="commitPageRename"
+                            @keydown.esc.prevent="cancelPageRename"
+                            @blur="commitPageRename"
                         />
                         <template v-else>
-                            <span class="frame-tab-label" :data-frame-tab-label="i">
-                                {{ slot.name || `帧 ${i + 1}` }}
+                            <span class="page-tab-label" :data-page-tab-label="i">
+                                {{ slot.name || `第 ${i + 1} 页` }}
                             </span>
-                            <!-- 删帧（27 票）：hover 现身（visibility 不挤占布局）、唯一帧
-                                 不出现；@click.stop 不触发切帧 -->
+                            <!-- 删页（27 票）：hover 现身（visibility 不挤占布局）、唯一页
+                                 不出现；@click.stop 不触发切页 -->
                             <button
-                                v-if="frameSlots.length > 1"
+                                v-if="pageSlots.length > 1"
                                 type="button"
-                                class="frame-tab-delete"
-                                data-frame-delete
-                                :aria-label="`删除第 ${i + 1} 帧`"
-                                :title="DELETE_FRAME_TITLE"
-                                @click.stop="confirmDeleteFrame(i)"
+                                class="page-tab-delete"
+                                data-page-delete
+                                :aria-label="`删除第 ${i + 1} 页`"
+                                :title="DELETE_PAGE_TITLE"
+                                @click.stop="confirmDeletePage(i)"
                                 @dblclick.stop
                             >
                                 ✕
@@ -2014,25 +2014,25 @@ onBeforeUnmount(() => {
                     </div>
                     <button
                         type="button"
-                        class="frame-add"
-                        data-frame-add
-                        aria-label="新增帧"
-                        title="新增帧"
-                        @click="appendBlankFrame"
+                        class="page-add"
+                        data-page-add
+                        aria-label="新增页"
+                        title="新增页"
+                        @click="appendBlankPage"
                     >
                         ＋
                     </button>
-                    <!-- 流链入口（29 票，spec §4.2 流链编辑器）：流链按帧下标引用，
-                         入口贴帧序列；徽标 = 链上帧数（空链不显示） -->
+                    <!-- 流链入口（29 票，工票 03 页 flow 编辑）：flow 附着于页对象，
+                         入口贴页序列；徽标 = 链上页数（空链不显示） -->
                     <button
                         type="button"
-                        class="frame-chain"
+                        class="page-chain"
                         data-open-flowchain
                         aria-label="流链"
-                        title="流链（行流分配）：声明各帧如何消费数据行"
+                        title="流链（行流分配）：声明各页如何消费数据行"
                         @click="flowChainDrawerOpen = !flowChainDrawerOpen"
                     >
-                        流链<span v-if="onChainFrames.size > 0" class="frame-chain-badge" data-flowchain-badge>{{ onChainFrames.size }}</span>
+                        流链<span v-if="onChainPages.size > 0" class="page-chain-badge" data-flowchain-badge>{{ onChainPages.size }}</span>
                     </button>
                 </div>
                 <div class="canvas-holder">
@@ -2097,22 +2097,21 @@ onBeforeUnmount(() => {
             @save-as-new="openSaveAsNew"
         />
 
-        <!-- 流链编辑器（spec §4.2，29 票）：帧 tab 条「流链」钮开合；结构化帧列表
-             纯呈现，草稿/本地校验/服务端错误/独立未保存标记全由宿主持有；保存流链
-             走文档级 PUT 同一通道（canvases 一并整存） -->
+        <!-- 流链编辑器（29 票引入，工票 03 改页 flow 编辑）：页 tab 条「流链」钮开合；
+             结构化页列表纯呈现，页序列（flow 真值源）/本地校验/服务端错误/独立未保存
+             标记全由宿主持有；保存流链走文档级 PUT 同一通道（各页一并整存） -->
         <FlowChainDrawer
             :open="flowChainDrawerOpen"
-            :frames="flowChainFrames"
-            :draft="flowChainDraft"
+            :rows="flowChainPages"
             :errors="flowChainLocalErrors"
             :error="flowChainError"
             :dirty="flowChainSegmentDirty"
             :saving="saving"
             @close="flowChainDrawerOpen = false"
             @save="saveFlowChain"
-            @set-role="setFrameChainRole"
-            @set-quota="setFrameChainQuota"
-            @set-omit-if-empty="setFrameChainOmitIfEmpty"
+            @set-role="setPageFlowRole"
+            @set-quota="setPageFlowQuota"
+            @set-omit-if-empty="setPageFlowOmitIfEmpty"
         />
 
         <!-- 另存为弹窗（spec §4.5 单调用随行引用，18 票组件、23 票文案修订）：
@@ -2125,7 +2124,7 @@ onBeforeUnmount(() => {
             :error="saveAsError"
             title="另存为副本"
             label="副本名"
-            note="以当前内容（各帧 + 流链 + 数据源引用）创建副本模板，副本与原模板引用同一数据源实体；成功后跳转到副本继续编辑，原模板保持不变。"
+            note="以当前内容（各页 + 流链 + 数据源引用）创建副本模板，副本与原模板引用同一数据源实体；成功后跳转到副本继续编辑，原模板保持不变。"
             confirm-text="另存为"
             confirm-busy-text="另存中…"
             @confirm="runSaveAs"
@@ -2430,7 +2429,7 @@ onBeforeUnmount(() => {
     border-top: 1px solid var(--shell-line);
 }
 
-/* 画布容器 = 帧 tab 条（顶）+ canvas-holder（覆盖物定位上下文）的纵向排布 */
+/* 画布容器 = 页 tab 条（顶）+ canvas-holder（覆盖物定位上下文）的纵向排布 */
 .canvas-area {
     display: flex;
     flex-direction: column;
@@ -2438,9 +2437,9 @@ onBeforeUnmount(() => {
     min-width: 0;
 }
 
-/* 帧 tab 条（spec §4.2 多帧，16 票）：画布上方窄条；活动 tab 面板色高亮；
-   多帧横向内滚降级（同工具栏姿势） */
-.frame-tabs {
+/* 页 tab 条（spec 页形状契约；16 票多帧引入）：画布上方窄条；活动 tab 面板色高亮；
+   多页横向内滚降级（同工具栏姿势） */
+.page-tabs {
     display: flex;
     flex: none;
     align-items: flex-end;
@@ -2452,11 +2451,11 @@ onBeforeUnmount(() => {
     scrollbar-width: none;
 }
 
-.frame-tabs::-webkit-scrollbar {
+.page-tabs::-webkit-scrollbar {
     display: none;
 }
 
-.frame-tab {
+.page-tab {
     display: flex;
     flex: none;
     align-items: center;
@@ -2474,25 +2473,25 @@ onBeforeUnmount(() => {
     user-select: none;
 }
 
-.frame-tab:hover {
+.page-tab:hover {
     background: var(--shell-hover);
     color: var(--shell-fg-2);
 }
 
-.frame-tab.is-active {
+.page-tab.is-active {
     border-color: var(--shell-line);
     background: var(--shell-panel);
     color: var(--shell-fg);
 }
 
-.frame-tab-label {
+.page-tab-label {
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* 帧 tab 删除钮（27 票删帧）：hover 现身（visibility 不挤占布局、tab 宽不抖动），
-   唯一帧由 v-if 收起；红系 hover 提示不可恢复 */
-.frame-tab-delete {
+/* 页 tab 删除钮（27 票删页）：hover 现身（visibility 不挤占布局、tab 宽不抖动），
+   唯一页由 v-if 收起；红系 hover 提示不可恢复 */
+.page-tab-delete {
     flex: none;
     box-sizing: border-box;
     width: 16px;
@@ -2509,17 +2508,17 @@ onBeforeUnmount(() => {
     visibility: hidden;
 }
 
-.frame-tab:hover .frame-tab-delete,
-.frame-tab-delete:focus-visible {
+.page-tab:hover .page-tab-delete,
+.page-tab-delete:focus-visible {
     visibility: visible;
 }
 
-.frame-tab-delete:hover {
+.page-tab-delete:hover {
     background: var(--shell-hover);
     color: #f87171;
 }
 
-.frame-tab-input {
+.page-tab-input {
     width: 96px;
     padding: 1px 4px;
     border: 1px solid var(--shell-line-strong);
@@ -2530,8 +2529,8 @@ onBeforeUnmount(() => {
     outline: none;
 }
 
-/* 帧尾「＋」钮（26 票增帧）：tab 条尾部普通按钮（非 tab 角色），虚线框示意追加位 */
-.frame-add {
+/* 页尾「＋」钮（26 票增页）：tab 条尾部普通按钮（非 tab 角色），虚线框示意追加位 */
+.page-add {
     flex: none;
     box-sizing: border-box;
     width: 26px;
@@ -2547,18 +2546,18 @@ onBeforeUnmount(() => {
     cursor: pointer;
 }
 
-.frame-add:hover {
+.page-add:hover {
     border-color: var(--shell-accent);
     color: var(--shell-accent);
 }
 
-.frame-add:focus-visible {
+.page-add:focus-visible {
     border-color: var(--shell-accent);
     outline: 1px solid var(--shell-accent);
 }
 
-/* 链上帧角标（29 票）：帧名左侧小圆点，呼应流链编辑器的行角色 */
-.frame-tab.is-on-chain .frame-tab-label::before {
+/* 链上页角标（29 票）：页名左侧小圆点，呼应流链编辑器的行角色 */
+.page-tab.is-on-chain .page-tab-label::before {
     content: '';
     display: inline-block;
     width: 5px;
@@ -2569,8 +2568,8 @@ onBeforeUnmount(() => {
     vertical-align: 2px;
 }
 
-/* 帧尾「流链」钮（29 票流链编辑器入口）：与「＋」同排的实边框钮，徽标显链上帧数 */
-.frame-chain {
+/* 页尾「流链」钮（29 票流链编辑器入口）：与「＋」同排的实边框钮，徽标显链上页数 */
+.page-chain {
     flex: none;
     box-sizing: border-box;
     height: 26px;
@@ -2585,17 +2584,17 @@ onBeforeUnmount(() => {
     cursor: pointer;
 }
 
-.frame-chain:hover {
+.page-chain:hover {
     border-color: var(--shell-accent);
     color: var(--shell-accent);
 }
 
-.frame-chain:focus-visible {
+.page-chain:focus-visible {
     border-color: var(--shell-accent);
     outline: 1px solid var(--shell-accent);
 }
 
-.frame-chain-badge {
+.page-chain-badge {
     display: inline-block;
     min-width: 14px;
     margin-left: 5px;

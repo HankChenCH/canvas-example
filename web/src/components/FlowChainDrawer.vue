@@ -1,32 +1,32 @@
 <script setup lang="ts">
 /**
- * FlowChainDrawer：流链编辑器（29 票，spec §4.2 流链编辑器）。
+ * FlowChainDrawer：流链编辑器（29 票引入；页模型适配工票 03——「链草稿编辑」改
+ * 「页 flow 编辑」）。
  *
- * 流链按帧下标引用、声明各帧如何消费数据行的行流——与帧强相关，入口在帧
- * tab 条「流链」钮（与数据源无关，不再寄居数据源抽屉）。结构化帧列表：
- * 每帧一行 = 参与模式三选（不在链/fixed/paged）+ fixed 的 quota 输入 +
- * 零行跳帧勾选；本地校验错误（宿主 validateFlowChainDraft 产物）行内集中
- * 回显并禁用保存，服务端编译码（flow_chain_invalid 等）单独回显。
+ * flow 附着于页对象（PageSlot.flow，无平行数组草稿）：每页一行 = 参与模式三选
+ * （off = 无 flow 键 = 链外页 / fixed / paged）+ fixed 的 quota 输入 + 零行跳页
+ * 勾选；行序 = 页序、行标 = 页名（缺省「第 N 页」）。本地校验错误（宿主
+ * validatePageFlows 产物）行内集中回显并禁用保存，服务端编译码（flow_chain_invalid
+ * 等）单独回显。
  *
- * 状态边界：草稿（draft 条目数组）、校验/服务端错误、独立未保存标记、在途态
+ * 状态边界：页序列（flow 真值源）、校验/服务端错误、独立未保存标记、在途态
  * 全部由宿主持有——本组件纯呈现，变更经 setRole/setQuota/setOmitIfEmpty
  * 三事件上抛（单向数据流，DataSourceDrawer 先例）。Teleport body + 自带令牌块；
  * 非模态，画布保持可交互。
  */
-import type { ChainRole, FlowChainDraft, FrameChainFrameInfo } from '../editor/flowchain'
+import { flowRoleOf } from '../editor/pageflow'
+import type { PageFlowRole, PageFlowRow, PageTableInfo } from '../editor/pageflow'
 
 defineProps<{
-    /** 抽屉开合（帧 tab 条「流链」钮驱动） */
+    /** 抽屉开合（页 tab 条「流链」钮驱动） */
     open: boolean
-    /** 帧摘要（与 draft 条目同长同序）：帧名 + 顶层表信息（rowsPath 提示） */
-    frames: readonly FrameChainFrameInfo[]
-    /** 结构化流链草稿（条目下标 = 帧下标） */
-    draft: FlowChainDraft
+    /** 页行摘要（页序对齐）：页 id（行 key）+ 页名 + 顶层表信息 + flow 现值 */
+    rows: ReadonlyArray<PageFlowRow>
     /** 本地校验错误（非空时保存禁用） */
     errors: readonly string[]
     /** 服务端错误回显（保存失败稳定 code 在前的可读文案） */
     error: string | null
-    /** 段内独立未保存标记（派生链 canonical 串 vs 载入基线） */
+    /** 段内独立未保存标记（各页 flow canonical 串 vs 载入基线） */
     dirty: boolean
     /** 保存（文档级 PUT）在途态 */
     saving: boolean
@@ -34,23 +34,23 @@ defineProps<{
 
 const emit = defineEmits<{
     close: []
-    /** 保存流链：宿主走文档级 PUT（canvases 一并整存），错误段内回显 */
+    /** 保存流链：宿主走文档级 PUT（各页一并整存），错误段内回显 */
     save: []
-    setRole: [index: number, role: ChainRole]
+    setRole: [index: number, role: PageFlowRole]
     setQuota: [index: number, quota: number | null]
     setOmitIfEmpty: [index: number, value: boolean]
 }>()
 
-/** 参与模式三选（segmented 单选） */
-const ROLES: ReadonlyArray<{ value: ChainRole; label: string }> = [
+/** 参与模式三选（segmented 单选）：off = 无 flow 键 = 链外页 */
+const ROLES: ReadonlyArray<{ value: PageFlowRole; label: string }> = [
     { value: 'off', label: '不在链' },
     { value: 'fixed', label: 'fixed' },
     { value: 'paged', label: 'paged' },
 ]
 
-/** 帧 rowsPath 提示：有模板态表显路径，无表/非模板态给行动指引，解析失败不显示 */
-function tableHint(frames: readonly FrameChainFrameInfo[], index: number): string {
-    const table = frames[index]?.table
+/** 页 rowsPath 提示：有模板态表显路径，无表/非模板态给行动指引，解析失败不显示 */
+function tableHint(rows: ReadonlyArray<PageFlowRow>, index: number): string {
+    const table: PageTableInfo | null | undefined = rows[index]?.table
     if (!table) return ''
     if (table.tableCount === 0) return '无顶层表格图层'
     if (!table.hasTemplate) return '顶层表非模板态'
@@ -79,38 +79,40 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
                 </button>
             </header>
 
-            <section class="cn-fcd__section" data-flowchain-section aria-label="流链帧列表">
+            <section class="cn-fcd__section" data-flowchain-section aria-label="流链页列表">
                 <p class="cn-fcd__note">
-                    流链声明各帧如何消费数据行的行流：fixed = 单页固定份额（装满可用区）；
-                    paged = 链尾吃尽剩余、按页高自动切多页。保存走文档级通道，各帧内容一并整存。
+                    流链声明各页如何消费数据行的行流：不在链 = 链外页（不吃行、照常进产物）；
+                    fixed = 单页固定份额（装满可用区）；paged = 链尾吃尽剩余、按页高自动切多页。
+                    保存走文档级通道，各页内容一并整存。
                 </p>
 
-                <!-- 每帧一行：参与模式三选 + fixed 配额 + 零行跳帧（29 票结构化编辑） -->
+                <!-- 每页一行：参与模式三选 + fixed 配额 + 零行跳页（flow 附着于页对象，
+                     行 key = 页 id，删页/重排后行身份稳定） -->
                 <div
-                    v-for="(entry, i) in draft"
-                    :key="i"
-                    class="cn-fcd__frame"
-                    :data-flowchain-frame="i"
+                    v-for="(row, i) in rows"
+                    :key="row.id"
+                    class="cn-fcd__page"
+                    :data-flowchain-page="i"
                 >
-                    <p class="cn-fcd__frame-label">
-                        <span>帧 {{ i + 1 }} · {{ frames[i]?.name || `帧 ${i + 1}` }}</span>
-                        <span v-if="tableHint(frames, i)" class="cn-fcd__rows-path">{{ tableHint(frames, i) }}</span>
+                    <p class="cn-fcd__page-label">
+                        <span>{{ row.label }}</span>
+                        <span v-if="tableHint(rows, i)" class="cn-fcd__rows-path">{{ tableHint(rows, i) }}</span>
                     </p>
-                    <div class="cn-fcd__roles" role="group" :aria-label="`帧 ${i + 1} 参与模式`">
+                    <div class="cn-fcd__roles" role="group" :aria-label="`${row.label} 参与模式`">
                         <button
                             v-for="r in ROLES"
                             :key="r.value"
                             type="button"
                             class="cn-fcd__role"
-                            :class="{ 'is-active': entry.role === r.value }"
+                            :class="{ 'is-active': flowRoleOf(row.flow) === r.value }"
                             :data-chain-role="r.value"
-                            :aria-pressed="entry.role === r.value"
+                            :aria-pressed="flowRoleOf(row.flow) === r.value"
                             @click="emit('setRole', i, r.value)"
                         >
                             {{ r.label }}
                         </button>
                     </div>
-                    <template v-if="entry.role === 'fixed'">
+                    <template v-if="row.flow !== null && row.flow.mode === 'fixed'">
                         <label class="cn-fcd__label" :for="`fcd-quota-${i}`">配额 quota（空 = 不携带，按可用区容量装）</label>
                         <input
                             :id="`fcd-quota-${i}`"
@@ -118,19 +120,19 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
                             min="0"
                             step="1"
                             class="cn-fcd__input"
-                            :value="entry.quota ?? ''"
+                            :value="row.flow.quota ?? ''"
                             :data-flowchain-quota="i"
                             @input="onQuotaInput((q) => emit('setQuota', i, q), $event)"
                         />
                     </template>
-                    <label v-if="entry.role !== 'off'" class="cn-fcd__omit">
+                    <label v-if="row.flow !== null" class="cn-fcd__omit">
                         <input
                             type="checkbox"
-                            :checked="entry.omitIfEmpty"
+                            :checked="row.flow.omitIfEmpty"
                             :data-flowchain-omit="i"
                             @change="emit('setOmitIfEmpty', i, ($event.target as HTMLInputElement).checked)"
                         />
-                        零行时不产该帧页（omitIfEmpty）
+                        零行时不产该页（omitIfEmpty）
                     </label>
                 </div>
 
@@ -146,7 +148,7 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
                         type="button"
                         class="cn-fcd__save"
                         data-save-flowchain
-                        title="保存流链（文档级 PUT：name + 各帧 + flowChain 一并整存）"
+                        title="保存流链（文档级 PUT：name + 各页一并整存）"
                         :disabled="saving || errors.length > 0"
                         @click="emit('save')"
                     >
@@ -233,18 +235,18 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
     line-height: 1.6;
 }
 
-/* 帧行：帧下标 + 名 + rowsPath 提示，行间 border 分隔 */
-.cn-fcd__frame {
+/* 页行：页名 + rowsPath 提示，行间 border 分隔 */
+.cn-fcd__page {
     display: flex;
     flex-direction: column;
     padding: 10px 0 12px;
 }
 
-.cn-fcd__frame + .cn-fcd__frame {
+.cn-fcd__page + .cn-fcd__page {
     border-top: 1px solid var(--cn-line);
 }
 
-.cn-fcd__frame-label {
+.cn-fcd__page-label {
     display: flex;
     align-items: baseline;
     justify-content: space-between;

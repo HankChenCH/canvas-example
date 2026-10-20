@@ -60,8 +60,8 @@ func TestPutEditorState_Roundtrip(t *testing.T) {
 	if after["name"] != before["name"] || after["updatedAt"] != before["updatedAt"] || after["createdAt"] != before["createdAt"] {
 		t.Fatalf("状态写入不得触碰 name/时间戳: %v vs %v", after, before)
 	}
-	if len(after["canvases"].([]any)) != len(before["canvases"].([]any)) {
-		t.Fatalf("状态写入不得触碰 canvases: %v vs %v", after["canvases"], before["canvases"])
+	if len(after["pages"].([]any)) != len(before["pages"].([]any)) {
+		t.Fatalf("状态写入不得触碰 pages: %v vs %v", after["pages"], before["pages"])
 	}
 }
 
@@ -169,8 +169,8 @@ func TestPutTemplate_PreservesEditorState(t *testing.T) {
 		t.Fatalf("写状态 status = %d(%v)", code, body)
 	}
 	putPayload := mustJSONFile(t, map[string]any{
-		"name":     "改名后的模板",
-		"canvases": []any{map[string]any{"name": "新帧", "graph": minimalGraph()}},
+		"name":  "改名后的模板",
+		"pages": []any{minimalPage("pg_new", "新页")},
 	})
 	code, body := doRequest(t, h, http.MethodPut, fmt.Sprintf("/api/templates/%d", seedID), "application/json", putPayload)
 	if code != http.StatusOK {
@@ -189,8 +189,8 @@ func TestPutTemplate_PreservesEditorState(t *testing.T) {
 func TestPostTemplate_IgnoresEditorState(t *testing.T) {
 	h, _ := newTestServer(t)
 	payload := mustJSONFile(t, map[string]any{
-		"name":     "另存为模板",
-		"canvases": []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"name":  "另存为模板",
+		"pages": []any{minimalPage("pg_saveas", "单页")},
 		"editorState": map[string]any{
 			"schemaVersion": 1,
 			"frames": map[string]any{

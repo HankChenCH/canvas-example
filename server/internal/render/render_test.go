@@ -10,6 +10,7 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/HankChenCH/go-canvas/layer"
 	"github.com/HankChenCH/go-canvas/resolver"
 
+	"example/server/internal/pages"
 	"example/server/internal/store"
 )
 
@@ -70,9 +72,23 @@ func readSeedJSON(t *testing.T, name string) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// newOfflineRecord 真实 seed 两帧文档(05 票 fixture)与配套 dataset:徽标换本地
-// 路径以离线可跑(spec §5.3:徽标是唯一外网点);数据源内容与模板记录分离传递
-// (数据源为独立实体,spec §2.4 数据源段)
+// wirePage 页构造器:id/name 引号补齐,graph 原文,flow 可选(空串 = 键缺席 =
+// 链外页)
+func wirePage(id, name, graph, flow string) pages.Page {
+	p := pages.Page{
+		ID:    json.RawMessage(strconv.Quote(id)),
+		Name:  json.RawMessage(strconv.Quote(name)),
+		Graph: json.RawMessage(graph),
+	}
+	if flow != "" {
+		p.Flow = json.RawMessage(flow)
+	}
+	return p
+}
+
+// newOfflineRecord 真实 seed 页序列(pages fixture,ADR 0025)与配套 dataset:
+// 徽标换本地路径以离线可跑(spec §5.3:徽标是唯一外网点);数据源内容与模板记录
+// 分离传递(数据源为独立实体,spec §2.4 数据源段)
 func newOfflineRecord(t *testing.T) (*store.TemplateRecord, json.RawMessage) {
 	t.Helper()
 	dataset := map[string]any{}
@@ -85,14 +101,11 @@ func newOfflineRecord(t *testing.T) (*store.TemplateRecord, json.RawMessage) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := &store.TemplateRecord{
-		ID: 1,
-		Canvases: []store.CanvasEntry{
-			{Name: "主页", Graph: readSeedJSON(t, "frame-main.json")},
-			{Name: "续页", Graph: readSeedJSON(t, "frame-continuation.json")},
-		},
-		FlowChain: readSeedJSON(t, "flow-chain.json"),
+	var doc []pages.Page
+	if err := json.Unmarshal(readSeedJSON(t, "pages.json"), &doc); err != nil {
+		t.Fatalf("seed pages.json 解码: %v", err)
 	}
+	rec := &store.TemplateRecord{ID: 1, Pages: doc}
 	return rec, raw
 }
 
@@ -114,9 +127,10 @@ func pngSize(t *testing.T, png []byte) (int, int) {
 	return cfg.Width, cfg.Height
 }
 
-// TestRun_SeedDocument 种子两帧文档 × 5 行 dataset → 容量数学 [主页 2 行,
-// 续页 2 行, 续页 1 行] = 3 页(spec §5.1);images 帧归属 = [0 主页, 1 续页,
-// 1 续页](spec §2.3 帧序×页序扁平);页面尺寸 = A4 794×1123
+// TestRun_SeedDocument 种子两页文档 × 5 行 dataset → 容量数学 [主页 2 行,
+// 续页 2 行, 续页 1 行] = 3 页(spec §5.1);images 页归属 = [0 主页, 1 续页,
+// 1 续页](spec §2.3 页序扁平,frame 字段语义延续为页下标,ADR 0025);页面
+// 尺寸 = A4 794×1123
 func TestRun_SeedDocument(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
@@ -157,13 +171,11 @@ func TestRun_SeedDocument(t *testing.T) {
 func TestRun_LeadingSlashStaticAsset(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := &store.TemplateRecord{
-		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+	rec := &store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页", `{
 			"canvas":{"width":160,"height":400},
 			"layers":[{"type":"ImageLayer","priority":0,
 				"spec":{"shape":{"width":160,"height":400}},
-				"data":{"valueType":"ExpressionValue","expression":"/assets/u/student-1.png","value":"/assets/u/student-1.png"}}]}`)}},
-	}
+				"data":{"valueType":"ExpressionValue","expression":"/assets/u/student-1.png","value":"/assets/u/student-1.png"}}]}`, "")}}
 
 	pages, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
@@ -186,8 +198,7 @@ func TestRun_LeadingSlashStaticAsset(t *testing.T) {
 func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := &store.TemplateRecord{
-		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+	rec := &store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页", `{
 			"canvas":{"width":794,"height":1123},
 			"layers":[{"type":"TableLayer","name":"t","priority":50,
 				"data":{"rowsPath":"certificates"},
@@ -195,8 +206,7 @@ func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
 					"cells":[{"type":"TableCellLayer","priority":0,"spec":{"shape":{"width":160,"height":400}},
 						"content":{"type":"ImageLayer","priority":0,
 							"spec":{"shape":{"width":160,"height":400}},
-							"data":{"valueType":"ExpressionValue","expression":"{{row.photo}}","value":"{{row.photo}}"}}}]}}]}`)}},
-	}
+							"data":{"valueType":"ExpressionValue","expression":"{{row.photo}}","value":"{{row.photo}}"}}}]}}]}`, "")}}
 
 	pages, perr := svc.Run(t.Context(), rec, json.RawMessage(`{"certificates":[{"photo":"/assets/u/student-2.png"}]}`))
 	if perr != nil {
@@ -219,11 +229,9 @@ func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
 func TestRun_LeadingSlashBackgroundAsset(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := &store.TemplateRecord{
-		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+	rec := &store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页", `{
 			"canvas":{"width":160,"height":400,"background":{"image":"/assets/u/student-3.png"}},
-			"layers":[]}`)}},
-	}
+			"layers":[]}`, "")}}
 
 	pages, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
@@ -244,14 +252,12 @@ func TestRun_LeadingSlashBackgroundAsset(t *testing.T) {
 func TestRun_LeadingSlashFontPath(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := &store.TemplateRecord{
-		Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(`{
+	rec := &store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页", `{
 			"canvas":{"width":794,"height":1123},
 			"layers":[{"type":"TextLayer","priority":0,
 				"spec":{"shape":{"width":794,"height":100},
 					"fontFamily":{"font":"/assets/fonts/NotoSansSC-Regular.otf","fontSize":30,"fontColor":"#333333","angle":0,"autowrap":false}},
-					"data":{"valueType":"StaticValue","value":"结业证书"}}]}`)}},
-	}
+					"data":{"valueType":"StaticValue","value":"结业证书"}}]}`, "")}}
 
 	pages, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
@@ -390,20 +396,17 @@ func assertPixelColor(t *testing.T, png []byte, x, y int, r, g, b, a uint8) {
 func TestRun_UnboundDataset(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
-	rec := &store.TemplateRecord{
-		Canvases: []store.CanvasEntry{
-			{Name: "帧一", Graph: json.RawMessage(minimalTemplateTable())},
-			{Name: "帧二", Graph: json.RawMessage(minimalTemplateTable())},
-		},
-		FlowChain: json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`),
-	}
+	rec := &store.TemplateRecord{Pages: []pages.Page{
+		wirePage("pg_a", "页一", minimalTemplateTable(), `{"mode":"fixed"}`),
+		wirePage("pg_b", "页二", minimalTemplateTable(), `{"mode":"paged","omitIfEmpty":true}`),
+	}}
 
-	pages, perr := svc.Run(t.Context(), rec, nil)
+	pagesOut, perr := svc.Run(t.Context(), rec, nil)
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
-	if len(pages) != 1 || pages[0].Frame != 0 || pages[0].Name != "帧一" {
-		t.Fatalf("未绑直通应为帧一 1 页空壳,实得 %+v", pages)
+	if len(pagesOut) != 1 || pagesOut[0].Frame != 0 || pagesOut[0].Name != "页一" {
+		t.Fatalf("未绑直通应为页一 1 页空壳,实得 %+v", pagesOut)
 	}
 }
 
@@ -415,21 +418,23 @@ func minimalTemplateTable() string {
 		 "cells":[{"type":"TableCellLayer","priority":0,"spec":{"shape":{"width":714,"height":400}}}]}}]}`
 }
 
-// TestRun_NullFlowChain flowChain null = 空链 = 纯文档管线(spec §3.1):逐帧
-// 全量填充直通分页,各帧单页。用 2 行 dataset(表顶 190 + 2×400 = 990 ≤ 1123
+// TestRun_AllPagesWithoutFlow 全页无 flow = 空链 = 纯文档管线(spec §3.1):逐帧
+// 全量填充直通分页,各页单页。用 2 行 dataset(表顶 190 + 2×400 = 990 ≤ 1123
 // 不溢出;5 行全量会按分页关语义合法报 content_overflow,不属本用例)
-func TestRun_NullFlowChain(t *testing.T) {
+func TestRun_AllPagesWithoutFlow(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
 	rec, _ := newOfflineRecord(t)
-	rec.FlowChain = nil
+	for i := range rec.Pages { // 摘除页 flow:全页无 flow = 空链缺省形态
+		rec.Pages[i].Flow = nil
+	}
 
 	pages, perr := svc.Run(t.Context(), rec, twoRowDataset(t))
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
 	if len(pages) != 2 || pages[0].Frame != 0 || pages[1].Frame != 1 {
-		t.Fatalf("空链应各帧 1 页,实得 %+v", pages)
+		t.Fatalf("空链应各页 1 页,实得 %+v", pages)
 	}
 }
 
@@ -468,9 +473,9 @@ func TestRun_EmptyRowsOmitSkip(t *testing.T) {
 	}
 }
 
-// TestRun_ExternalFramesPageOnce 链外帧分页关恒单页:三帧文档只把中帧挂链,
-// 前后链外帧各 1 页(帧归属覆盖链间链外帧的切段对齐)
-func TestRun_ExternalFramesPageOnce(t *testing.T) {
+// TestRun_ExternalPagesPageOnce 链外页分页关恒单页:三页文档只把中页挂链,
+// 前后链外页各 1 页(页归属覆盖链间链外页的切段对齐)
+func TestRun_ExternalPagesPageOnce(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
 
@@ -484,12 +489,11 @@ func TestRun_ExternalFramesPageOnce(t *testing.T) {
 	}
 	rec := &store.TemplateRecord{
 		ID: 1,
-		Canvases: []store.CanvasEntry{
-			{Name: "前帧", Graph: json.RawMessage(table("extra"))},
-			{Name: "中帧", Graph: json.RawMessage(table("certificates"))},
-			{Name: "后帧", Graph: json.RawMessage(table("other"))},
+		Pages: []pages.Page{
+			wirePage("pg_a", "前页", table("extra"), ""),
+			wirePage("pg_b", "中页", table("certificates"), `{"mode":"fixed"}`),
+			wirePage("pg_c", "后页", table("other"), ""),
 		},
-		FlowChain: json.RawMessage(`[{"frame":1,"mode":"fixed"}]`),
 	}
 
 	pages, perr := svc.Run(t.Context(), rec, json.RawMessage(`{
@@ -499,7 +503,7 @@ func TestRun_ExternalFramesPageOnce(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
 	}
-	// 中帧 fixed 容量 1123 装 2 行(400×2≤1123<400×3),链外前后帧各 1 页
+	// 中页 fixed 容量 1123 装 2 行(400×2≤1123<400×3),链外前后页各 1 页
 	if len(pages) != 3 {
 		t.Fatalf("页数 = %d, 期望 3", len(pages))
 	}
@@ -510,8 +514,8 @@ func TestRun_ExternalFramesPageOnce(t *testing.T) {
 	}
 }
 
-// TestRun_ErrorMapping 渲染期防御复跑的错误映射(spec §2.5):解码/填充/编译码
-// 全 400
+// TestRun_ErrorMapping 渲染期防御复跑的错误映射(spec §2.5):页形状/解码/填充/
+// 编译码全 400
 func TestRun_ErrorMapping(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
@@ -522,64 +526,53 @@ func TestRun_ErrorMapping(t *testing.T) {
 		want    string
 	}{
 		"未知图层类型": {
-			&store.TemplateRecord{Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
-				`{"canvas":{"width":100,"height":100},"layers":[{"type":"GhostLayer","priority":0}]}`)}}},
+			&store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页",
+				`{"canvas":{"width":100,"height":100},"layers":[{"type":"GhostLayer","priority":0}]}`, "")}},
 			nil,
 			"unknown_layer_type",
 		},
 		"rowsPath 取不到行": {
-			&store.TemplateRecord{
-				Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
-					`{"canvas":{"width":794,"height":1123},"layers":[
-					 {"type":"TableLayer","priority":50,"data":{"rowsPath":"nope"},
-					  "template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":400}},"cells":[]}}]}`)}},
-			},
+			&store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页",
+				`{"canvas":{"width":794,"height":1123},"layers":[
+				 {"type":"TableLayer","priority":50,"data":{"rowsPath":"nope"},
+				  "template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":400}},"cells":[]}}]}`, "")}},
 			json.RawMessage(`{"other":[]}`),
 			"rows_path_invalid",
 		},
-		"双 paged 流链": {
-			&store.TemplateRecord{
-				Canvases: []store.CanvasEntry{
-					{Name: "帧一", Graph: json.RawMessage(`{"canvas":{"width":100,"height":100},"layers":[]}`)},
-					{Name: "帧二", Graph: json.RawMessage(`{"canvas":{"width":100,"height":100},"layers":[]}`)},
-				},
-				FlowChain: json.RawMessage(`[{"frame":0,"mode":"paged"},{"frame":1,"mode":"paged"}]`),
-			},
+		"双 paged": {
+			&store.TemplateRecord{Pages: []pages.Page{
+				wirePage("pg_a", "页一", `{"canvas":{"width":100,"height":100},"layers":[]}`, `{"mode":"paged"}`),
+				wirePage("pg_b", "页二", `{"canvas":{"width":100,"height":100},"layers":[]}`, `{"mode":"paged"}`),
+			}},
 			nil,
 			"flow_chain_invalid",
 		},
 		"fixed 首行超容": {
-			&store.TemplateRecord{
-				Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
-					`{"canvas":{"width":794,"height":1123},"layers":[
-					 {"type":"TableLayer","priority":50,"data":{"rowsPath":"certificates"},
-					  "template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":1200}},"cells":[]}}]}`)}},
-				FlowChain: json.RawMessage(`[{"frame":0,"mode":"fixed"}]`),
-			},
+			&store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页",
+				`{"canvas":{"width":794,"height":1123},"layers":[
+				 {"type":"TableLayer","priority":50,"data":{"rowsPath":"certificates"},
+				  "template":{"type":"TableRowTemplate","spec":{"shape":{"width":714,"height":1200}},"cells":[]}}]}`,
+				`{"mode":"fixed"}`)}},
 			json.RawMessage(`{"certificates":[{"n":"x"}]}`),
 			"content_overflow",
 		},
 		"资源表达式求值空串": {
-			&store.TemplateRecord{
-				Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
-					`{"canvas":{"width":100,"height":100},"layers":[
-					 {"type":"ImageLayer","priority":0,
-					  "spec":{"shape":{"width":10,"height":10}},
-					  "data":{"valueType":"ExpressionValue","expression":"{{org.logo}}","value":"{{org.logo}}"}}]}`)}},
-			},
+			&store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页",
+				`{"canvas":{"width":100,"height":100},"layers":[
+				 {"type":"ImageLayer","priority":0,
+				  "spec":{"shape":{"width":10,"height":10}},
+				  "data":{"valueType":"ExpressionValue","expression":"{{org.logo}}","value":"{{org.logo}}"}}]}`, "")}},
 			json.RawMessage(`{"org":{"logo":""}}`),
 			"expression_empty_resource",
 		},
 		// ADR 0020 单值门:已标记 Image/Qr 的表达式必须恰为一个裸路径片段,
 		// 多片段拼接在求值前 fail-fast(求值端对齐 go-canvas c598233)
 		"资源表达式多片段拼接": {
-			&store.TemplateRecord{
-				Canvases: []store.CanvasEntry{{Name: "单页", Graph: json.RawMessage(
-					`{"canvas":{"width":100,"height":100},"layers":[
-					 {"type":"QrCodeLayer","priority":0,
-					  "spec":{"shape":{"width":10,"height":10}},
-					  "data":{"valueType":"ExpressionValue","expression":"https://verify.example/{{doc.title}}","value":"https://verify.example/{{doc.title}}"}}]}`)}},
-			},
+			&store.TemplateRecord{Pages: []pages.Page{wirePage("pg_a", "单页",
+				`{"canvas":{"width":100,"height":100},"layers":[
+				 {"type":"QrCodeLayer","priority":0,
+				  "spec":{"shape":{"width":10,"height":10}},
+				  "data":{"valueType":"ExpressionValue","expression":"https://verify.example/{{doc.title}}","value":"https://verify.example/{{doc.title}}"}}]}`, "")}},
 			json.RawMessage(`{"doc":{"title":"HC-001"}}`),
 			"expression_resource_single_ref",
 		},
@@ -713,17 +706,17 @@ func TestRun_CacheReuseAcrossRuns(t *testing.T) {
 	}
 }
 
-// TestRun_InvalidStoredFlowChain 存储态流链节点非 JSON 对象(防御性,保存预检
-// 已挡)→ 400 invalid_json
-func TestRun_InvalidStoredFlowChain(t *testing.T) {
+// TestRun_InvalidStoredPageFlow 存储态页 flow 非 JSON 对象(防御性,保存预检
+// 已挡)→ 400 page_invalid
+func TestRun_InvalidStoredPageFlow(t *testing.T) {
 	chdirToSeedAssets(t)
 	svc := newService(t, &fakeDownloader{})
 	rec, dataset := newOfflineRecord(t)
-	rec.FlowChain = json.RawMessage(`["fixed"]`)
+	rec.Pages[0].Flow = json.RawMessage(`"fixed"`)
 
 	_, perr := svc.Run(t.Context(), rec, dataset)
-	if perr == nil || perr.Status != 400 || perr.Code != "invalid_json" {
-		t.Fatalf("期望 400/invalid_json, 实得 %+v", perr)
+	if perr == nil || perr.Status != 400 || perr.Code != "page_invalid" {
+		t.Fatalf("期望 400/page_invalid, 实得 %+v", perr)
 	}
 }
 

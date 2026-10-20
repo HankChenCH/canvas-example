@@ -1,5 +1,5 @@
 // Package codes:稳定错误码单源(spec §2.5 总表)。code 是三端一致性锚点,
-// 按 code 判定语义、message 不参与程序判定——全表集中一处,api/preflight/
+// 按 code 判定语义、message 不参与程序判定——全表集中一处,api/pages/
 // render 共同消费,不各自持有字面量。标 ◆ 的为服务端自有 code(不属
 // go-canvas sentinel);go-canvas sentinel 段经 errors.Is 在各包 mapper 对号。
 package codes
@@ -60,4 +60,10 @@ const (
 	InvalidGraph        = "invalid_graph"
 	TemplateUnpublished = "template_unpublished"
 	VersionNotFound     = "version_not_found"
+
+	// 模板页序列(◆;ADR 0025 模板文档单元改页序列):页级形状错(id 缺失/
+	// 空/非字符串/页内重复、flow 非 object、name 非字符串),HTTP 400(对齐
+	// invalid_json 模式)。flow 语义错不经此码——由编译后的引擎流链校验
+	// 原样透传既有 sentinel(链三码)
+	PageInvalid = "page_invalid"
 )

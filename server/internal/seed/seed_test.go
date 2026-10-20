@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"example/server/internal/pages"
 )
 
-// TestLoadRealSeed 以仓库内真实 seed(05 票 fixture 逐字节拷入)为对象:
-// 同时是 seed 目录完整性的回归哨兵
+// TestLoadRealSeed 以仓库内真实 seed(pages fixture)为对象:同时是 seed 目录
+// 完整性的回归哨兵
 func TestLoadRealSeed(t *testing.T) {
 	content, err := Load("../../seed")
 	if err != nil {
@@ -29,26 +31,56 @@ func TestLoadRealSeed(t *testing.T) {
 	if tmpl.Name != DefaultTemplateName {
 		t.Fatalf("默认模板名 = %q, 期望 %q", tmpl.Name, DefaultTemplateName)
 	}
-	if len(tmpl.Canvases) != 2 || tmpl.Canvases[0].Name != "主页" || tmpl.Canvases[1].Name != "续页" {
-		t.Fatalf("帧名应为 主页/续页: %+v", tmpl.Canvases)
+	// 页序列形状(ADR 0025):页 id 落 fixture、页名 主页/续页、flow 形状
+	// fixed / paged+omitIfEmpty 与翻转前流链一致(flow 按语义比对,fixture 为
+	// 缩进排版不钉空白)
+	if len(tmpl.Pages) != 2 {
+		t.Fatalf("seed 应两页: %d", len(tmpl.Pages))
 	}
-	for _, c := range tmpl.Canvases {
-		if !json.Valid(c.Graph) {
-			t.Fatalf("帧 %s graph 非法 JSON", c.Name)
+	flowIs := func(i int, want string) bool {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, tmpl.Pages[i].Flow); err != nil {
+			return false
 		}
+		return buf.String() == want
 	}
-	var chain []map[string]any
-	if err := json.Unmarshal(tmpl.FlowChain, &chain); err != nil || len(chain) != 2 {
-		t.Fatalf("flowChain 应为两节点数组: %s (%v)", tmpl.FlowChain, err)
+	var ids []string
+	for i, want := range []struct {
+		name string
+		flow string
+	}{{"主页", `{"mode":"fixed"}`}, {"续页", `{"mode":"paged","omitIfEmpty":true}`}} {
+		p := tmpl.Pages[i]
+		var name string
+		if err := json.Unmarshal(p.Name, &name); err != nil || name != want.name {
+			t.Fatalf("页 %d name = %s, 期望 %q (%v)", i, p.Name, want.name, err)
+		}
+		var id string
+		if err := json.Unmarshal(p.ID, &id); err != nil || id == "" {
+			t.Fatalf("页 %d id 须为非空字符串(页 id 落 fixture): %s (%v)", i, p.ID, err)
+		}
+		ids = append(ids, id)
+		if ids[0] == ids[len(ids)-1] && i == 1 {
+			t.Fatalf("页 id 页内重复: %v", ids)
+		}
+		if !flowIs(i, want.flow) {
+			t.Fatalf("页 %d flow = %s, 期望 %s", i, p.Flow, want.flow)
+		}
+		if !json.Valid(p.Graph) {
+			t.Fatalf("页 %s graph 非法 JSON", name)
+		}
 	}
 	// 模板只持引用:绑定 id 由启动序接线,Load 不产引用
 	if tmpl.DataSourceID != nil {
 		t.Fatalf("Load 不得预设 data_source_id: %v", tmpl.DataSourceID)
 	}
+	// 编译哨兵:seed 页序列应过编译边界(种子模板直接就是可渲染的页形状)
+	if _, verr := pages.Compile(tmpl.Pages); verr != nil {
+		t.Fatalf("seed 页序列应过编译: %v", verr)
+	}
 }
 
 // TestLoadRealSeed_FourFitShowcase 图片层适配四档同画布对照(image-fit-fill-tile
-// 06 票,ADR 0023/0024):主页帧四档 fit 各一——徽标 cover 缺省不落键、照片格
+// 06 票,ADR 0023/0024):主页四档 fit 各一——徽标 cover 缺省不落键、照片格
 // contain、装饰纹理带 fill、防伪水印 tile;fit 条件写键落键殿后(shape/align/
 // position/fit)。fill/tile 素材是静态引用,内在尺寸即 tile 平铺单元(1:1 零参数),
 // PNG 头尺寸一并钉死
@@ -57,11 +89,11 @@ func TestLoadRealSeed_FourFitShowcase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load 真实 seed: %v", err)
 	}
-	if len(content.Template.Canvases) != 2 {
-		t.Fatalf("应有两帧: %d", len(content.Template.Canvases))
+	if len(content.Template.Pages) != 2 {
+		t.Fatalf("应有两页: %d", len(content.Template.Pages))
 	}
 	var main map[string]any
-	if err := json.Unmarshal(content.Template.Canvases[0].Graph, &main); err != nil {
+	if err := json.Unmarshal(content.Template.Pages[0].Graph, &main); err != nil {
 		t.Fatal(err)
 	}
 	layers := main["layers"].([]any)
@@ -159,8 +191,8 @@ func TestLoad_MissingFileFails(t *testing.T) {
 
 func TestLoad_InvalidJSONFails(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"frame-main.json", "frame-continuation.json", "flow-chain.json", "dataset.json"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o644); err != nil {
+	for _, name := range []string{"pages.json", "dataset.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`[]`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -169,6 +201,24 @@ func TestLoad_InvalidJSONFails(t *testing.T) {
 	}
 	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "dataset-schema.json") {
 		t.Fatalf("应报 dataset-schema.json 非法 JSON, 实得 %v", err)
+	}
+}
+
+// TestLoad_PagesShapeFails pages.json 非页对象数组 fail-fast(结构错误不静默
+// 播种;页级形状裁决归编译边界,此处只守 JSON 结构)
+func TestLoad_PagesShapeFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pages.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"dataset-schema.json", "dataset.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "pages.json") {
+		t.Fatalf("应报 pages.json 须为页对象数组, 实得 %v", err)
 	}
 }
 

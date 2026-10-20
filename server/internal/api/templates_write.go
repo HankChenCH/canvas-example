@@ -1,28 +1,27 @@
 // 模板写端点(spec §2.4 #3/#5):POST /api/templates 与 PUT /api/templates/{id}。
-// 保存即预检(spec §3.4):逐帧解码 + 流链校验全跑,不过 400 打回不落库。
-// 数据源为独立实体(spec §2.4 数据源段):POST 载荷可选 dataSourceId 随建随绑
-// (另存为单调用携带引用),PUT 不触碰绑定——绑定只经 PUT …/datasource 通道。
+// 保存即预检(spec §3.4):页序列经编译边界全跑(页级形状 + 逐帧解码 + 流链
+// 校验),不过 400 打回不落库。数据源为独立实体(spec §2.4 数据源段):POST 载荷
+// 可选 dataSourceId 随建随绑(另存为单调用携带引用),PUT 不触碰绑定——绑定只经
+// PUT …/datasource 通道。
 package api
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 
 	"example/server/internal/codes"
-	"example/server/internal/preflight"
+	"example/server/internal/pages"
 	"example/server/internal/store"
 )
 
-// templateWritePayload POST/PUT 模板载荷(spec §2.4 #3/#5):flowChain 缺键 =
-// null = 空链(spec §3.1);dataSourceId 仅 POST 消费(缺省 null = 未绑)——
-// PUT 忽略此键,绑定只经数据源绑定通道变更
+// templateWritePayload POST/PUT 模板载荷(spec §2.4 #3/#5,ADR 0025 页序列形状):
+// pages = 单一页序列数组(页 id/name 由前端生成,服务端编译时逐项裁决);
+// dataSourceId 仅 POST 消费(缺省 null = 未绑)——PUT 忽略此键,绑定只经数据源
+// 绑定通道变更
 type templateWritePayload struct {
-	Name         string              `json:"name"`
-	Canvases     []store.CanvasEntry `json:"canvases"`
-	FlowChain    json.RawMessage     `json:"flowChain"`
-	DataSourceID *int64              `json:"dataSourceId"`
+	Name         string       `json:"name"`
+	Pages        []pages.Page `json:"pages"`
+	DataSourceID *int64       `json:"dataSourceId"`
 }
 
 // handleCreateTemplate POST /api/templates → 201 全量 TemplateRecord:id 自增
@@ -40,8 +39,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.store.CreateTemplate(r.Context(), store.TemplateContent{
 		Name:         payload.Name,
-		Canvases:     payload.Canvases,
-		FlowChain:    normalizeNullJSON(payload.FlowChain),
+		Pages:        payload.Pages,
 		DataSourceID: payload.DataSourceID,
 	})
 	if err != nil {
@@ -52,8 +50,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateTemplate PUT /api/templates/{id} → 200 全量 TemplateRecord:
-// name/canvases/flowChain 整存替换、不触碰 data_source_id、刷新 updatedAt
-// (spec §2.4 #5)
+// name/pages 整存替换、不触碰 data_source_id、刷新 updatedAt(spec §2.4 #5)
 func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -65,9 +62,8 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.store.UpdateTemplateContent(r.Context(), id, store.TemplateContent{
-		Name:      payload.Name,
-		Canvases:  payload.Canvases,
-		FlowChain: normalizeNullJSON(payload.FlowChain),
+		Name:  payload.Name,
+		Pages: payload.Pages,
 	}); err != nil {
 		writeStoreError(w, err, "更新模板失败")
 		return
@@ -75,19 +71,17 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	s.respondTemplate(w, r, http.StatusOK, id)
 }
 
-// decodeTemplatePayload 解码载荷并跑保存预检;失败已写响应,调用方拿到 ok=false
-// 直接返回(预检失败 = 400 稳定码信封,spec §3.4)
+// decodeTemplatePayload 解码载荷并跑保存预检(编译边界 pages.Compile,与渲染
+// 管线同一段实现);失败已写响应,调用方拿到 ok=false 直接返回(400 稳定码信封,
+// Compile 返回的 Code 原样上信封:page_invalid → 400 页级形状错,flow_chain_invalid
+// 等引擎 sentinel → 400 流语义错,invalid_json/解码三码 → 400 wire/解码错)
 func decodeTemplatePayload(w http.ResponseWriter, r *http.Request) (templateWritePayload, bool) {
 	var payload templateWritePayload
 	if err := decodeJSON(r, &payload); err != nil {
 		writeDecodeError(w, err)
 		return payload, false
 	}
-	graphs := make([]json.RawMessage, 0, len(payload.Canvases))
-	for _, c := range payload.Canvases {
-		graphs = append(graphs, c.Graph)
-	}
-	if verr := preflight.Check(graphs, payload.FlowChain); verr != nil {
+	if _, verr := pages.Compile(payload.Pages); verr != nil {
 		writeError(w, http.StatusBadRequest, verr.Code, verr.Message)
 		return payload, false
 	}
@@ -111,14 +105,4 @@ func writeStoreError(w http.ResponseWriter, err error, fallback string) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, codes.InternalError, fallback)
-}
-
-// normalizeNullJSON null 字面量与空载荷归 nil——存储 SQL NULL 而非字面 "null"
-// 文本(响应序列化两者同为 JSON null,spec §2.3)
-func normalizeNullJSON(raw json.RawMessage) json.RawMessage {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil
-	}
-	return raw
 }
