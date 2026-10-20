@@ -60,4 +60,10 @@ const (
 	InvalidGraph        = "invalid_graph"
 	TemplateUnpublished = "template_unpublished"
 	VersionNotFound     = "version_not_found"
+
+	// 模板页序列(◆;ADR 0025 模板文档单元改页序列):页级形状错(id 缺失/
+	// 空/非字符串/页内重复、flow 非 object、name 非字符串),HTTP 400(对齐
+	// invalid_json 模式)。flow 语义错不经此码——由编译后的引擎流链校验
+	// 原样透传既有 sentinel(链三码)
+	PageInvalid = "page_invalid"
 )
