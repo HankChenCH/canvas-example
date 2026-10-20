@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"example/server/internal/pages"
 )
 
 // --- 模板草稿-发布-版本化(工单 01/02,spec §2/§3):template_versions 表、
@@ -31,8 +33,8 @@ func TestOpenCreatesTemplateVersionsTable(t *testing.T) {
 	}
 }
 
-// TestBackfillTemplateVersionsV1 存量回填:凡零版本行的模板,现 canvases+flow_chain
-// 列文本原样固化为 v1(不重新 marshal,字节面诚实);created_at = 回填运行时刻;
+// TestBackfillTemplateVersionsV1 存量回填:凡零版本行的模板,现 pages 列文本
+// 原样固化为 v1(不重新 marshal,字节面诚实);created_at = 回填运行时刻;
 // 谓词幂等,重跑 no-op 且 created_at 不变
 func TestBackfillTemplateVersionsV1(t *testing.T) {
 	st := openTestStore(t)
@@ -42,11 +44,12 @@ func TestBackfillTemplateVersionsV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建模板 A: %v", err)
 	}
-	chainless := seedContent()
-	chainless.Name = "无链模板"
-	chainless.FlowChain = nil
-	idB, err := st.CreateTemplate(ctx, chainless)
-	if err != nil {
+	flowless := seedContent()
+	flowless.Name = "无 flow 页模板"
+	flowless.Pages = []pages.Page{
+		seedPage("pg_a", "甲页", `{"canvas":{"width":794,"height":1123},"layers":[]}`, ""),
+	}
+	if _, err := st.CreateTemplate(ctx, flowless); err != nil {
 		t.Fatalf("创建模板 B: %v", err)
 	}
 
@@ -59,38 +62,25 @@ func TestBackfillTemplateVersionsV1(t *testing.T) {
 	}
 
 	// 回填是列文本原样固化:与 templates 列字节面一致(不重新 marshal)
-	var rawCanvases, rawChain string
-	if err := st.db.QueryRow(`SELECT canvases, flow_chain FROM templates WHERE id = ?`, idA).
-		Scan(&rawCanvases, &rawChain); err != nil {
+	var rawPages string
+	if err := st.db.QueryRow(`SELECT pages FROM templates WHERE id = ?`, idA).
+		Scan(&rawPages); err != nil {
 		t.Fatalf("读模板 A 列: %v", err)
 	}
-	var vCanvases, vChain string
-	var vCreatedAt string
+	var vPages, vCreatedAt string
 	if err := st.db.QueryRow(
-		`SELECT canvases, flow_chain, created_at FROM template_versions WHERE template_id = ? AND version = 1`, idA,
-	).Scan(&vCanvases, &vChain, &vCreatedAt); err != nil {
+		`SELECT pages, created_at FROM template_versions WHERE template_id = ? AND version = 1`, idA,
+	).Scan(&vPages, &vCreatedAt); err != nil {
 		t.Fatalf("读版本行: %v", err)
 	}
-	if vCanvases != rawCanvases || vChain != rawChain {
-		t.Fatalf("回填应原样固化列文本:\n canvases %q vs %q\n flow_chain %q vs %q",
-			vCanvases, rawCanvases, vChain, rawChain)
+	if vPages != rawPages {
+		t.Fatalf("回填应原样固化列文本:\n pages %q vs %q", vPages, rawPages)
 	}
 	if !strings.HasSuffix(vCreatedAt, "Z") || strings.Contains(vCreatedAt, "+") {
 		t.Fatalf("created_at 应为 RFC3339 UTC: %q", vCreatedAt)
 	}
 	if _, err := time.Parse(time.RFC3339, vCreatedAt); err != nil {
 		t.Fatalf("created_at 应可按 RFC3339 解析: %q (%v)", vCreatedAt, err)
-	}
-
-	// 无链模板:flow_chain 镜像 templates 列的 NULL
-	var bChain any
-	if err := st.db.QueryRow(
-		`SELECT flow_chain FROM template_versions WHERE template_id = ? AND version = 1`, idB,
-	).Scan(&bChain); err != nil {
-		t.Fatalf("读模板 B 版本行: %v", err)
-	}
-	if bChain != nil {
-		t.Fatalf("无链模板版本行 flow_chain 应为 NULL: %v", bChain)
 	}
 
 	// 谓词幂等:重跑 no-op,created_at 不变
@@ -119,8 +109,8 @@ func TestBackfillTemplateVersionsV1(t *testing.T) {
 		t.Fatalf("回填后未改草稿的发布应 duplicate v1: (%d,%v,%v)", version, duplicate, err)
 	}
 	changed := seedContent()
-	changed.Canvases = []CanvasEntry{
-		{Name: "回填后续发帧", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
+	changed.Pages = []pages.Page{
+		seedPage("pg_new", "回填后续发页", `{"canvas":{"width":794,"height":1123},"layers":[]}`, `{"mode":"fixed"}`),
 	}
 	if err := st.UpdateTemplateContent(ctx, idA, changed); err != nil {
 		t.Fatalf("改草稿: %v", err)
@@ -135,8 +125,8 @@ func TestBackfillTemplateVersionsV1(t *testing.T) {
 }
 
 // TestPublishTemplateVersion_MAXPlus1AndDuplicate 发布 = 事务内 MAX(version)+1;
-// 草稿列文本与最新版本行字节相等 → duplicate 幂等跳过(createdAt 沿用既有版本行);
-// INSERT-only:版本行永无 UPDATE
+// 草稿 pages 列文本与最新版本行字节相等 → duplicate 幂等跳过(createdAt 沿用
+// 既有版本行);INSERT-only:版本行永无 UPDATE
 func TestPublishTemplateVersion_MAXPlus1AndDuplicate(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -159,11 +149,11 @@ func TestPublishTemplateVersion_MAXPlus1AndDuplicate(t *testing.T) {
 		t.Fatalf("重复发布 = (%d,%q,%v), 期望 (1,%q,true): %v", v2, c2, dup2, c1, err)
 	}
 
-	// 改草稿(仅 canvases 文本变化)再发布 → v2(快照 = canvases+flow_chain,
+	// 改草稿(仅 pages 文本变化)再发布 → v2(快照 = pages 列整体,页 id 在内,
 	// name 不在快照内;createdAt 形状断言,秒级解析度下不比新旧)
 	changed := seedContent()
-	changed.Canvases = []CanvasEntry{
-		{Name: "主页改", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
+	changed.Pages = []pages.Page{
+		seedPage("pg_main2", "主页改", `{"canvas":{"width":794,"height":1123},"layers":[]}`, `{"mode":"fixed"}`),
 	}
 	if err := st.UpdateTemplateContent(ctx, id, changed); err != nil {
 		t.Fatalf("改草稿: %v", err)
@@ -195,8 +185,8 @@ func TestPublishTemplateVersion_ByteComparison(t *testing.T) {
 		t.Fatalf("首发: %v", err)
 	}
 	// 绕过写端点直改列文本(键序重排,JSON 语义等价、字节面不同)
-	if _, err := st.db.Exec(`UPDATE templates SET canvases = ? WHERE id = ?`,
-		`[{"graph":{"canvas":{"height":1123,"width":794},"layers":[]},"name":"主页"},{"name":"续页","graph":{"canvas":{"height":1123,"width":794},"layers":[]}}]`,
+	if _, err := st.db.Exec(`UPDATE templates SET pages = ? WHERE id = ?`,
+		`[{"flow":{"mode":"fixed"},"graph":{"canvas":{"height":1123,"width":794},"layers":[]},"id":"pg_main","name":"主页"},{"flow":{"mode":"paged","omitIfEmpty":true},"graph":{"canvas":{"height":1123,"width":794},"layers":[]},"id":"pg_cont","name":"续页"}]`,
 		id); err != nil {
 		t.Fatalf("直改草稿列: %v", err)
 	}
@@ -209,33 +199,39 @@ func TestPublishTemplateVersion_ByteComparison(t *testing.T) {
 	}
 }
 
-// TestPublishTemplateVersion_FlowChainNullAware 幂等判定的 flow_chain 两侧 NULL
-// 对齐(NULL vs NULL 相等;NULL vs 文本不等)
-func TestPublishTemplateVersion_FlowChainNullAware(t *testing.T) {
+// TestPublishTemplateVersion_PagesSnapshotScope 快照对象 = pages 列文本整体:
+// 只改模板 name 会被 duplicate 幂等吸收(name 不在快照内);只改页 flow(其余
+// 全同)即判不等造新版本
+func TestPublishTemplateVersion_PagesSnapshotScope(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
-	chainless := seedContent()
-	chainless.FlowChain = nil
-	id, err := st.CreateTemplate(ctx, chainless)
+	id, err := st.CreateTemplate(ctx, seedContent())
 	if err != nil {
 		t.Fatalf("创建模板: %v", err)
 	}
 	if _, _, _, err := st.PublishTemplateVersion(ctx, id); err != nil {
 		t.Fatalf("首发: %v", err)
 	}
-	// 草稿 flow_chain 仍 NULL:字节相等 → duplicate
-	if _, _, dup, err := st.PublishTemplateVersion(ctx, id); err != nil || !dup {
-		t.Fatalf("NULL vs NULL 应判等: duplicate=%v err=%v", dup, err)
+
+	// 只改 name:pages 文本不变 → duplicate
+	renamed := seedContent()
+	renamed.Name = "只改名"
+	if err := st.UpdateTemplateContent(ctx, id, renamed); err != nil {
+		t.Fatalf("只改名: %v", err)
 	}
-	// 草稿补上流链 → 不等 → v2
-	withChain := seedContent()
-	withChain.FlowChain = json.RawMessage(`[{"frame":0,"mode":"fixed"}]`)
-	if err := st.UpdateTemplateContent(ctx, id, withChain); err != nil {
-		t.Fatalf("补流链: %v", err)
+	if version, _, dup, err := st.PublishTemplateVersion(ctx, id); err != nil || !dup || version != 1 {
+		t.Fatalf("name 不在快照内应 duplicate v1: (%d,%v,%v)", version, dup, err)
+	}
+
+	// 只改页 0 的 flow:pages 文本变 → v2
+	reflowed := seedContent()
+	reflowed.Pages[0].Flow = json.RawMessage(`{"mode":"fixed","quota":2}`)
+	if err := st.UpdateTemplateContent(ctx, id, reflowed); err != nil {
+		t.Fatalf("改页 flow: %v", err)
 	}
 	version, _, dup, err := st.PublishTemplateVersion(ctx, id)
 	if err != nil || dup || version != 2 {
-		t.Fatalf("NULL vs 文本应判不等: (%d,%v,%v)", version, dup, err)
+		t.Fatalf("页 flow 变化应造 v2: (%d,%v,%v)", version, dup, err)
 	}
 }
 
@@ -261,12 +257,12 @@ func TestListTemplateVersions_DescAndEmpty(t *testing.T) {
 		t.Fatalf("未发布模板版本列表 = %v (%v), 期望空数组", items, err)
 	}
 
-	// 三个版本:每次发布前改 canvases(快照 = canvases+flow_chain,只改 name
-	// 会被 duplicate 幂等吸收)
+	// 三个版本:每次发布前改 pages(快照 = pages 列文本,只改 name 会被
+	// duplicate 幂等吸收)
 	for i := range 3 {
 		changed := seedContent()
-		changed.Canvases = []CanvasEntry{
-			{Name: "主页改" + string(rune('A'+i)), Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
+		changed.Pages = []pages.Page{
+			seedPage("pg_v"+string(rune('A'+i)), "主页改"+string(rune('A'+i)), `{"canvas":{"width":794,"height":1123},"layers":[]}`, `{"mode":"fixed"}`),
 		}
 		if err := st.UpdateTemplateContent(ctx, id, changed); err != nil {
 			t.Fatalf("改草稿 %d: %v", i, err)
@@ -291,12 +287,12 @@ func TestListTemplateVersions_DescAndEmpty(t *testing.T) {
 		}
 	}
 
-	// JSON 形状:轻量两字段(不吐 canvases)
+	// JSON 形状:轻量两字段(不吐 pages)
 	b, err := json.Marshal(items)
 	if err != nil {
 		t.Fatalf("序列化: %v", err)
 	}
-	if !strings.Contains(string(b), `"version"`) || strings.Contains(string(b), `"canvases"`) {
+	if !strings.Contains(string(b), `"version"`) || strings.Contains(string(b), `"pages"`) {
 		t.Fatalf("列表应只含 version/createdAt 轻量字段: %s", b)
 	}
 
@@ -305,7 +301,7 @@ func TestListTemplateVersions_DescAndEmpty(t *testing.T) {
 	}
 }
 
-// TestGetTemplateVersion_Roundtrip 单版本全量:canvases 文本原样、flow_chain 可空;
+// TestGetTemplateVersion_Roundtrip 单版本全量:pages 文本原样(页 id 在内);
 // 版本不存在 → ErrTemplateVersionNotFound(含对无版本模板指定)
 func TestGetTemplateVersion_Roundtrip(t *testing.T) {
 	st := openTestStore(t)
@@ -326,27 +322,31 @@ func TestGetTemplateVersion_Roundtrip(t *testing.T) {
 	if rec.Version != 1 || rec.CreatedAt == "" {
 		t.Fatalf("版本行元数据不符: %+v", rec)
 	}
-	if len(rec.Canvases) != 2 || rec.Canvases[0].Name != "主页" || rec.Canvases[1].Name != "续页" {
-		t.Fatalf("canvases 形状不符: %+v", rec.Canvases)
+	// 快照随 pages 整体:页 id 与 flow 在快照内
+	if len(rec.Pages) != 2 {
+		t.Fatalf("版本 pages 应两页: %+v", rec.Pages)
 	}
-	var chain []map[string]any
-	if err := json.Unmarshal(rec.FlowChain, &chain); err != nil || len(chain) != 2 {
-		t.Fatalf("flowChain 应为两节点数组: %s (%v)", rec.FlowChain, err)
+	var id0 string
+	if err := json.Unmarshal(rec.Pages[0].ID, &id0); err != nil || id0 != "pg_main" {
+		t.Fatalf("快照应含页 id pg_main: %s (%v)", rec.Pages[0].ID, err)
+	}
+	if string(rec.Pages[1].Flow) != `{"mode":"paged","omitIfEmpty":true}` {
+		t.Fatalf("快照应含页 flow 原文: %s", rec.Pages[1].Flow)
 	}
 
-	// 无链模板:flowChain 序列化为 JSON null(与 TemplateRecord 同款)
-	chainless := seedContent()
-	chainless.FlowChain = nil
-	id2, err := st.CreateTemplate(ctx, chainless)
+	// 无 flow 页模板:快照 pages 与草稿一致(flow 键缺席)
+	flowless := seedContent()
+	flowless.Pages = []pages.Page{seedPage("pg_a", "甲页", `{"canvas":{"width":794,"height":1123},"layers":[]}`, "")}
+	id2, err := st.CreateTemplate(ctx, flowless)
 	if err != nil {
-		t.Fatalf("创建无链模板: %v", err)
+		t.Fatalf("创建无 flow 页模板: %v", err)
 	}
 	if _, _, _, err := st.PublishTemplateVersion(ctx, id2); err != nil {
-		t.Fatalf("无链模板发布: %v", err)
+		t.Fatalf("无 flow 页模板发布: %v", err)
 	}
 	rec2, err := st.GetTemplateVersion(ctx, id2, 1)
-	if err != nil || rec2.FlowChain != nil {
-		t.Fatalf("无链版本 flowChain 应为 nil: %+v (%v)", rec2.FlowChain, err)
+	if err != nil || len(rec2.Pages) != 1 || rec2.Pages[0].Flow != nil {
+		t.Fatalf("无 flow 页快照 flow 应为键缺席: %+v (%v)", rec2.Pages, err)
 	}
 
 	// 版本不存在(含对无版本模板指定)→ ErrTemplateVersionNotFound
@@ -373,8 +373,8 @@ func TestLatestTemplateVersion(t *testing.T) {
 	}
 	for i := range 2 {
 		changed := seedContent()
-		changed.Canvases = []CanvasEntry{
-			{Name: "主页改" + string(rune('A'+i)), Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
+		changed.Pages = []pages.Page{
+			seedPage("pg_v"+string(rune('A'+i)), "主页改"+string(rune('A'+i)), `{"canvas":{"width":794,"height":1123},"layers":[]}`, `{"mode":"fixed"}`),
 		}
 		if err := st.UpdateTemplateContent(ctx, id, changed); err != nil {
 			t.Fatalf("改草稿 %d: %v", i, err)
@@ -389,9 +389,9 @@ func TestLatestTemplateVersion(t *testing.T) {
 	}
 }
 
-// TestRevertTemplateToVersion 回滚 = 单事务原子复制版本行内容回草稿列:
-// canvases/flow_chain 整体替换、updated_at 刷新(与「发布不动」对照),
-// name/data_source_id/editor_state 都不碰;版本线线性,回滚不产生新版本
+// TestRevertTemplateToVersion 回滚 = 单事务原子复制版本行 pages 文本回草稿列:
+// pages 整体替换、updated_at 刷新(与「发布不动」对照),name/data_source_id/
+// editor_state 都不碰;版本线线性,回滚不产生新版本
 func TestRevertTemplateToVersion(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -417,8 +417,7 @@ func TestRevertTemplateToVersion(t *testing.T) {
 
 	// 草稿大改 + 再发布 v2(版本史留痕)
 	rewritten := seedContent()
-	rewritten.Canvases = []CanvasEntry{{Name: "重写帧", Graph: json.RawMessage(`{"canvas":{"width":10,"height":10},"layers":[]}`)}}
-	rewritten.FlowChain = nil
+	rewritten.Pages = []pages.Page{seedPage("pg_rw", "重写页", `{"canvas":{"width":10,"height":10},"layers":[]}`, "")}
 	if err := st.UpdateTemplateContent(ctx, id, rewritten); err != nil {
 		t.Fatalf("重写草稿: %v", err)
 	}
@@ -433,11 +432,16 @@ func TestRevertTemplateToVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("回读: %v", err)
 	}
-	if len(rec.Canvases) != 2 || rec.Canvases[0].Name != "主页" || rec.Canvases[1].Name != "续页" {
-		t.Fatalf("canvases 应回到 v1 内容: %+v", rec.Canvases)
+	// pages 回到 v1 内容:两页、页名、flow 原样
+	if len(rec.Pages) != 2 {
+		t.Fatalf("pages 应回到 v1 内容: %+v", rec.Pages)
 	}
-	if !strings.Contains(string(rec.FlowChain), `"mode":"fixed"`) {
-		t.Fatalf("flow_chain 应回到 v1 内容: %s", rec.FlowChain)
+	var name0 string
+	if err := json.Unmarshal(rec.Pages[0].Name, &name0); err != nil || name0 != "主页" {
+		t.Fatalf("页 0 应回到 v1(主页): %s", rec.Pages[0].Name)
+	}
+	if !strings.Contains(string(rec.Pages[1].Flow), `"mode":"paged"`) {
+		t.Fatalf("页 1 flow 应回到 v1 内容: %s", rec.Pages[1].Flow)
 	}
 	if rec.UpdatedAt == "2026-01-01T00:00:00Z" {
 		t.Fatalf("回滚应刷新 updated_at(与发布不动对照): %q", rec.UpdatedAt)
@@ -478,7 +482,7 @@ func TestRevertTemplateToVersion_NotFound(t *testing.T) {
 	}
 	// 失败回滚后草稿原样在
 	rec, err := st.GetTemplate(ctx, id)
-	if err != nil || len(rec.Canvases) != 2 {
+	if err != nil || len(rec.Pages) != 2 {
 		t.Fatalf("失败回滚后草稿应原样: %+v (%v)", rec, err)
 	}
 }
@@ -516,9 +520,9 @@ func TestDeleteTemplate_CascadesVersionRows(t *testing.T) {
 
 // --- renders.version 溯源列(工单 04,spec §4 渲染选版) ---
 
-// TestOpen_EnsureRenderVersionColumn renders 表幂等补列:上一版形态库缺 version
-// 列时 ALTER TABLE 补上,旧行 NULL = 版本化前渲染(诚实语义,不造假数据);
-// 重复启动不重复迁移
+// TestOpen_EnsureRenderVersionColumn renders 表幂等补列:templates 已是 pages
+// 形态而 renders 仍为旧形态(缺 version 列)的混合库启动 ALTER TABLE 补上,
+// 旧行 NULL = 版本化前渲染(诚实语义,不造假数据);重复启动不重复迁移
 func TestOpen_EnsureRenderVersionColumn(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "migrate.db")
 	st, err := Open(dbPath)

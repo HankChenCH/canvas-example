@@ -1,4 +1,4 @@
-// Package seed:启动播种(spec §5.2)——五份 fixture 读入默认数据源实体 + 默认
+// Package seed:启动播种(spec §5.2)——三份 fixture 读入默认数据源实体 + 默认
 // 模板(经 data_source_id 引用数据源)+ seed/assets 幂等补齐到运行时 assets/
 // (字体一份 + student-1..5.png)。
 package seed
@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"example/server/internal/pages"
 	"example/server/internal/store"
 )
 
@@ -28,9 +29,10 @@ type Content struct {
 	Template   store.TemplateContent
 }
 
-// Load 从 seedDir 读五份 fixture。文件随仓库逐字节分发(spec §5.2,来源 05 票
-// fixture,已过解码往返与编译断言验证),此处仅按 JSON 语义读入,graph/流链
-// 的契约正确性不在此复制校验。
+// Load 从 seedDir 读三份 fixture:pages.json 页序列(页 id 落 fixture,页名
+// 主页/续页,flow 形状 fixed / paged+omitIfEmpty)+ 数据源 schema/data。文件随
+// 仓库逐字节分发(已过编译断言验证),此处仅按 JSON 语义读入,graph/flow 的
+// 契约正确性不在此复制校验(编译裁决在 pages.Compile,启动与保存路径各自消费)。
 func Load(seedDir string) (Content, error) {
 	readJSON := func(name string) (json.RawMessage, error) {
 		b, err := os.ReadFile(filepath.Join(seedDir, name))
@@ -42,14 +44,12 @@ func Load(seedDir string) (Content, error) {
 		}
 		return json.RawMessage(b), nil
 	}
-	var frameMain, frameCont, flowChain, schema, dataset json.RawMessage
+	var pagesRaw, schema, dataset json.RawMessage
 	for _, slot := range []struct {
 		file   string
 		target *json.RawMessage
 	}{
-		{"frame-main.json", &frameMain},
-		{"frame-continuation.json", &frameCont},
-		{"flow-chain.json", &flowChain},
+		{"pages.json", &pagesRaw},
 		{"dataset-schema.json", &schema},
 		{"dataset.json", &dataset},
 	} {
@@ -59,6 +59,10 @@ func Load(seedDir string) (Content, error) {
 		}
 		*slot.target = raw
 	}
+	var doc []pages.Page
+	if err := json.Unmarshal(pagesRaw, &doc); err != nil {
+		return Content{}, fmt.Errorf("seed pages.json 须为页对象数组: %w", err)
+	}
 	return Content{
 		DataSource: store.DataSourceContent{
 			Name:   DefaultDataSourceName,
@@ -66,12 +70,8 @@ func Load(seedDir string) (Content, error) {
 			Data:   dataset,
 		},
 		Template: store.TemplateContent{
-			Name: DefaultTemplateName,
-			Canvases: []store.CanvasEntry{
-				{Name: "主页", Graph: frameMain},
-				{Name: "续页", Graph: frameCont},
-			},
-			FlowChain: flowChain,
+			Name:  DefaultTemplateName,
+			Pages: doc,
 		},
 	}, nil
 }

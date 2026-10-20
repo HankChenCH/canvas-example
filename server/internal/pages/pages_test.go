@@ -187,7 +187,8 @@ func TestCompile_ShapeMessageCarriesIndexAndID(t *testing.T) {
 
 // TestCompile_FlowSemanticCodesPassthrough flow 语义错透传引擎稳定 code——
 // example 侧不复刻/抢判任何流校验规则,页 flow 原样并入链节点交引擎裁决
-// (守卫矩阵:非法输入防线用例随矩阵钉死)
+// (守卫矩阵:非法输入防线用例随矩阵钉死;原 preflight 包链三码矩阵的
+// pages 形态表达面并入此处)
 func TestCompile_FlowSemanticCodesPassthrough(t *testing.T) {
 	g := graphWire(``)
 	tplGraph := func(rowsPath string) json.RawMessage { return graphWire(templateTableWire(rowsPath)) }
@@ -224,12 +225,28 @@ func TestCompile_FlowSemanticCodesPassthrough(t *testing.T) {
 			},
 			codes.FlowRowsPathInconsistent,
 		},
+		// 链外帧同 rowsPath 碰撞(不限定模板态):链上仅页 0,页 1 无 flow
+		"链外页同rowsPath碰撞": {
+			[]Page{
+				pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s,"flow":{"mode":"paged"}}`, tplGraph("certificates"))),
+				pageWire(t, fmt.Sprintf(`{"id":"b","graph":%s}`, tplGraph("certificates"))),
+			},
+			codes.FlowRowsPathInconsistent,
+		},
 		"链上帧无槽位表": {
 			[]Page{pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s,"flow":{"mode":"fixed"}}`, g))},
 			codes.FlowChainInvalid,
 		},
 		"链上帧双顶层表": {
 			[]Page{pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s,"flow":{"mode":"fixed"}}`, graphWire(templateTableWire("a")+","+templateTableWire("a"))))},
+			codes.PaginateTargetInvalid,
+		},
+		// 链外帧双顶层表照打(链校验约束全部帧,不只链上)
+		"链外页双顶层表": {
+			[]Page{
+				pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s,"flow":{"mode":"fixed"}}`, tplGraph("a"))),
+				pageWire(t, fmt.Sprintf(`{"id":"b","graph":%s}`, graphWire(templateTableWire("b")+","+templateTableWire("b")))),
+			},
 			codes.PaginateTargetInvalid,
 		},
 	}
@@ -241,20 +258,79 @@ func TestCompile_FlowSemanticCodesPassthrough(t *testing.T) {
 
 // TestCompile_GraphDecodeKeepsExistingCodes graph 非法 JSON 与解码失败沿用既有
 // code 分流(spec:不归 page_invalid)——编译内部解码帧与预检同管线同码
+// (原 preflight 解码三码矩阵并入)
 func TestCompile_GraphDecodeKeepsExistingCodes(t *testing.T) {
 	cases := map[string]struct {
 		graph    string
 		wantCode string
 	}{
 		"graph非JSON对象": {`42`, codes.InvalidJSON},
-		"graph字段类型不符": {`{"canvas":{"width":"abc"}}`, codes.InvalidJSON},
+		"graph字段类型不符":  {`{"canvas":{"width":"abc"}}`, codes.InvalidJSON},
 		"未知图层类型": {
 			`{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}`,
 			codes.UnknownLayerType,
+		},
+		"template与rows双键": {
+			`{"canvas":{"width":794,"height":1123},"layers":[{"type":"TableLayer","priority":0,"data":{"rowsPath":"rows"},"template":{"type":"TableRowTemplate","cells":[]},"rows":[]}]}`,
+			codes.TemplateRowsConflict,
+		},
+		"模板态缺rowsPath": {
+			`{"canvas":{"width":794,"height":1123},"layers":[{"type":"TableLayer","priority":0,"template":{"type":"TableRowTemplate","cells":[]}}]}`,
+			codes.RowsPathMissing,
 		},
 	}
 	for _, tc := range cases {
 		_, _, verr := Compile([]Page{pageWire(t, fmt.Sprintf(`{"id":"a","graph":%s}`, tc.graph))})
 		mustCode(t, verr, tc.wantCode)
+	}
+}
+
+// TestDecodeProducts 编译产物解码段(渲染管线消费面):帧序不变、链解码透传、
+// 空链缺省形态(nil)回空链;防御性失败沿用既有 code 分流
+func TestDecodeProducts(t *testing.T) {
+	g0, g1 := graphWire(``), graphWire(``)
+	graphs := []json.RawMessage{g0, g1}
+	chainRaw := json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`)
+
+	// 合法产物:两帧 + 两节点;空链缺省形态(nil)回 nil 链
+	frames, chain, verr := DecodeProducts(graphs, chainRaw)
+	if verr != nil {
+		t.Fatalf("合法产物应解码通过: %v", verr)
+	}
+	if len(frames) != 2 || frames[0] == nil || frames[1] == nil {
+		t.Fatalf("帧序列应两帧非空: %+v", frames)
+	}
+	if len(chain) != 2 || chain[0].Frame != 0 || chain[1].Frame != 1 || !chain[1].OmitIfEmpty {
+		t.Fatalf("流链节点应原样解码: %+v", chain)
+	}
+	frames2, chain2, verr := DecodeProducts(graphs, nil)
+	if verr != nil || chain2 != nil || len(frames2) != 2 {
+		t.Fatalf("空链缺省形态应回 nil 链: %+v %+v %v", chain2, frames2, verr)
+	}
+
+	// 防御性失败:graph 非 wire 形态归 invalid_json(Compile 已裁决同批 pages,
+	// 此处只兜存储态被绕过写端点直改的路径)
+	_, _, verr = DecodeProducts([]json.RawMessage{json.RawMessage(`42`)}, nil)
+	mustCode(t, verr, codes.InvalidJSON)
+	_, _, verr = DecodeProducts(graphs, json.RawMessage(`["fixed"]`))
+	mustCode(t, verr, codes.InvalidJSON)
+}
+
+// TestPageName 页显示名解码:字符串原名、缺席/null/非字符串归空串(编译期已
+// 打回非字符串,此处兜防御;缺省名由前端渲染,服务端不补)
+func TestPageName(t *testing.T) {
+	cases := map[string]struct {
+		page Page
+		want string
+	}{
+		"字符串":  {pageWire(t, `{"id":"a","name":"主页","graph":{}}`), "主页"},
+		"缺席":   {pageWire(t, `{"id":"a","graph":{}}`), ""},
+		"null": {pageWire(t, `{"id":"a","name":null,"graph":{}}`), ""},
+		"非字符串": {pageWire(t, `{"id":"a","name":123,"graph":{}}`), ""},
+	}
+	for name, tc := range cases {
+		if got := PageName(tc.page); got != tc.want {
+			t.Fatalf("[%s] PageName = %q, 期望 %q", name, got, tc.want)
+		}
 	}
 }

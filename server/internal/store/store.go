@@ -15,6 +15,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite" // 纯 Go SQLite 驱动,CGO_ENABLED=0 可构建
+
+	"example/server/internal/pages"
 )
 
 // ErrNotFound 模板寻址失败(id 不存在),handler 层映射 404 template_not_found(spec §2.4)
@@ -52,16 +54,18 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // migrate 建表:内容均为 JSON 文本列,时间戳 RFC3339 UTC 字符串(spec §2.1)。
-// 自愈迁移:demo 运行库(app.db)若还是「dataset 内嵌模板」的旧三表形态,直接
-// 丢弃 templates/renders 重建(运行数据可弃,重启播种自动补回),数据源表新建。
+// 自愈迁移(ADR 0025):运行库(app.db)若还是页序列翻转前的旧形态(templates
+// 无 pages 列,canvases+flow_chain 双列),直接丢弃 templates/template_versions/
+// renders 三表重建(运行数据可弃,重启播种自动补回;editor_state 存量随重建清零,
+// ADR 0025 后果清单明示,宽容读兜底),数据源表不动。
 func (s *Store) migrate() error {
 	legacy, err := s.hasLegacyTemplateTable()
 	if err != nil {
 		return err
 	}
 	if legacy {
-		log.Printf("检测到旧版 templates 表(dataset 内嵌形态),重建 templates/renders(数据源改独立实体,运行数据由播种补回)")
-		if _, err := s.db.Exec(`DROP TABLE IF EXISTS templates; DROP TABLE IF EXISTS renders;`); err != nil {
+		log.Printf("检测到旧版 templates 表(页序列翻转前的 canvases+flow_chain 形态),重建 templates/template_versions/renders(运行数据由播种补回)")
+		if _, err := s.db.Exec(`DROP TABLE IF EXISTS templates; DROP TABLE IF EXISTS template_versions; DROP TABLE IF EXISTS renders;`); err != nil {
 			return fmt.Errorf("重建旧版模板表: %w", err)
 		}
 	}
@@ -77,8 +81,7 @@ CREATE TABLE IF NOT EXISTS datasources (
 CREATE TABLE IF NOT EXISTS templates (
 	id             INTEGER PRIMARY KEY AUTOINCREMENT,
 	name           TEXT NOT NULL,
-	canvases       TEXT NOT NULL,
-	flow_chain     TEXT,
+	pages          TEXT NOT NULL,
 	data_source_id INTEGER,
 	editor_state   TEXT,
 	created_at     TEXT NOT NULL,
@@ -91,24 +94,20 @@ CREATE TABLE IF NOT EXISTS renders (
 	version     INTEGER,
 	created_at  TEXT NOT NULL
 );
--- 模板版本史(模板草稿-发布-版本化,spec §2):快照 = canvases+flow_chain 文档
--- 整体,data_source_id 是绑定不进快照;版本行 INSERT-only 永无 UPDATE,版本号
+-- 模板版本史(模板草稿-发布-版本化,spec §2):快照 = pages 列文本整体(页 id
+-- 在内),data_source_id 是绑定不进快照;版本行 INSERT-only 永无 UPDATE,版本号
 -- 每模板自增从 1 起(store 层事务内 MAX+1 计算,UNIQUE 兜底);新建模板空版本
 -- 史起步,存量由 BackfillTemplateVersionsV1 回填 v1
 CREATE TABLE IF NOT EXISTS template_versions (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	template_id INTEGER NOT NULL,
 	version     INTEGER NOT NULL,
-	canvases    TEXT NOT NULL,
-	flow_chain  TEXT,
+	pages       TEXT NOT NULL,
 	created_at  TEXT NOT NULL,
 	UNIQUE (template_id, version)
 );`
 	if _, err := s.db.Exec(ddl); err != nil {
 		return fmt.Errorf("建表: %w", err)
-	}
-	if err := s.ensureTemplateEditorStateColumn(); err != nil {
-		return err
 	}
 	if err := s.ensureRenderVersionColumn(); err != nil {
 		return err
@@ -117,10 +116,11 @@ CREATE TABLE IF NOT EXISTS template_versions (
 }
 
 // ensureRenderVersionColumn 幂等补列(渲染选版溯源,模板草稿-发布-版本化 spec §4):
-// 上一版建的 renders 表缺 version 列时 ALTER TABLE 补上——ensure-column 先例同款
-// (PRAGMA table_info 探测)。NULL 语义盘点(诚实不造假):① 版本化前的旧行
-// (迁移保留 NULL);② {"version":"draft"} 草稿渲染(未对应任何发布版本);
-// ③ 除此之外 NULL 不应出现(新行除 draft 外必填渲染所用版本,出现即不变量违例)
+// renders 表缺 version 列时 ALTER TABLE 补上——PRAGMA table_info 探测。NULL
+// 语义盘点(诚实不造假):① 版本化前的旧行(迁移保留 NULL);② {"version":"draft"}
+// 草稿渲染(未对应任何发布版本);③ 除此之外 NULL 不应出现(新行除 draft 外必填
+// 渲染所用版本,出现即不变量违例)。页序列翻转后旧库整库重建已含 version 列,
+// 此迁移只兜 templates 已是 pages 形态而 renders 仍为旧形态的混合库
 func (s *Store) ensureRenderVersionColumn() error {
 	hasTable, columns, err := s.tableColumns("renders")
 	if err != nil {
@@ -136,27 +136,8 @@ func (s *Store) ensureRenderVersionColumn() error {
 	return nil
 }
 
-// ensureTemplateEditorStateColumn 幂等补列(工程数据通道,spec §2/§8):上一版
-// 建的 templates 表缺 editor_state 列时 ALTER TABLE 补上——PRAGMA table_info
-// 探测先例同款(hasLegacyTemplateTable),远轻于重建表;旧行 NULL = 空快照 =
-// 全默认态,既有数据无损。重复启动探测命中即跳过
-func (s *Store) ensureTemplateEditorStateColumn() error {
-	hasTable, columns, err := s.templateColumns()
-	if err != nil {
-		return err
-	}
-	if !hasTable || columns["editor_state"] {
-		return nil
-	}
-	if _, err := s.db.Exec(`ALTER TABLE templates ADD COLUMN editor_state TEXT`); err != nil {
-		return fmt.Errorf("补 templates.editor_state 列: %w", err)
-	}
-	log.Printf("templates 表补 editor_state 列(工程数据通道,旧行 NULL = 空快照)")
-	return nil
-}
-
-// tableColumns PRAGMA table_info(表) 列清单(ensure-column 迁移共用:templates
-// 的 editor_state 与 renders 的 version 同款);表不存在时 hasTable = false
+// tableColumns PRAGMA table_info(表) 列清单(ensure-column 迁移与旧库探测共用:
+// renders 的 version 与 templates 的 pages 判据同款);表不存在时 hasTable = false
 func (s *Store) tableColumns(table string) (hasTable bool, columns map[string]bool, err error) {
 	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
@@ -182,25 +163,20 @@ func (s *Store) tableColumns(table string) (hasTable bool, columns map[string]bo
 	return hasTable, columns, nil
 }
 
-// templateColumns templates 表列清单(hasLegacyTemplateTable 与
-// ensureTemplateEditorStateColumn 共用)
+// templateColumns templates 表列清单(hasLegacyTemplateTable 探测用)
 func (s *Store) templateColumns() (bool, map[string]bool, error) {
 	return s.tableColumns("templates")
 }
 
-// hasLegacyTemplateTable templates 表存在但无 data_source_id 列 = 旧版形态
+// hasLegacyTemplateTable templates 表存在但无 pages 列 = 页序列翻转前旧形态
+// (canvases+flow_chain 双列,ADR 0025)——命中即整库重建(运行数据可弃先例,
+// 无迁移代码入仓;editor_state 存量随重建清零,宽容读兜底)
 func (s *Store) hasLegacyTemplateTable() (bool, error) {
 	hasTable, columns, err := s.templateColumns()
 	if err != nil {
 		return false, err
 	}
-	return hasTable && !columns["data_source_id"], nil
-}
-
-// CanvasEntry 单画布条目:name = 帧名,graph = 单画布 graph(spec §2.3)
-type CanvasEntry struct {
-	Name  string          `json:"name"`
-	Graph json.RawMessage `json:"graph"`
+	return hasTable && !columns["pages"], nil
 }
 
 // DataSourceContent 数据源实体内容三件套,不含 id 与时间戳——播种与写端点共用
@@ -230,23 +206,23 @@ type DataSourceSummary struct {
 }
 
 // TemplateContent 模板内容,不含 id 与时间戳——播种与写端点共用。
-// DataSourceID = 绑定的数据源引用(nil = 未绑,渲染直通零行空壳页);
+// Pages = 页序列(ADR 0025:页 = 画布 + 可选 flow + 编辑层 id/name,一页恰承载
+// 一帧);DataSourceID = 绑定的数据源引用(nil = 未绑,渲染直通零行空壳页);
 // 数据源内容不在此——模板只持引用(spec §2.3)
 type TemplateContent struct {
 	Name         string
-	Canvases     []CanvasEntry
-	FlowChain    json.RawMessage // nil = null = 空链(spec §3.1)
+	Pages        []pages.Page
 	DataSourceID *int64
 }
 
 // TemplateRecord 全量模板记录,即 HTTP 响应形状(spec §2.3):
-// dataSourceId 为引用列(null = 未绑数据源);editorState 为工程数据快照
-// 原样字节(null = 从未保存 = 全默认态,spec §4),服务端零校验
+// pages 为页序列原样(页 id/name 在内);dataSourceId 为引用列(null = 未绑
+// 数据源);editorState 为工程数据快照原样字节(null = 从未保存 = 全默认态,
+// spec §4),服务端零校验
 type TemplateRecord struct {
 	ID           int64           `json:"id"`
 	Name         string          `json:"name"`
-	Canvases     []CanvasEntry   `json:"canvases"`
-	FlowChain    json.RawMessage `json:"flowChain"`
+	Pages        []pages.Page    `json:"pages"`
 	DataSourceID *int64          `json:"dataSourceId"`
 	EditorState  json.RawMessage `json:"editorState"`
 	CreatedAt    string          `json:"createdAt"`
@@ -295,14 +271,14 @@ func (s *Store) SeedDataSourceIfMissing(ctx context.Context, content DataSourceC
 
 // insertTemplate 写入一条模板(时间戳由调用方给定,供播种与测试控制排序)
 func (s *Store) insertTemplate(ctx context.Context, content TemplateContent, createdAt, updatedAt string) (int64, error) {
-	canvases, err := json.Marshal(content.Canvases)
+	pagesBlob, err := pagesText(content.Pages)
 	if err != nil {
-		return 0, fmt.Errorf("序列化 canvases: %w", err)
+		return 0, err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO templates (name, canvases, flow_chain, data_source_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		content.Name, string(canvases), nullableText(content.FlowChain), nullableInt(content.DataSourceID),
+		`INSERT INTO templates (name, pages, data_source_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		content.Name, pagesBlob, nullableInt(content.DataSourceID),
 		createdAt, updatedAt,
 	)
 	if err != nil {
@@ -337,17 +313,16 @@ func (s *Store) SeedTemplateIfEmpty(ctx context.Context, content TemplateContent
 	return err
 }
 
-// UpdateTemplateContent 整存替换 name/canvases/flow_chain 三列并刷新 updatedAt,
+// UpdateTemplateContent 整存替换 name/pages 两列并刷新 updatedAt,
 // 不触碰 data_source_id(绑定只经数据源通道变更,spec §2.4 #5)。id 不存在 → ErrNotFound
 func (s *Store) UpdateTemplateContent(ctx context.Context, id int64, content TemplateContent) error {
-	canvases, err := json.Marshal(content.Canvases)
+	pagesBlob, err := pagesText(content.Pages)
 	if err != nil {
-		return fmt.Errorf("序列化 canvases: %w", err)
+		return err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE templates SET name = ?, canvases = ?, flow_chain = ?, updated_at = ? WHERE id = ?`,
-		content.Name, string(canvases), nullableText(content.FlowChain),
-		nowRFC3339(), id,
+		`UPDATE templates SET name = ?, pages = ?, updated_at = ? WHERE id = ?`,
+		content.Name, pagesBlob, nowRFC3339(), id,
 	)
 	if err != nil {
 		return fmt.Errorf("更新模板 %d: %w", id, err)
@@ -371,7 +346,7 @@ func (s *Store) UpdateTemplateDataSource(ctx context.Context, id int64, dataSour
 
 // UpdateTemplateEditorState 整列替换 editor_state(工程数据写分道,spec §4):
 // 载荷 json.RawMessage 原样进出、零校验(唯一消费方是内核恢复端,宽容读权威
-// 在那边);null = 空 = 归 SQL NULL。不触碰 name/canvases/flow_chain/
+// 在那边);null = 空 = 归 SQL NULL。不触碰 name/pages/
 // data_source_id/updated_at——拖参考线不污染「最近编辑」排序。并发整列替换即
 // last-write-wins(单用户应用,明示接受)。id 不存在 → ErrNotFound
 func (s *Store) UpdateTemplateEditorState(ctx context.Context, id int64, state json.RawMessage) error {
@@ -433,6 +408,22 @@ func nullableText(raw json.RawMessage) any {
 	return string(raw)
 }
 
+// pagesText 页序列 → pages 列文本(NOT NULL 列恒存数组形态)。nil 序列归一为
+// "[]"(写入路径无「未提供 pages」态,响应恒为数组非 null,对齐「响应数组恒
+// []」惯例);页内 graph/flow 以 RawMessage 原文内嵌(仅压空白,不重排键序、
+// 不重塑值,发布幂等的字节比较依赖此稳定性),存储层不复制校验——形状正确性
+// 由写端点编译预检与播种 fixture 保证。
+func pagesText(items []pages.Page) (string, error) {
+	if items == nil {
+		items = []pages.Page{}
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return "", fmt.Errorf("序列化 pages: %w", err)
+	}
+	return string(b), nil
+}
+
 // nullableInt nil 指针 → SQL NULL,否则整数值入库
 func nullableInt(p *int64) any {
 	if p == nil {
@@ -463,23 +454,24 @@ func (s *Store) ListTemplates(ctx context.Context) ([]TemplateSummary, error) {
 // GetTemplate 按 id 取全量记录;不存在 → ErrNotFound
 func (s *Store) GetTemplate(ctx context.Context, id int64) (*TemplateRecord, error) {
 	var rec TemplateRecord
-	var canvases, flowChain sql.NullString
+	// pages 列经 string 中转再解码(本工具链下 json.RawMessage 别名
+	// jsontext.Value,driver 扫描不走 []byte 转换,GetDataSource 同款)
+	var pagesBlob string
 	var dataSourceID sql.NullInt64
 	var editorState sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, canvases, flow_chain, data_source_id, editor_state, created_at, updated_at
+		`SELECT id, name, pages, data_source_id, editor_state, created_at, updated_at
 		 FROM templates WHERE id = ?`, id,
-	).Scan(&rec.ID, &rec.Name, &canvases, &flowChain, &dataSourceID, &editorState, &rec.CreatedAt, &rec.UpdatedAt)
+	).Scan(&rec.ID, &rec.Name, &pagesBlob, &dataSourceID, &editorState, &rec.CreatedAt, &rec.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("查询模板 %d: %w", id, err)
 	}
-	if err := json.Unmarshal([]byte(canvases.String), &rec.Canvases); err != nil {
-		return nil, fmt.Errorf("解析模板 %d canvases: %w", id, err)
+	if err := json.Unmarshal([]byte(pagesBlob), &rec.Pages); err != nil {
+		return nil, fmt.Errorf("解析模板 %d pages: %w", id, err)
 	}
-	rec.FlowChain = rawOrNull(flowChain)
 	rec.EditorState = rawOrNull(editorState)
 	if dataSourceID.Valid {
 		rec.DataSourceID = &dataSourceID.Int64
