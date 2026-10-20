@@ -1,10 +1,12 @@
-// 新建模板纯逻辑（22 票空白入口 + 24 票图片快捷入口，spec §4.1 列表页新建）：
-// 载荷工厂 + 单调用编排。空白图 = 单帧 A4 竖版 794×1123（与证书场景 seed 同规格）、
-// layers 空、帧名「第 1 帧」——形状与 §6.2 冒烟断言 4 同源（服务端保存预检与前端
+// 新建模板纯逻辑（22 票空白入口 + 24 票图片快捷入口，spec §4.1 列表页新建；页模型
+// 适配工票 03）：
+// 载荷工厂 + 单调用编排。空白图 = 单页 A4 竖版 794×1123（与证书场景 seed 同规格）、
+// layers 空——形状与 §6.2 冒烟断言 4 同源（服务端保存预检与前端
 // decodeGraph 双吃）；图片建 = 画布宽高取图片像素宽高、图片声明为画布背景
 // （ADR 0022：canvas.background，cover 零裁切——底图图层惯例退役，spec Q6 迁移）
 // （wire 逐键同 @hankchen/canvas encodeGraph canonical 输出，测试以往返恒等锁死）。
-// flowChain 显式 null = 空链 = 纯文档管线（spec §3.1）；dataSourceId 随建随绑
+// 页形状 = spec 页形状契约：id 前端生成、name 不落键（缺省显示「第 N 页」）、无
+// flow 键（链外页）；dataSourceId 随建随绑
 // （新建弹窗可选数据源；null = 暂不绑定 → 载荷省略该键，稍后经编辑器抽屉绑定）。
 // 与 Vue/DOM 解耦——尺寸解码
 // （createImageBitmap）留宿主，编排消费已解码字节 + 像素尺寸；HTTP 客户端经调用方
@@ -12,25 +14,25 @@
 import { formatApiError } from '../api'
 import type { TemplateCreatePayload, TemplateRecord } from '../api'
 
-/** 空白帧名（域语言是帧，帧 tab 显同名） */
-export const BLANK_FRAME_NAME = '第 1 帧'
+import { newPageId } from './pages'
+
 /** 空白画布尺寸：A4 竖版，与 seed 场景同规格 */
 export const BLANK_CANVAS_WIDTH = 794
 export const BLANK_CANVAS_HEIGHT = 1123
 
-/** 空白模板载荷（spec §2.4 #3）：POST /api/templates 直接可用。dataSourceId
+/** 空白模板载荷（spec §2.4 #3 + 页形状契约）：POST /api/templates 直接可用。
+ *  dataSourceId
  *  null = 暂不绑定 → 载荷省略该键（与服务端 *int64 缺省 nil 同语义），非 null =
  *  随建随绑（服务端做存在性先验） */
 export function blankTemplatePayload(name: string, dataSourceId: number | null): TemplateCreatePayload {
     return {
         name,
-        canvases: [
+        pages: [
             {
-                name: BLANK_FRAME_NAME,
+                id: newPageId(),
                 graph: { canvas: { width: BLANK_CANVAS_WIDTH, height: BLANK_CANVAS_HEIGHT }, layers: [] },
             },
         ],
-        flowChain: null,
         ...(dataSourceId === null ? {} : { dataSourceId }),
     }
 }
@@ -47,9 +49,9 @@ export function imageTemplatePayload(
 ): TemplateCreatePayload {
     return {
         name,
-        canvases: [
+        pages: [
             {
-                name: BLANK_FRAME_NAME,
+                id: newPageId(),
                 graph: {
                     canvas: {
                         width: image.width,
@@ -60,7 +62,6 @@ export function imageTemplatePayload(
                 },
             },
         ],
-        flowChain: null,
         ...(dataSourceId === null ? {} : { dataSourceId }),
     }
 }

@@ -12,8 +12,8 @@
 // （DELETE /templates/{id}，spec §2.4 #10：级联清渲染记录行，产物文件保留）→
 // 204 后本地移除卡片，失败在确认框内回显可重试。首访重定向由 router 守卫处理，
 // 本页另负责两个新建入口——「＋ 新建空白模板」弹名字输入（NamePromptDialog）→
-// createBlankTemplate 单调用 POST /api/templates（单帧空白 A4 图 + flowChain
-// null，spec §2.4 #3 载荷形状，22 票）；「＋ 以图片新建」弹名字 + 选图
+// createBlankTemplate 单调用 POST /api/templates（单页空白 A4 图，spec §2.4 #3
+// 载荷形状 + 页形状契约，22 票）；「＋ 以图片新建」弹名字 + 选图
 // （ImageTemplateDialog，选图即 createImageBitmap 解码像素尺寸就地回显）→
 // createImageTemplate 先 POST /api/assets 后 POST /api/templates（画布宽高 =
 // 图片像素宽高、图片声明为画布背景，ADR 0022 迁移后不再产生底图图层，24 票）→

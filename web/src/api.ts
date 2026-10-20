@@ -10,11 +10,31 @@ export interface TemplateSummary {
     updatedAt: string
 }
 
+/** 页 flow wire 形（模板页序列工票，spec 页形状契约，与工票 02 服务端共享）：镜像
+ *  引擎链节点键面去掉 frame（帧位置 = 页序）。quota 仅 fixed 携带（缺省 = 不携带
+ *  键 = 容量型按可用区装）；omitIfEmpty 仅 true 携带（wire 缺省 false 同义） */
+export interface PageFlowWire {
+    mode: 'fixed' | 'paged'
+    quota?: number
+    omitIfEmpty?: boolean
+}
+
+/** 页 wire 形（模板页序列工票，spec 页形状契约）：一页恰承载一帧。id 前端生成、
+ *  页内唯一（服务端校验非空 + 唯一），只活编辑层与工程数据键、编译时丢弃不出 wire；
+ *  name 可选（显示用，服务端不查重，缺省名「第 N 页」由前端渲染）；无 flow 键（或
+ *  null）= 链外页（不吃行、照常按页序进产物） */
+export interface TemplatePageWire {
+    id: string
+    name?: string
+    graph: unknown
+    flow?: PageFlowWire | null
+}
+
 export interface TemplateRecord {
     id: number
     name: string
-    canvases: { name: string; graph: unknown }[]
-    flowChain: unknown
+    /** 页序列（spec 页形状契约）：模板内容 = pages，双数组 canvases+flowChain 已退役 */
+    pages: TemplatePageWire[]
     /** 绑定的数据源引用（null = 未绑）——数据源是独立实体，模板只持引用 */
     dataSourceId: number | null
     /** 工程数据快照（project-data spec §4 读合并）：字节面服务端零校验原样透传，
@@ -61,12 +81,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     return body as T
 }
 
-/** PUT /api/templates/{id} 载荷（spec §2.4 #5）：整存替换 name/canvases/flowChain，
+/** PUT /api/templates/{id} 载荷（spec 页形状契约）：整存替换 name/pages，
  *  服务端不触碰 dataSourceId——绑定只经 PUT /templates/{id}/datasource 通道变更 */
 export interface TemplateWritePayload {
     name: string
-    canvases: { name: string; graph: unknown }[]
-    flowChain: unknown
+    pages: TemplatePageWire[]
 }
 
 /** POST /api/templates 载荷（spec §2.4 #3）：文档内容 + 可选 dataSourceId 随建
@@ -83,18 +102,20 @@ export interface DataSourceWritePayload {
     data: unknown
 }
 
-/** 宿主聚合快照（project-data spec §6，工单 04）：PUT /api/templates/{id}/editor-state
- *  载荷即此形状——schemaVersion/切片/常量自内核导入，宿主只拼装不解释（frames 以
- *  帧名（CanvasEntry.name）为键、prefs 为编辑器级偏好）。服务端零校验整存替换，
- *  宽容读权威在内核恢复端 */
+/** 宿主聚合快照（project-data spec §6）：PUT /api/templates/{id}/editor-state
+ *  载荷即此形状——schemaVersion/切片/常量自内核与宿主 editorState.ts 导入，宿主只
+ *  拼装不解释。frames 键 = **页 id**（模板页序列工票 03 起，页 id 稳定不随改名/重排
+ *  变），prefs 为编辑器级偏好。服务端零校验整存替换，宽容读权威在宿主 editorState.ts
+ *  + 内核恢复端 */
 export interface TemplateEditorStateSnapshot {
     schemaVersion: number
     frames: Record<string, CanvasEditorState>
     prefs: EditorPrefsState
 }
 
-/** 渲染记录单图（spec §2.4 #7）：images = 帧序×页序扁平序；url 为前导斜杠形态
- *  （spec §2.2 响应两态），即 /renders 直链 */
+/** 渲染记录单图（spec §2.4 #7）：images = 页序扁平序（frame 字段不改名，语义由
+ *  帧下标自然延续为页下标，ADR 0025）；url 为前导斜杠形态（spec §2.2 响应两态），
+ *  即 /renders 直链 */
 export interface RenderImage {
     frame: number
     name: string
@@ -113,7 +134,7 @@ export interface RenderRecord {
 }
 
 /** 版本摘要条目（tdp spec §3，GET /api/templates/{id}/versions）：轻量列表不吐
- *  canvases 载荷，version 降序（最新在前）；**空数组 = 未发布**——发布态永远是
+ *  pages 载荷，version 降序（最新在前）；**空数组 = 未发布**——发布态永远是
  *  推导态非存储态（徽标/下拉据此推导） */
 export interface TemplateVersionSummary {
     version: number
@@ -130,12 +151,11 @@ export interface PublishResult {
 }
 
 /** GET …/versions/{version} 单版本全量（tdp spec §3，回滚与未来预览消费）：快照
- *  粒度 = 文档整体（canvases + flowChain）；data_source_id 是绑定不是内容，不进
+ *  粒度 = 文档整体（pages 序列，页 id 在内）；data_source_id 是绑定不是内容，不进
  *  快照（渲染时取当前绑定） */
 export interface TemplateVersionRecord {
     version: number
-    canvases: { name: string; graph: unknown }[]
-    flowChain: unknown
+    pages: TemplatePageWire[]
     createdAt: string
 }
 
@@ -171,8 +191,8 @@ export const api = {
             body: JSON.stringify(payload),
         }),
     // PUT /api/templates/{id}/editor-state（project-data spec §4 写分道）：快照原样
-    // 整存替换，服务端零校验；成功回全量记录；不触碰 name/canvases/flowChain/
-    // dataSourceId/updatedAt（拖参考线不污染「最近编辑」排序）
+    // 整存替换，服务端零校验；成功回全量记录；不触碰 name/pages/dataSourceId/
+    // updatedAt（拖参考线不污染「最近编辑」排序）
     updateTemplateEditorState: (id: string | number, snapshot: TemplateEditorStateSnapshot) =>
         request<TemplateRecord>(editorStateUrl(id), {
             method: 'PUT',
