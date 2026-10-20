@@ -1,6 +1,6 @@
-// 从零新建空白模板纯逻辑测试（22 票 TDD 缝，spec §4.1 列表页新建入口）：空白
-// 载荷工厂形状与编排——名字裁剪/空名就地拒绝、POST 失败稳定码文案。全部 Node
-// 无 DOM 环境。（24 票追加图片快捷建模板：载荷工厂 + 编排同缝测试；ADR 0022
+// 从零新建空白模板纯逻辑测试（22 票 TDD 缝，spec §4.1 列表页新建入口；页模型适配
+// 工票 03）：空白载荷工厂形状与编排——名字裁剪/空名就地拒绝、POST 失败稳定码文案。
+// 全部 Node 无 DOM 环境。（24 票追加图片快捷建模板：载荷工厂 + 编排同缝测试；ADR 0022
 // 迁移后载荷为画布背景形态。）
 import { describe, expect, it } from 'vitest'
 
@@ -21,8 +21,7 @@ function record(id: number): TemplateRecord {
     return {
         id,
         name: '未命名模板',
-        canvases: [],
-        flowChain: null,
+        pages: [],
         dataSourceId: null,
         editorState: null,
         createdAt: '2026-10-06T00:00:00Z',
@@ -30,33 +29,21 @@ function record(id: number): TemplateRecord {
     }
 }
 
-describe('blankTemplatePayload（空白模板载荷，spec §2.4 #3 形状）', () => {
-    it('单帧空白 A4 竖版图（帧名「第 1 帧」）+ flowChain null + 未绑数据源（dataSourceId null = 键省略）', () => {
-        expect(blankTemplatePayload('未命名模板', null)).toEqual({
-            name: '未命名模板',
-            canvases: [
-                {
-                    name: '第 1 帧',
-                    // 形状与 §6.2 冒烟断言 4 同源：服务端预检合法最小模板
-                    graph: { canvas: { width: 794, height: 1123 }, layers: [] },
-                },
-            ],
-            flowChain: null,
-        })
+describe('blankTemplatePayload（空白模板载荷，spec §2.4 #3 + 页形状契约）', () => {
+    it('单页空白 A4 竖版图：id 前端生成、name 不落键（缺省显示「第 1 页」）、无 flow 键（链外页）', () => {
+        const payload = blankTemplatePayload('未命名模板', null)
+        expect(payload.name).toBe('未命名模板')
+        expect(payload.pages).toHaveLength(1)
+        expect(payload.pages[0]!.id).toMatch(/^pg_/)
+        expect('name' in payload.pages[0]!).toBe(false)
+        expect('flow' in payload.pages[0]!).toBe(false)
+        // 形状与 §6.2 冒烟断言 4 同源：服务端预检合法最小模板
+        expect(payload.pages[0]!.graph).toEqual({ canvas: { width: 794, height: 1123 }, layers: [] })
     })
 
     it('随建随绑：传入数据源 id 时载荷带 dataSourceId（POST 通道存在性先验由服务端把守）', () => {
-        expect(blankTemplatePayload('未命名模板', 3)).toEqual({
-            name: '未命名模板',
-            canvases: [
-                {
-                    name: '第 1 帧',
-                    graph: { canvas: { width: 794, height: 1123 }, layers: [] },
-                },
-            ],
-            flowChain: null,
-            dataSourceId: 3,
-        })
+        const payload = blankTemplatePayload('未命名模板', 3)
+        expect(payload.dataSourceId).toBe(3)
     })
 })
 
@@ -135,22 +122,19 @@ function backgroundImage(overrides: Partial<BackgroundImageFile> = {}): Backgrou
 }
 
 describe('imageTemplatePayload（图片模板载荷：画布背景形态，24 票 + ADR 0022 迁移）', () => {
-    it('单帧图：画布宽高 = 图片像素宽高，图片声明为画布背景（background 只落 image 分量，color 未设不落键）+ layers 空', () => {
-        expect(imageTemplatePayload('海报模板', { src: '/assets/u/abc.png', width: 1240, height: 1754 }, null)).toEqual({
-            name: '海报模板',
-            canvases: [
-                {
-                    name: '第 1 帧',
-                    graph: {
-                        // wire 逐键同 @hankchen/canvas encodeGraph canonical 输出：
-                        // canvas 键序 width,height,background；background 仅 image
-                        // 分量落键（条件写键，spec §3）
-                        canvas: { width: 1240, height: 1754, background: { image: '/assets/u/abc.png' } },
-                        layers: [],
-                    },
-                },
-            ],
-            flowChain: null,
+    it('单页图：画布宽高 = 图片像素宽高，图片声明为画布背景（background 只落 image 分量，color 未设不落键）+ layers 空', () => {
+        const payload = imageTemplatePayload('海报模板', { src: '/assets/u/abc.png', width: 1240, height: 1754 }, null)
+        expect(payload.name).toBe('海报模板')
+        expect(payload.pages).toHaveLength(1)
+        expect(payload.pages[0]!.id).toMatch(/^pg_/)
+        expect('name' in payload.pages[0]!).toBe(false)
+        expect('flow' in payload.pages[0]!).toBe(false)
+        expect(payload.pages[0]!.graph).toEqual({
+            // wire 逐键同 @hankchen/canvas encodeGraph canonical 输出：
+            // canvas 键序 width,height,background；background 仅 image
+            // 分量落键（条件写键，spec §3）
+            canvas: { width: 1240, height: 1754, background: { image: '/assets/u/abc.png' } },
+            layers: [],
         })
     })
 
@@ -161,13 +145,13 @@ describe('imageTemplatePayload（图片模板载荷：画布背景形态，24 �
 
     it('载荷 graph 过 decodeGraph → encodeGraph 往返恒等（与编辑器 canonical 产出字节对齐）', () => {
         const payload = imageTemplatePayload('海报模板', { src: '/assets/u/abc.png', width: 800, height: 600 }, null)
-        const graph = payload.canvases[0]!.graph
+        const graph = payload.pages[0]!.graph
         expect(encodeGraph(decodeGraph(graph))).toEqual(graph)
     })
 
     it('解码语义：画布尺寸与背景图引用落域正确，背景不产生图层', () => {
         const payload = imageTemplatePayload('海报模板', { src: '/assets/u/abc.png', width: 800, height: 600 }, null)
-        const doc = decodeGraph(payload.canvases[0]!.graph)
+        const doc = decodeGraph(payload.pages[0]!.graph)
         expect(doc.width).toBe(800)
         expect(doc.height).toBe(600)
         expect(doc.background).toEqual({ color: null, image: '/assets/u/abc.png' })
@@ -197,7 +181,7 @@ describe('createImageTemplate（图片建模板编排，24 票）', () => {
         })
         expect(calls).toEqual(['upload', 'create'])
         expect(uploaded).toEqual([{ name: 'poster.png', mime: 'image/png', bytes: backgroundImage().bytes }])
-        expect((payloadSeen as TemplateCreatePayload | null)?.canvases[0]?.graph).toMatchObject({
+        expect((payloadSeen as TemplateCreatePayload | null)?.pages[0]?.graph).toMatchObject({
             canvas: { width: 1240, height: 1754, background: { image: '/assets/u/abc.png' } },
         })
         expect((payloadSeen as TemplateCreatePayload | null)?.dataSourceId).toBe(7)
@@ -252,10 +236,10 @@ describe('createImageTemplate（图片建模板编排，24 票）', () => {
             image: backgroundImage(),
             uploadAsset: async () => ({ url: '/assets/u/abc.png' }),
             createTemplate: async () => {
-                throw new ApiError(400, 'frames_empty', '模板不含任何帧')
+                throw new ApiError(400, 'page_invalid', '模板不含任何页')
             },
         })
-        expect(apiFailure).toEqual({ ok: false, message: 'frames_empty：模板不含任何帧' })
+        expect(apiFailure).toEqual({ ok: false, message: 'page_invalid：模板不含任何页' })
 
         const networkFailure = await createImageTemplate({
             name: '海报模板',

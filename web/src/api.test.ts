@@ -5,9 +5,10 @@
 // 同步发出，不依赖页面存活）；失败路径静默 console.warn（spec §6 失败面）。
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { EDITOR_STATE_SCHEMA_VERSION, defaultNextTextStyle } from '@hankchen/canvas-editor'
+import { defaultNextTextStyle } from '@hankchen/canvas-editor'
 import type { LayerPath } from '@hankchen/canvas-editor'
 
+import { EDITOR_STATE_SNAPSHOT_SCHEMA_VERSION } from './editor/editorState'
 import { api, ApiError, type TemplateEditorStateSnapshot, type TemplateRecord } from './api'
 
 /** JSON 响应造数器：正常体与错误信封（{error:{code,message}}）两用 */
@@ -17,8 +18,8 @@ function jsonResponse(payload: unknown, status = 200): Response {
 
 const lockedPath: LayerPath = [2]
 const snapshot: TemplateEditorStateSnapshot = {
-    schemaVersion: EDITOR_STATE_SCHEMA_VERSION,
-    frames: { 主页: { guides: [{ id: 1, orientation: 'vertical', position: 100 }], lockedPaths: [lockedPath] } },
+    schemaVersion: EDITOR_STATE_SNAPSHOT_SCHEMA_VERSION,
+    frames: { pg_a: { guides: [{ id: 1, orientation: 'vertical', position: 100 }], lockedPaths: [lockedPath] } },
     prefs: { rulersVisible: true, anchorExpanded: false, nextTextStyle: defaultNextTextStyle() },
 }
 
@@ -87,8 +88,12 @@ describe('api 版本化四方法（spec §3 发布与版本 API）', () => {
         expect(init).toBeUndefined()
     })
 
-    it('getTemplateVersion：GET …/versions/{n} 单版本全量（canvases + flowChain）', async () => {
-        const record = { version: 3, canvases: [{ name: '主页', graph: {} }], flowChain: null, createdAt: '2026-10-11T08:00:00Z' }
+    it('getTemplateVersion：GET …/versions/{n} 单版本全量（pages 快照，页 id 在内）', async () => {
+        const record = {
+            version: 3,
+            pages: [{ id: 'pg_a', name: '主页', graph: {} }],
+            createdAt: '2026-10-11T08:00:00Z',
+        }
         const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(record)))
         vi.stubGlobal('fetch', fetchMock)
         expect(await api.getTemplateVersion(7, 3)).toEqual(record)
@@ -97,7 +102,7 @@ describe('api 版本化四方法（spec §3 发布与版本 API）', () => {
     })
 
     it('revertTemplate：POST …/revert body {version}，回全量模板记录（无需二次 GET）', async () => {
-        const record = { id: 7, name: '证书', canvases: [], flowChain: null, dataSourceId: null, editorState: null, createdAt: '', updatedAt: '' } satisfies TemplateRecord
+        const record = { id: 7, name: '证书', pages: [], dataSourceId: null, editorState: null, createdAt: '', updatedAt: '' } satisfies TemplateRecord
         const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(record)))
         vi.stubGlobal('fetch', fetchMock)
         expect(await api.revertTemplate(7, 3)).toEqual(record)
