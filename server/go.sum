@@ -1,7 +1,9 @@
-github.com/HankChenCH/go-canvas v1.5.0 h1:/USiULkEC16zIBqxwvM6jgonq/dz2h05RoBho4Ch0hE=
-github.com/HankChenCH/go-canvas v1.5.0/go.mod h1:mGvhfKWEgjm6cF6UMtRuBpFQpRLEVDMCUt0vrQwEIQ0=
+github.com/HankChenCH/go-canvas v1.6.0 h1:4vv6lxx76t/u1DG1MULI+zqgkhzgK5jCeKAcCV9Z3yI=
+github.com/HankChenCH/go-canvas v1.6.0/go.mod h1:mGvhfKWEgjm6cF6UMtRuBpFQpRLEVDMCUt0vrQwEIQ0=
 github.com/HankChenCH/go-canvas/image-renderer v1.1.0 h1:WA2JQeVrO6Sr7C/bNGXHUBjVUmyLvAkYGCuf5B/hkt8=
 github.com/HankChenCH/go-canvas/image-renderer v1.1.0/go.mod h1:E3gymZov5r/ri2iPcOem+9MiwlvKDykK+rgeuhYDxtA=
+github.com/HankChenCH/go-canvas/pdf-renderer v1.0.0 h1:NUJi4QvieR0ubgKdo7jXcIT6j11yWSPGryUtKvMosjE=
+github.com/HankChenCH/go-canvas/pdf-renderer v1.0.0/go.mod h1:O8PplrJeTUqN7VWGPEbx48oj/s396NLxIpbTjC3x9ZA=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=
@@ -10,6 +12,8 @@ github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
 github.com/fogleman/gg v1.3.0 h1:/7zJX8F6AaYQc57WQCyN9cAIz+4bCJGO9B+dyW29am8=
 github.com/fogleman/gg v1.3.0/go.mod h1:R/bRT+9gY/C5z7JzPU0zXsXHKM4/ayA+zqcVNZzPa1k=
+github.com/go-pdf/fpdf v0.9.0 h1:PPvSaUuo1iMi9KkaAn90NuKi+P4gwMedWPHhj8YlJQw=
+github.com/go-pdf/fpdf v0.9.0/go.mod h1:oO8N111TkmKb9D7VvWGLvLJlaZUQVPM+6V42pp3iV4Y=
 github.com/go-text/typesetting v0.3.5 h1:XZPUooClHY0Vf/rFyUyuPRNEkawARaFzLMQcXLSEyPk=
 github.com/go-text/typesetting v0.3.5/go.mod h1:XZO1hD+nQVyvVa5IicQk7FsCa4PFQaJ2soWAP1f//68=
 github.com/go-text/typesetting-utils v0.0.0-20260419141703-4ffe8874dabc h1:8FGo2It5K75XkavhTiCKExUfVaVDS1feBnLCru5qeoY=

@@ -7,9 +7,10 @@ import (
 	"testing"
 )
 
-// TestProbeFont_RealSeedFont 真实 seed 字体探针通过(顺带守卫 seed 完整性)
+// TestProbeFont_RealSeedFont 真实 seed 字体探针通过(顺带守卫 seed 完整性,
+// 即图片腿对新字体的可加载性;seedFontPath 派生自 fontPath,文件名单点维护)
 func TestProbeFont_RealSeedFont(t *testing.T) {
-	if err := probeFont(filepath.Join("seed", "assets", "fonts", "NotoSansSC-Regular.otf")); err != nil {
+	if err := probeFont(seedFontPath); err != nil {
 		t.Fatalf("真实字体探针应通过: %v", err)
 	}
 }

@@ -1,7 +1,8 @@
 # canvas-example:证书批量生成示例应用
 
 [canvas 三端库](#依赖的库)的**集成参考应用**:以前端编辑器定义证书模板,Go 服务端按
-数据集批量渲染——一份 dataset × 文档模板(M 帧 + 流链)→ 每页一张 PNG。
+数据集批量渲染——一份 dataset × 文档模板(M 帧 + 流链)→ 每页一张 PNG 或整批
+页序列合成一个 PDF 文档。
 
 前端编辑器与后端渲染器**共享同一份 graph JSON 契约**(wire 键级对齐,PHP 端为权威):
 浏览器里编辑的就是服务端渲染的,所见即所得。
@@ -14,6 +15,9 @@
   被引用时删除返回 409 `data_source_in_use`,引用不悬空
 - **文档级批量渲染**:帧列表 + 流链配当(内容流跨帧续排)→ 每页一张 PNG,
   服务端物化字体/图片/二维码后按五原语绘制
+- **PDF 导出**:渲染端点 `{"format":"pdf"}` 单文档轨——同一次编译的整批页序列
+  合成一个 PDF 文档(编辑器顶栏「导出 PDF」按钮),字体 TTF 子集内嵌、中文可
+  复制提取
 
 ## 架构
 
@@ -23,10 +27,11 @@ web/  编辑器宿主(Vue 3 + vite)
         │ graph JSON(wire 契约,POST /api/templates 持久化)
         ▼
 server/  Go HTTP 后端(module example/server)
-  └─ github.com/HankChenCH/go-canvas 核心 + image-renderer 双 module              (module proxy)
+  └─ github.com/HankChenCH/go-canvas 核心 + image-renderer + pdf-renderer 三 module   (module proxy)
         │ 预检(preflight)→ 数据填充(hydrate)→ 文档编译/分页 → 位图渲染(PNG)
+        │                                        └→ PDF 文档渲染(format=pdf 单文档轨)
         ▼
-  renders/  每页 PNG,GET /renders/... 取图
+  renders/  每页 PNG / document.pdf,GET /renders/... 取产物
 ```
 
 依赖关系细节(依赖方向、双轨消费)见各库仓库:`js-canvas`(核心契约)、

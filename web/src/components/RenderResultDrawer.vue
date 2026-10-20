@@ -20,7 +20,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import type { RenderRecord } from '../api'
 import { formatTimestamp } from '../editor/format'
-import { renderImageFileName, renderVersionLabel } from '../editor/render'
+import { isPdfRenderImage, renderImageFileName, renderPdfFileName, renderVersionLabel } from '../editor/render'
 
 const props = defineProps<{
     /** 抽屉开合（渲染成功宿主自动置位；关闭钮回落） */
@@ -107,7 +107,14 @@ watch(
                 <!-- 缩略图网格直用 images[].url（/renders 直链，spec §4.6） -->
                 <div class="cn-rrd__grid" data-render-grid>
                     <figure v-for="(img, i) in active.images" :key="i" class="cn-rrd__cell">
+                        <!-- PDF 文档条目(扩展名派生,PDF 集成共识):无位图页可缩略,
+                             文档卡片替代缩略图,无放大路径;原图 = 新标签页打开文档 -->
+                        <div v-if="isPdfRenderImage(img)" class="cn-rrd__pdf" :data-render-pdf-card="i">
+                            <span class="cn-rrd__pdf-badge">PDF</span>
+                            <span class="cn-rrd__pdf-name">{{ img.name }}</span>
+                        </div>
                         <button
+                            v-else
                             type="button"
                             class="cn-rrd__thumb"
                             :data-render-thumb="i"
@@ -117,7 +124,10 @@ watch(
                             <img :src="img.url" :alt="`帧 ${img.frame} · ${img.name}`" loading="lazy" />
                         </button>
                         <figcaption class="cn-rrd__caption">
-                            <span class="cn-rrd__label" :data-render-caption="i">帧 {{ img.frame }} · {{ img.name }}</span>
+                            <span class="cn-rrd__label" :data-render-caption="i">
+                                <template v-if="isPdfRenderImage(img)">文档 · {{ img.name }}</template>
+                                <template v-else>帧 {{ img.frame }} · {{ img.name }}</template>
+                            </span>
                             <span class="cn-rrd__actions">
                                 <a
                                     class="cn-rrd__download"
@@ -128,6 +138,14 @@ watch(
                                     :title="`新标签页打开原图（对比时可与另一记录并排）`"
                                 >原图</a>
                                 <a
+                                    v-if="isPdfRenderImage(img)"
+                                    class="cn-rrd__download"
+                                    :href="img.url"
+                                    :download="renderPdfFileName(templateName)"
+                                    :data-render-download="i"
+                                >下载 PDF</a>
+                                <a
+                                    v-else
                                     class="cn-rrd__download"
                                     :href="img.url"
                                     :download="renderImageFileName(templateName, img, i)"
@@ -329,6 +347,38 @@ watch(
     background: var(--cn-bg);
     cursor: zoom-in;
     overflow: hidden;
+}
+
+/* PDF 文档卡片(扩展名派生条目):与缩略图同框占位,徽标 + 服务端定名 */
+.cn-rrd__pdf {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 96px;
+    border: 1px dashed var(--cn-line);
+    border-radius: 8px;
+    background: var(--cn-bg);
+}
+
+.cn-rrd__pdf-badge {
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--cn-line);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+}
+
+.cn-rrd__pdf-name {
+    max-width: 90%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--cn-muted, inherit);
 }
 
 .cn-rrd__thumb:hover {

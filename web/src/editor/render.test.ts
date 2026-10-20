@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '../api'
 import type { RenderImage } from '../api'
-import { renderImageFileName, renderVersionLabel, runRenderFlow } from './render'
+import { isPdfRenderImage, renderPdfFileName, renderImageFileName, renderVersionLabel, runRenderFlow } from './render'
 
 describe('renderImageFileName（单张终图下载文件名，spec §4.6 <a download>）', () => {
     it('模板名-终图-页序-帧名.png：页序取帧序×页序扁平下标（1 起），同帧多页不重名', () => {
@@ -103,5 +103,20 @@ describe('runRenderFlow（渲染促存链编排，对齐 runPublishFlow 促存�
             },
         })
         expect(outcome).toEqual({ ok: false, note: '渲染失败：invalid_graph：图病态' })
+    })
+})
+
+// --- PDF 产物轨纯逻辑（PDF 集成共识）：文档下载文件名 + 条目扩展名派生 ---
+
+describe('PDF 产物轨纯逻辑（文档下载文件名 + 扩展名派生呈现）', () => {
+    it('renderPdfFileName：模板名.pdf 单文档语义（无页序/帧名维度），非法字符折叠同口径', () => {
+        expect(renderPdfFileName('结业证书')).toBe('结业证书.pdf')
+        expect(renderPdfFileName('a/b:c')).toBe('a_b_c.pdf')
+        expect(renderPdfFileName('   ')).toBe('template.pdf')
+    })
+
+    it('isPdfRenderImage：按服务端定名扩展名派生（渲染记录不落 format 字段）', () => {
+        expect(isPdfRenderImage({ frame: 0, name: 'document.pdf', url: '/renders/1/document.pdf' })).toBe(true)
+        expect(isPdfRenderImage({ frame: 0, name: '主页', url: '/renders/1/1.png' })).toBe(false)
     })
 })

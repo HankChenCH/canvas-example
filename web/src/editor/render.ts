@@ -20,6 +20,20 @@ export function renderImageFileName(templateName: string, image: RenderImage, in
     return `${base}-终图-${index + 1}-${name}.png`
 }
 
+/** PDF 文档下载文件名（结果抽屉 PDF 卡片 `<a download>` 建议名）：模板名.pdf
+ *  ——单文档语义，页序/帧名维度不存在；非法字符折叠与空名 template 兜底同
+ *  renderImageFileName 口径 */
+export function renderPdfFileName(templateName: string): string {
+    const base = sanitizeFileBase(templateName) || 'template'
+    return `${base}.pdf`
+}
+
+/** PDF 产物条目识别（结果抽屉呈现派生，PDF 集成共识：渲染记录不落 format 字段，
+ *  前端按服务端定名的扩展名派生「下载 PDF」卡片，扩展名由服务端控制即可靠信号） */
+export function isPdfRenderImage(image: RenderImage): boolean {
+    return image.name.toLowerCase().endsWith('.pdf')
+}
+
 /** 渲染记录版本标注（渲染历史切换条/记录 meta 共用词汇）：null = draft 渲染或
  *  版本化前旧行（诚实语义，与服务端 renders.version NULL 同义），正整数 = vN */
 export function renderVersionLabel(version: number | null): string {

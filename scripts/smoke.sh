@@ -5,7 +5,8 @@
 # 断言 1–3(11 票)读路径(组 3 另含图片层适配断言:contain(image-layer-fit 06 票,
 # ADR 0023)+ fill/tile 四档同画布对照(image-fit-fill-tile 06 票,ADR 0024));
 # 4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
-# 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效;
+# 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效 + PDF 产物轨
+# (PDF 集成共识:format=pdf 单文档轨轻断言);
 # 12(卡片操作修订 + 版本化)DELETE /api/templates/{id}:渲染前先 publish(缺省
 # 渲染语义 = 最新已发布,未发布 409,spec §4);204 + 渲染记录级联清 + 版本行
 # 级联清 + 产物文件保留;
@@ -363,6 +364,29 @@ for u in $RENDER1_URLS; do
 	_ct="$(curl -fsS -o /dev/null -w '%{content_type}' "$BASE$u")" || die "旧渲染 GET $u 失败(keep-all 不清理)"
 	[ "$_ct" = "image/png" ] || die "旧渲染 GET $u Content-Type = $_ct, 期望 image/png"
 done
+
+# PDF 产物轨(PDF 集成共识,单轨):{"format":"pdf"} → 201 images 单条目
+# document.pdf,直链 application/pdf + %PDF 魔数非空;format 非法值 400
+# invalid_json。轻断言口径:字形/点位级 parity 归 go-canvas 包 CI,example 不装
+# poppler。同轮验 PDF 轨缓存命中——物化器与位图轨同源,徽标/QR 已由前面渲染
+# 物化,PDF 渲染零新增缓存
+printf '{"format":"pdf"}' > "$TMP/render-pdf-body.json"
+_status=$(request POST "/api/templates/$SEED_ID/render" application/json "$TMP/render-pdf-body.json" "$TMP/render-pdf.json")
+[ "$_status" = "201" ] || die "POST render format=pdf 期望 201,实得 $_status"
+assert_json "$TMP/render-pdf.json" "d['images'] == [{'frame': 0, 'name': 'document.pdf', 'url': f\"/renders/{d['id']}/document.pdf\"}]"
+PDF_URL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["images"][0]["url"])' "$TMP/render-pdf.json")"
+_ct="$(curl -fsS -o "$TMP/render-pdf.bin" -w '%{content_type}' "$BASE$PDF_URL")" || die "GET $PDF_URL 失败"
+[ "$_ct" = "application/pdf" ] || die "GET $PDF_URL Content-Type = $_ct, 期望 application/pdf"
+[ -s "$TMP/render-pdf.bin" ] || die "PDF 产物为空"
+head -c 5 "$TMP/render-pdf.bin" | grep -q '^%PDF-' || die "PDF 产物缺 %PDF- 魔数"
+
+printf '{"format":"jpg"}' > "$TMP/render-badfmt.json"
+expect_error POST "/api/templates/$SEED_ID/render" application/json "$TMP/render-badfmt.json" 400 invalid_json
+
+CACHE_COUNT_PDF="$(cache_count)"
+# 零增量断言适用域 = 本种子语料轮(徽标/QR 已被前轮渲染物化);反例域 = 含未
+# 物化远程资产的文档,其 PDF 渲染会新增缓存,本断言不适用
+[ "$CACHE_COUNT_PDF" = "$CACHE_COUNT2" ] || die "PDF 渲染不应新增缓存(本种子语料轮内,物化器与位图轨同源): $CACHE_COUNT2 → $CACHE_COUNT_PDF"
 
 echo "==9/16 POST /api/templates/{不存在的id}/render(404) =="
 expect_error POST "/api/templates/999999/render" application/json /dev/null 404 template_not_found

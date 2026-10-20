@@ -259,17 +259,19 @@ export const api = {
     // POST /api/templates/{id}/render（spec §2.4 #7 / tdp spec §4 渲染选版）：可选
     // body {version}——缺省 = 最新已发布版本（从未发布 409 template_unpublished）；
     // 正整数 = 指定历史版本（不存在 404 version_not_found）；哨兵 "draft" = 渲染
-    // 草稿列现值（编辑器预览专用，票 03 契约修订）。无 opts 保持无 body POST
-    // （列表页批量渲染零改路径）。30s deadline 由服务端控制，前端不另设超时
-    renderTemplate: (id: string | number, opts?: { version?: number | 'draft' }) =>
+    // 草稿列现值（编辑器预览专用，票 03 契约修订）。body 另可携带 {format} 选
+    // 产物轨（PDF 集成共识：单轨语义，与选版正交）——缺省 "png" 位图页序列
+    // （现状）；"pdf" = 整批页序列合成单文档 document.pdf。无 opts 保持无 body
+    // POST（列表页批量渲染零改路径）。30s deadline 由服务端控制，前端不另设超时
+    renderTemplate: (id: string | number, opts?: { version?: number | 'draft'; format?: 'png' | 'pdf' }) =>
         request<RenderRecord>(
             `/api/templates/${id}/render`,
-            opts?.version === undefined
+            opts?.version === undefined && opts?.format === undefined
                 ? { method: 'POST' }
                 : {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ version: opts.version }),
+                      body: JSON.stringify({ version: opts.version, format: opts.format }),
                   },
         ),
     // GET /api/templates/{id}/renders（渲染历史对比）：模板维度渲染记录，id 降序

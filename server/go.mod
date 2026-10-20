@@ -3,8 +3,9 @@ module example/server
 go 1.26.0
 
 require (
-	github.com/HankChenCH/go-canvas v1.5.0
+	github.com/HankChenCH/go-canvas v1.6.0
 	github.com/HankChenCH/go-canvas/image-renderer v1.1.0
+	github.com/HankChenCH/go-canvas/pdf-renderer v1.0.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	modernc.org/sqlite v1.60.1
 )
@@ -12,6 +13,7 @@ require (
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fogleman/gg v1.3.0 // indirect
+	github.com/go-pdf/fpdf v0.9.0 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

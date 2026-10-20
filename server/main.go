@@ -23,8 +23,16 @@ import (
 // runtimeDirs 运行时目录,启动即建(spec §1.1;gitignored,不入库)
 var runtimeDirs = []string{"data", "assets/u", "renders", ".cache"}
 
-// fontPath 绘制字体:graph 内按此相对路径引用(spec §5.3 三合一形态)
-const fontPath = "assets/fonts/NotoSansSC-Regular.otf"
+// fontPath 绘制字体:graph 内按此相对路径引用(spec §5.3 三合一形态)。
+// 种子字体必须是 glyf 轮廓的单体 TTF:PDF 渲染轨(pdf-renderer → fpdf)的
+// TTF 解析器拒收 CFF 轮廓,官方 NotoSansSC-Regular.otf(OTTO 头)在 PDF 轨
+// 注册字体即报「字体解析失败」;本文件为 Google Fonts 分发的 Noto Sans SC
+// 可变字体(glyf),默认实例 wght 400 = Regular,两条渲染轨共用
+const fontPath = "assets/fonts/NotoSansSC-Regular.ttf"
+
+// seedFontPath 字体资产的 seed 形态(启动预检测试共用):与 fontPath 同名,
+// 前缀 seed/——CopyAssets 把 seed/assets 整树幂等补齐到 assets/,文件名只此一处
+const seedFontPath = "seed/" + fontPath
 
 const listenAddr = ":8080" // 监听 :8080 固定,无配置面(spec §1.4)
 
