@@ -8,7 +8,7 @@ func TestLocalize(t *testing.T) {
 	cases := []struct{ ref, want string }{
 		{"/assets/u/x.png", "assets/u/x.png"}, // URL/graph 引用串形态
 		{"assets/u/x.png", "assets/u/x.png"},  // 磁盘相对形态(DB 存储)
-		{"/assets/fonts/NotoSansSC-Regular.otf", "assets/fonts/NotoSansSC-Regular.otf"},
+		{"/assets/fonts/NotoSansSC-Regular.ttf", "assets/fonts/NotoSansSC-Regular.ttf"},
 		{"", ""},
 		{"/", ""},
 	}

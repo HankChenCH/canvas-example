@@ -1,7 +1,8 @@
 // Package render:文档级渲染管线(13 票,spec §2.4 #7/§2.7)——存储态模板与
-// dataset 逐帧解码 → 文档编译(流链配当)→ 逐页位图渲染 → PNG 字节,产物
-// 落盘 renders/<renderId>/<seq>.png。错误按 §2.5 总表映射 HTTP,超时/取消/
-// 下载流超时的分流语义见 §2.6(先判 ctx 归因再判资源码)。
+// dataset 逐帧解码 → 文档编译(流链配当)→ 产物轨:位图轨逐页渲染 PNG 字节
+// (Run,落盘 renders/<renderId>/<seq>.png),PDF 文档轨整卷合成单文档字节
+// (RunPDF,落盘 renders/<renderId>/document.pdf)。错误按 §2.5 总表映射 HTTP,
+// 超时/取消/下载流超时的分流语义见 §2.6(先判 ctx 归因再判资源码)。
 package render
 
 import (
@@ -22,6 +23,7 @@ import (
 	"github.com/HankChenCH/go-canvas/image-renderer"
 	"github.com/HankChenCH/go-canvas/layer"
 	"github.com/HankChenCH/go-canvas/paginate"
+	"github.com/HankChenCH/go-canvas/pdf-renderer"
 	"github.com/HankChenCH/go-canvas/renderer"
 	"github.com/HankChenCH/go-canvas/resolver"
 
@@ -71,35 +73,19 @@ type PipelineErr struct {
 
 func (e *PipelineErr) Error() string { return e.Code + ": " + e.Message }
 
-// Run 渲染一跳(spec §2.4 #7):页序列经编译边界防御性复跑保存预检段(spec
-// §3.4 同一实现,ADR 0025)——一次解码产出帧序列与流链,渲染期零二次解码
-// → 文档编译 → 逐页渲染为 PNG。datasetRaw 为模板所引数据源实体的 data 列
+// Run 渲染一跳——位图轨(spec §2.4 #7):页序列经编译边界防御性复跑保存预检
+// 段(spec §3.4 同一实现,ADR 0025)——一次解码产出帧序列与流链,渲染期零二次
+// 解码 → 文档编译 → 逐页渲染为 PNG。datasetRaw 为模板所引数据源实体的 data 列
 // (handler 解析引用后传入),null/缺省按未绑直通编译,零行空壳页合法。ctx 携带
 // 渲染期 30s deadline(handler 叠加,spec §2.6),穿引到绘制检查点与物化下载;
-// 编译为纯结构计算不设检查点。
+// 编译为纯结构计算不设检查点。PDF 文档轨见 RunPDF(共享编译前奏,无页归属段)。
 func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord, datasetRaw json.RawMessage) ([]Page, *PipelineErr) {
-	// 防御性复跑与保存预检同一段编译实现(页级形状 + 逐帧解码 + 流链校验):
-	// 正常由写端点先行打回,此处覆盖绕过写端点直改存储态的路径;编译即完成
-	// 全部解码(Products),不对同批 graph 二次解码
-	products, verr := pages.Compile(rec.Pages)
-	if verr != nil {
-		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: verr.Code, Message: verr.Message}
-	}
-	frames, chain := products.Frames, products.Chain
-
-	dataset, jerr := decodeDataset(datasetRaw)
-	if jerr != nil {
-		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: codes.InvalidJSON, Message: jerr.Error()}
+	doc, perr := compileForRender(ctx, rec, datasetRaw)
+	if perr != nil {
+		return nil, perr
 	}
 
-	// 文档编译(spec §2.7:nil evaluator = 默认受限插值求值器)
-	compiler := paginate.NewDocumentCompiler(nil)
-	result, err := compiler.Compile(frames, dataset, chain)
-	if err != nil {
-		return nil, mapPipelineErr(ctx, err)
-	}
-
-	frameByPage, perr := attributePages(ctx, compiler, frames, dataset, chain, len(result.Canvases))
+	frameByPage, perr := attributePages(ctx, doc.compiler, doc.frames, doc.dataset, doc.chain, len(doc.result.Canvases))
 	if perr != nil {
 		return nil, perr
 	}
@@ -110,7 +96,59 @@ func (s *Service) Run(ctx context.Context, rec *store.TemplateRecord, datasetRaw
 	for i := range rec.Pages {
 		names[i] = pages.PageName(rec.Pages[i])
 	}
-	return s.renderPages(ctx, names, result.Canvases, frameByPage)
+	return s.renderPages(ctx, names, doc.result.Canvases, frameByPage)
+}
+
+// RunPDF 渲染一跳——PDF 文档轨:与 Run 共享编译前奏(同一防御性复跑与文档
+// 编译),产物 = 整批页序列合成的一卷单文档字节,无页归属段(attributePages
+// 前缀重放只服务逐页 frame 语义,单文档无此面)。资源引用归一与位图轨同门
+// (normalize.go):本地引用落磁盘相对形态,远程引用交 pdf 渲染端按需物化
+// (字体注册/二维码含 QR 物化缝)。ctx 语义与 Run 一致。
+func (s *Service) RunPDF(ctx context.Context, rec *store.TemplateRecord, datasetRaw json.RawMessage) ([]byte, *PipelineErr) {
+	doc, perr := compileForRender(ctx, rec, datasetRaw)
+	if perr != nil {
+		return nil, perr
+	}
+	normalizePages(doc.result.Canvases)
+	backend := pdfrenderer.NewRenderer(s.rs)
+	pdf, err := pdfrenderer.RenderPages(ctx, backend, doc.result.Canvases)
+	if err != nil {
+		return nil, mapPipelineErr(ctx, err)
+	}
+	return pdf, nil
+}
+
+// compiledDoc 两轨共享编译前奏产物:文档编译结果 + 页归属(attributePages)
+// 所需的编译器/帧序列/流链/数据集
+type compiledDoc struct {
+	result   *paginate.CompileResult
+	compiler *paginate.DocumentCompiler
+	frames   []*canvas.Canvas
+	chain    []paginate.FlowChainNode
+	dataset  any
+}
+
+// compileForRender 两轨共享编译前奏:页序列编译边界防御性复跑保存预检段(页级
+// 形状 + 逐帧解码 + 流链校验,正常由写端点先行打回,此处覆盖绕过写端点直改
+// 存储态的路径)→ dataset 解码 → 文档编译(spec §2.7:nil evaluator = 默认受限
+// 插值求值器)。编译即完成全部解码(Products),不对同批 graph 二次解码
+func compileForRender(ctx context.Context, rec *store.TemplateRecord, datasetRaw json.RawMessage) (*compiledDoc, *PipelineErr) {
+	products, verr := pages.Compile(rec.Pages)
+	if verr != nil {
+		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: verr.Code, Message: verr.Message}
+	}
+
+	dataset, jerr := decodeDataset(datasetRaw)
+	if jerr != nil {
+		return nil, &PipelineErr{Status: http.StatusBadRequest, Code: codes.InvalidJSON, Message: jerr.Error()}
+	}
+
+	compiler := paginate.NewDocumentCompiler(nil)
+	result, err := compiler.Compile(products.Frames, dataset, products.Chain)
+	if err != nil {
+		return nil, mapPipelineErr(ctx, err)
+	}
+	return &compiledDoc{result: result, compiler: compiler, frames: products.Frames, chain: products.Chain, dataset: dataset}, nil
 }
 
 // decodeDataset 数据源 data 列解码:null/缺省 = 未绑(Hydrate 恒等直通,
@@ -234,6 +272,26 @@ func WritePages(pages []Page, renderID int64) ([]store.RenderImage, *PipelineErr
 // outputWriteFailed 产物落盘失败(spec §2.5 服务端自有码,500)
 func outputWriteFailed(message string) *PipelineErr {
 	return &PipelineErr{Status: http.StatusInternalServerError, Code: codes.RenderOutputWriteFailed, Message: message}
+}
+
+// pdfProductName PDF 产物定名:images[] 单条目的 name/url 锚点,服务端控制
+// 产物文件名,前端按 .pdf 扩展名派生「下载 PDF」呈现(PDF 集成共识)
+const pdfProductName = "document.pdf"
+
+// WritePDF PDF 产物落盘 renders/<renderID>/document.pdf(单文档,与 WritePages
+// 平行;失败语义一致——任一步失败即中止,失败记录行由调用方回滚,已写文件
+// 不清理)。返回单条目 RenderImage:Frame 0(单文档不指单一源帧,字段仅为
+// 存量 images[] 形状)、Name = 服务端定名 pdfProductName
+func WritePDF(pdf []byte, renderID int64) ([]store.RenderImage, *PipelineErr) {
+	dir := path.Join(renderOutputDir, strconv.FormatInt(renderID, 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, outputWriteFailed(fmt.Sprintf("创建产物目录 %s: %v", dir, err))
+	}
+	p := path.Join(dir, pdfProductName)
+	if err := os.WriteFile(p, pdf, 0o644); err != nil {
+		return nil, outputWriteFailed(fmt.Sprintf("写入产物 %s: %v", p, err))
+	}
+	return []store.RenderImage{{Frame: 0, Name: pdfProductName, Path: p}}, nil
 }
 
 // mapPipelineErr 渲染期错误 → HTTP 映射(spec §2.5 总表 + §2.6 分流)。

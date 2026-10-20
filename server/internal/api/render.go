@@ -2,9 +2,11 @@
 // /api/templates/{id}/render → 201 RenderRecord。可选 JSON body 选版:
 // {"version":N} 指定历史版本、"draft" 哨兵渲染草稿列现值(编辑器预览专用)、
 // 缺 body/缺字段 = 最新已发布(明示 breaking change,由存量回填 v1 吸收)。
+// 可选 body 另含 {"format":"pdf"} 选产物轨(单轨语义,PDF 集成共识):缺省
+// "png" 位图页序列(落盘 <seq>.png,现状); "pdf" = 整批页序列合成单文档
+// (落盘 document.pdf),与选版三态正交组合。
 // 数据源 = 当前 data_source_id 绑定(绑定不快照,渲染 = 模板版本 × 数据源现值)。
-// 产物落盘 renders/<renderId>/<seq>.png + 落库,keep-all 不清理——旧渲染文件即
-// 快照(spec §2.4 #7)。
+// 产物落库 keep-all 不清理——旧渲染文件即快照(spec §2.4 #7)。
 package api
 
 import (
@@ -37,6 +39,14 @@ const (
 	selectionExplicit = "explicit"
 )
 
+// 渲染产物轨(PDF 集成共识):单轨语义——format 决定该次渲染的产物形态与
+// 渲染入口(png 位图页序列 = 缺省现状 / pdf 整批页合成单文档 document.pdf),
+// 与选版三态正交组合
+const (
+	formatPNG = "png"
+	formatPDF = "pdf"
+)
+
 // writeInvalidJSON 400 invalid_json 信封单点(评审修复 F3 文件内收敛):选版解析
 // 家族把坏 JSON/字段形态非法统一归此码(spec §4 哨兵复用裁决),message 按现场
 // 承载具体拒因
@@ -60,19 +70,42 @@ type renderImageResponse struct {
 	URL   string `json:"url"`
 }
 
-// renderSelection 渲染选版解析产物(spec §4):mode 三态——latest(缺省,最新
-// 已发布)/ draft(草稿列现值)/ explicit(指定历史版本号)
+// renderSelection 渲染选版解析产物(spec §4 + PDF 集成共识):mode 三态——
+// latest(缺省,最新已发布)/ draft(草稿列现值)/ explicit(指定历史版本号);
+// format 产物轨单轨语义(png 缺省 / pdf)
 type renderSelection struct {
 	mode    string
 	version int64
+	format  string
+}
+
+// resolveRenderFormat 解析渲染端点可选 body 的 format 字段(产物轨):缺字段/
+// null = "png"(缺省现状);必须为 "png"|"pdf" JSON 字符串,未知值/非字符串
+// → 400 invalid_json(与 version 字段形态守卫同门)。失败已写响应
+func resolveRenderFormat(w http.ResponseWriter, raw json.RawMessage) (string, bool) {
+	field := bytes.TrimSpace(raw)
+	if len(field) == 0 || bytes.Equal(field, []byte("null")) {
+		return formatPNG, true
+	}
+	var s string
+	if err := json.Unmarshal(field, &s); err == nil {
+		switch s {
+		case formatPNG, formatPDF:
+			return s, true
+		}
+	}
+	// 单一失败出口:非字符串与未知值同归 400 invalid_json
+	writeInvalidJSON(w, `format 仅接受 "png" 或 "pdf"`)
+	return "", false
 }
 
 // resolveRenderSelection 解析渲染端点可选 body:空 body(smoke 惯例
 // --data-binary @/dev/null)或缺 version 字段 = 缺省最新已发布;正整数 = 指定
 // 版本;"draft" = 草稿哨兵;null 视同缺省(null 归一先例);类型错/零/负数/
-// 非整数/未知形态 → 400 invalid_json。失败已写响应,调用方拿到 ok=false 直接返回
+// 非整数/未知形态 → 400 invalid_json。format 字段见 resolveRenderFormat,与
+// 选版正交。失败已写响应,调用方拿到 ok=false 直接返回
 func resolveRenderSelection(w http.ResponseWriter, r *http.Request) (renderSelection, bool) {
-	def := renderSelection{mode: selectionLatest}
+	def := renderSelection{mode: selectionLatest, format: formatPNG}
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -89,18 +122,24 @@ func resolveRenderSelection(w http.ResponseWriter, r *http.Request) (renderSelec
 	}
 	var body struct {
 		Version json.RawMessage `json:"version"`
+		Format  json.RawMessage `json:"format"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(trimmed))
 	if err := dec.Decode(&body); err != nil || dec.More() { // 严格单 JSON 值,坏 JSON 归 400
 		writeError(w, http.StatusBadRequest, codes.InvalidJSON, "请求体不是合法 JSON")
 		return def, false
 	}
+	format, ok := resolveRenderFormat(w, body.Format)
+	if !ok {
+		return def, false
+	}
+	def.format = format
 	field := bytes.TrimSpace(body.Version)
 	if len(field) == 0 || bytes.Equal(field, []byte("null")) { // 缺字段 / null = 缺省
 		return def, true
 	}
 	if bytes.Equal(field, []byte(`"`+draftSentinel+`"`)) {
-		return renderSelection{mode: draftSentinel}, true
+		return renderSelection{mode: draftSentinel, format: format}, true
 	}
 	var num any
 	numDec := json.NewDecoder(bytes.NewReader(field))
@@ -119,7 +158,7 @@ func resolveRenderSelection(w http.ResponseWriter, r *http.Request) (renderSelec
 		writeInvalidJSON(w, "version 仅接受正整数或 \"draft\" 哨兵(spec §4)")
 		return def, false
 	}
-	return renderSelection{mode: selectionExplicit, version: version}, true
+	return renderSelection{mode: selectionExplicit, version: version, format: format}, true
 }
 
 // versionedRunRecord 版本化路径的渲染输入(spec §4:版本行只快照文档整体——
@@ -129,12 +168,13 @@ func versionedRunRecord(ver *store.TemplateVersionRecord) *store.TemplateRecord 
 	return &store.TemplateRecord{Pages: ver.Pages}
 }
 
-// handleRenderTemplate 渲染一跳:寻址模板 → 解析可选 body 选版 → 解析数据源
-// 当前绑定 → 管线(解码/编译/逐页渲染)→ 落盘 → 落库 → 201。选版语义(spec §4):
-// 缺省 = 最新已发布(从未发布 409 template_unpublished);显式版本不存在 → 404
-// version_not_found;draft 哨兵 = 草稿列现值(渲染记 version null)。未绑数据源
-// 按未绑直通编译(spec §2.4 #7 直通语义);错误映射全走 render 包对 §2.5/§2.6 的
-// 实现;断连取消不写响应仅日志(spec §2.5 渲染段)。
+// handleRenderTemplate 渲染一跳:寻址模板 → 解析可选 body 选版与产物轨 →
+// 解析数据源当前绑定 → 管线(解码/编译/轨分派)→ 落盘 → 落库 → 201。选版语义
+// (spec §4):缺省 = 最新已发布(从未发布 409 template_unpublished);显式版本
+// 不存在 → 404 version_not_found;draft 哨兵 = 草稿列现值(渲染记 version null)。
+// 产物轨(PDF 集成共识):format png(缺省)位图页序列 / pdf 单文档,与选版
+// 正交。未绑数据源按未绑直通编译(spec §2.4 #7 直通语义);错误映射全走
+// render 包对 §2.5/§2.6 的实现;断连取消不写响应仅日志(spec §2.5 渲染段)。
 func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r.PathValue("id"))
 	if err != nil {
@@ -211,7 +251,18 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), renderDeadline)
 	defer cancel()
 
-	pages, perr := s.render.Run(ctx, runRec, datasetJSON)
+	// 产物轨分派(单轨,PDF 集成共识):format 决定渲染入口与落盘形态——
+	// 两轨共享编译前奏与错误映射,只在入口/落盘处分叉
+	var (
+		pages    []render.Page
+		pdfBytes []byte
+		perr     *render.PipelineErr
+	)
+	if selection.format == formatPDF {
+		pdfBytes, perr = s.render.RunPDF(ctx, runRec, datasetJSON)
+	} else {
+		pages, perr = s.render.Run(ctx, runRec, datasetJSON)
+	}
 	if perr != nil {
 		if perr.Silent {
 			log.Printf("渲染模板 %d 取消(客户端断连): %s", id, perr.Message)
@@ -227,7 +278,13 @@ func (s *Server) handleRenderTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	images, werr := render.WritePages(pages, record.ID)
+	var images []store.RenderImage
+	var werr *render.PipelineErr
+	if selection.format == formatPDF {
+		images, werr = render.WritePDF(pdfBytes, record.ID)
+	} else {
+		images, werr = render.WritePages(pages, record.ID)
+	}
 	if werr != nil {
 		// 回滚 stub 记录(产物半成品文件保留——无记录引用,无害孤儿;
 		// AUTOINCREMENT 保证 id 不复用,不会与后续产物相撞)。

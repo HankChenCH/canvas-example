@@ -433,3 +433,94 @@ func getRenders(t *testing.T, h http.Handler, id int64) []map[string]any {
 	}
 	return list
 }
+
+// --- format 参数:PDF 文档轨(PDF 集成共识:单轨,format 决定该次渲染产物)---
+
+// TestPostRender_PDFFormat {"format":"pdf"} → 201,images 单条目
+// document.pdf(GET 直链 200 + application/pdf + %PDF 魔数);位图轨缺省
+// 语义不受影响(其余用例无 format 字段即缺省 png 轨)
+func TestPostRender_PDFFormat(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h)
+
+	code, body := postRenderBody(t, h, fmt.Sprintf("%d", id), `{"format":"pdf"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("status = %d, 期望 201(%v)", code, body)
+	}
+	images, ok := body["images"].([]any)
+	if !ok || len(images) != 1 {
+		t.Fatalf("PDF 轨 images 应为单条目: %v", body["images"])
+	}
+	img := images[0].(map[string]any)
+	if img["frame"] != float64(0) || img["name"] != "document.pdf" {
+		t.Fatalf("images[0] frame/name 不符: %v", img)
+	}
+	url, _ := img["url"].(string)
+	if !regexp.MustCompile(`^/renders/\d+/document\.pdf$`).MatchString(url) {
+		t.Fatalf("url 应匹配 ^/renders/\\d+/document\\.pdf$: %q", url)
+	}
+
+	// 产物直链:200 + application/pdf + %PDF 魔数非空
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, 期望 200", url, rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Fatalf("Content-Type = %q, 期望 application/pdf", ct)
+	}
+	if !regexp.MustCompile(`^%PDF-`).Match(rec.Body.Bytes()) {
+		t.Fatalf("产物应以 %%PDF- 魔数开头: %d bytes", rec.Body.Len())
+	}
+}
+
+// TestPostRender_PDFFormatWithVersion format 与选版正交组合:
+// {"version":"draft","format":"pdf"} → 201 草稿列现值的 PDF 渲染(version null)
+func TestPostRender_PDFFormatWithVersion(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h)
+
+	code, body := postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":"draft","format":"pdf"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("status = %d, 期望 201(%v)", code, body)
+	}
+	if body["version"] != nil {
+		t.Fatalf("draft 渲染 version 应为 null: %v", body["version"])
+	}
+	images := body["images"].([]any)
+	if len(images) != 1 || images[0].(map[string]any)["name"] != "document.pdf" {
+		t.Fatalf("PDF 轨 images 应为单条目 document.pdf: %v", images)
+	}
+
+	// 显式版本号与 format 正交组合(同一条 resolve 路径,补齐矩阵)
+	code, body = postRenderBody(t, h, fmt.Sprintf("%d", id), `{"version":1,"format":"pdf"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("显式版本 status = %d, 期望 201(%v)", code, body)
+	}
+	if v := body["version"].(float64); v != 1 {
+		t.Fatalf("显式选版渲染 version 应为 1: %v", body["version"])
+	}
+	images = body["images"].([]any)
+	if len(images) != 1 || images[0].(map[string]any)["name"] != "document.pdf" {
+		t.Fatalf("PDF 轨 images 应为单条目 document.pdf: %v", images)
+	}
+}
+
+// TestPostRender_FormatValidation format 字段形态非法 → 400 invalid_json:
+// 未知值/非字符串/空串(与 version 字段形态守卫同门)
+func TestPostRender_FormatValidation(t *testing.T) {
+	h, _ := newTestServer(t)
+	t.Chdir(t.TempDir())
+	id := newLocalRenderTemplate(t, h)
+	for _, tc := range []struct {
+		body  string
+		cause string
+	}{{`{"format":"jpg"}`, "未知值"}, {`{"format":123}`, "非字符串"}, {`{"format":""}`, "空串"}} {
+		code, body := postRenderBody(t, h, fmt.Sprintf("%d", id), tc.body)
+		if code != http.StatusBadRequest || errCode(t, body) != "invalid_json" {
+			t.Fatalf("%s(%s) = %d/%s, 期望 400/invalid_json", tc.body, tc.cause, code, errCode(t, body))
+		}
+	}
+}

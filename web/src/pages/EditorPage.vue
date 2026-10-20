@@ -1476,29 +1476,55 @@ function onRenderSelect(id: number): void {
     activeRenderId.value = id
 }
 
-async function runRender(): Promise<void> {
-    const record = template.value
-    if (!record || rendering.value) return
+/** 渲染编排共享 runner（渲染草稿 / 导出 PDF 共用，PDF 集成共识）：dirty 自动先
+ *  保存（渲的即所见），format 决定产物轨；完成后刷历史并开结果抽屉。note null =
+ *  保存失败已自带错误面（docNote「保存失败：…」），不覆盖肇因 */
+async function runRenderTrack(templateId: number, draftingNote: string, successNote: (count: number, saved: boolean) => string, render: (id: number) => Promise<RenderRecord>): Promise<void> {
+    if (rendering.value) return
     rendering.value = true
-    docNote.value = '渲染草稿中…（dirty 自动先保存，渲的即所见；按已发布版本渲染走列表页）'
+    docNote.value = draftingNote
     try {
         computeDirty()
         const outcome = await runRenderFlow({
             dirty: isDirty.value,
             save: () => runDocumentSave('topbar'),
-            render: () => api.renderTemplate(record.id, { version: 'draft' }),
+            render: () => render(templateId),
         })
         if (outcome.ok) {
             await refreshRenderHistory(outcome.record)
             renderDrawerOpen.value = true
-            docNote.value = `渲染完成，共 ${outcome.record.images.length} 页（草稿${outcome.saved ? '，已先保存未存改动' : ''}）`
+            docNote.value = successNote(outcome.record.images.length, outcome.saved)
         } else if (outcome.note !== null) {
             docNote.value = outcome.note
         }
-        // note null = 保存失败已自带错误面（docNote「保存失败：…」），不覆盖肇因
     } finally {
         rendering.value = false
     }
+}
+
+function runRender(): Promise<void> {
+    const id = template.value?.id
+    if (id === undefined) return Promise.resolve()
+    return runRenderTrack(
+        id,
+        '渲染草稿中…（dirty 自动先保存，渲的即所见；按已发布版本渲染走列表页）',
+        (pages, saved) => `渲染完成，共 ${pages} 页（草稿${saved ? '，已先保存未存改动' : ''}）`,
+        (tid) => api.renderTemplate(tid, { version: 'draft' }),
+    )
+}
+
+/** 导出 PDF（PDF 集成共识）：与渲染草稿同一条促存链编排，{version:"draft",
+ *  format:"pdf"} 渲草稿列现值的单文档轨——整批页序列合成一个 PDF 文档，结果
+ *  抽屉内下载。共用 rendering 态（等待期两钮互斥） */
+function runRenderPdf(): Promise<void> {
+    const id = template.value?.id
+    if (id === undefined) return Promise.resolve()
+    return runRenderTrack(
+        id,
+        '导出 PDF 中…（整批页序列合成单文档；dirty 自动先保存）',
+        (docs, saved) => `PDF 导出完成，共 ${docs} 个文档（草稿${saved ? '，已先保存未存改动' : ''}）`,
+        (tid) => api.renderTemplate(tid, { version: 'draft', format: 'pdf' }),
+    )
 }
 
 // ---- 功能导游宿主编排（feature-tour 03 票，spec §2.4）：触发门 + 顶栏常驻重播
@@ -1849,6 +1875,18 @@ onBeforeUnmount(() => {
                     @click="runRender"
                 >
                     {{ rendering ? '渲染中…' : '渲染草稿' }}
+                </button>
+                <!-- 导出 PDF（PDF 集成共识）：同渲染促存链，format:"pdf" 单文档轨；
+                     与渲染草稿共用 rendering 态互斥 -->
+                <button
+                    type="button"
+                    class="ghost"
+                    data-render-pdf
+                    title="导出 PDF：先保存未存改动，再把整批页序列合成一个 PDF 文档（结果抽屉内下载）；服务端 30s 上限"
+                    :disabled="rendering"
+                    @click="runRenderPdf"
+                >
+                    {{ rendering ? '导出中…' : '导出 PDF' }}
                 </button>
                 <!-- editor.store.doc 是非响应式读数，按钮可用态不做文档门（处理器自守卫），
                      导出中状态走响应式 exporting -->

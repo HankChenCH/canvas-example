@@ -162,6 +162,29 @@ func TestRun_SeedDocument(t *testing.T) {
 	}
 }
 
+// TestRunPDF_SeedDocument PDF 文档轨:同一次编译的整批页序列(种子 3 页,容量
+// 数学同 TestRun_SeedDocument)合成一卷单文档 PDF 字节——%PDF- 魔数开头、页
+// 对象数与编译页数一致、无需页归属(attributePages 前缀重放只属位图轨)
+func TestRunPDF_SeedDocument(t *testing.T) {
+	chdirToSeedAssets(t)
+	svc := newService(t, &fakeDownloader{})
+	rec, dataset := newOfflineRecord(t)
+
+	pdf, perr := svc.RunPDF(t.Context(), rec, dataset)
+	if perr != nil {
+		t.Fatalf("渲染失败: %s: %s", perr.Code, perr.Message)
+	}
+	if len(pdf) == 0 || !bytes.HasPrefix(pdf, []byte("%PDF-")) {
+		t.Fatalf("产物应以 %%PDF- 魔数开头且非空: %d bytes", len(pdf))
+	}
+	// 页对象文本计数依赖 fpdf 现状序列化(未引入对象流压缩);fpdf pin 在
+	// go.sum,升级时若计数失真改用 pdfinfo 类工具断言
+	got := bytes.Count(pdf, []byte("/Type /Page")) - bytes.Count(pdf, []byte("/Type /Pages"))
+	if got != 3 {
+		t.Fatalf("PDF 页对象数 = %d, 期望 3(spec §5.1 容量数学)", got)
+	}
+}
+
 // --- 前导斜杠上传引用归一(21 票,spec §2.2 双吃)---
 
 // TestRun_LeadingSlashStaticAsset 静态形态:属性面板编辑产出 ExpressionValue
@@ -256,7 +279,7 @@ func TestRun_LeadingSlashFontPath(t *testing.T) {
 			"canvas":{"width":794,"height":1123},
 			"layers":[{"type":"TextLayer","priority":0,
 				"spec":{"shape":{"width":794,"height":100},
-					"fontFamily":{"font":"/assets/fonts/NotoSansSC-Regular.otf","fontSize":30,"fontColor":"#333333","angle":0,"autowrap":false}},
+					"fontFamily":{"font":"/assets/fonts/NotoSansSC-Regular.ttf","fontSize":30,"fontColor":"#333333","angle":0,"autowrap":false}},
 					"data":{"valueType":"StaticValue","value":"结业证书"}}]}`, "")}}
 
 	pages, perr := svc.Run(t.Context(), rec, nil)
@@ -765,5 +788,47 @@ func TestWritePages_OutputWriteFailed(t *testing.T) {
 	}
 	if !strings.Contains(perr.Message, "renders") {
 		t.Fatalf("message 应含落盘路径上下文: %s", perr.Message)
+	}
+}
+
+// TestWritePDF_Layout PDF 产物落盘(PDF 集成共识):单文档形态
+// renders/<id>/document.pdf,RenderImage 单条目——Frame 0(单文档不指单一源
+// 帧,字段仅为存量 images[] 形状)、name = 服务端定名 document.pdf(前端按
+// 扩展名派生「下载 PDF」呈现)
+func TestWritePDF_Layout(t *testing.T) {
+	t.Chdir(t.TempDir())
+	pdf := []byte("%PDF-1.7 fake-bytes")
+	images, perr := WritePDF(pdf, 7)
+	if perr != nil {
+		t.Fatalf("落盘失败: %s: %s", perr.Code, perr.Message)
+	}
+	if len(images) != 1 {
+		t.Fatalf("PDF 产物应为单条目: %d", len(images))
+	}
+	wantPath := "renders/7/document.pdf"
+	if images[0].Path != wantPath || images[0].Name != "document.pdf" || images[0].Frame != 0 {
+		t.Fatalf("images[0] = %+v, 期望 {0 document.pdf %s}", images[0], wantPath)
+	}
+	b, err := os.ReadFile(wantPath)
+	if err != nil || !bytes.Equal(b, pdf) {
+		t.Fatalf("产物文件 %s 不符: %v", wantPath, err)
+	}
+}
+
+// TestWritePDF_OutputWriteFailed 落盘失败 → 500 render_output_write_failed
+// (与 WritePages 同码)
+func TestWritePDF_OutputWriteFailed(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	if err := os.MkdirAll("renders", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// renders/7 已被文件占位,MkdirAll 必败
+	if err := os.WriteFile(filepath.Join("renders", "7"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, perr := WritePDF([]byte("%PDF-1.7 fake"), 7)
+	if perr == nil || perr.Status != 500 || perr.Code != "render_output_write_failed" {
+		t.Fatalf("期望 500/render_output_write_failed, 实得 %+v", perr)
 	}
 }

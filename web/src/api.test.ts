@@ -173,3 +173,34 @@ describe('api.renderTemplate 选版三态（spec §4，票 03 draft 哨兵契约
         expect((err as ApiError).code).toBe('template_unpublished')
     })
 })
+
+describe('api.renderTemplate format 产物轨（PDF 集成共识：单轨，format 决定产物形态）', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals()
+    })
+
+    it('format:"pdf" → JSON body {"format":"pdf"}（整批页序列单文档轨）', async () => {
+        const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ id: 1, templateId: 9, version: 2, createdAt: '', images: [] })))
+        vi.stubGlobal('fetch', fetchMock)
+        await api.renderTemplate(9, { format: 'pdf' })
+        const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+        expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
+        expect(JSON.parse(init.body as string)).toEqual({ format: 'pdf' })
+    })
+
+    it('version+format 正交组合 → {"version":"draft","format":"pdf"}', async () => {
+        const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ id: 1, templateId: 9, version: null, createdAt: '', images: [] })))
+        vi.stubGlobal('fetch', fetchMock)
+        await api.renderTemplate(9, { version: 'draft', format: 'pdf' })
+        const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+        expect(JSON.parse(init.body as string)).toEqual({ version: 'draft', format: 'pdf' })
+    })
+
+    it('format:"png" 缺省轨 → body {"format":"png"} 显式（缺省语义由服务端兜）', async () => {
+        const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ id: 1, templateId: 9, version: 2, createdAt: '', images: [] })))
+        vi.stubGlobal('fetch', fetchMock)
+        await api.renderTemplate(9, { format: 'png' })
+        const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+        expect(JSON.parse(init.body as string)).toEqual({ format: 'png' })
+    })
+})
