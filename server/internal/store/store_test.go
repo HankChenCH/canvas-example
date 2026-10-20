@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"example/server/internal/pages"
 )
 
 // openTestStore 每用例独立临时库(文件落 TempDir,互不串扰)
@@ -30,16 +32,28 @@ func seedDataSource() DataSourceContent {
 	}
 }
 
-// seedContent 最小合法模板内容(两帧 + 流链,形状对齐 spec §2.3);绑定由调用方
+// seedPage 页构造器:RawMessage 字段承接原文(页 id/name 引号补齐)
+func seedPage(id, name, graph, flow string) pages.Page {
+	p := pages.Page{
+		ID:    json.RawMessage(`"` + id + `"`),
+		Name:  json.RawMessage(`"` + name + `"`),
+		Graph: json.RawMessage(graph),
+	}
+	if flow != "" {
+		p.Flow = json.RawMessage(flow)
+	}
+	return p
+}
+
+// seedContent 最小合法模板内容(两页 + 流策略,形状对齐 spec §2.3);绑定由调用方
 // 经 DataSourceID 接线(模板只持引用)
 func seedContent() TemplateContent {
 	return TemplateContent{
 		Name: "结业证书 · 批量打印页",
-		Canvases: []CanvasEntry{
-			{Name: "主页", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
-			{Name: "续页", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[]}`)},
+		Pages: []pages.Page{
+			seedPage("pg_main", "主页", `{"canvas":{"width":794,"height":1123},"layers":[]}`, `{"mode":"fixed"}`),
+			seedPage("pg_cont", "续页", `{"canvas":{"width":794,"height":1123},"layers":[]}`, `{"mode":"paged","omitIfEmpty":true}`),
 		},
-		FlowChain: json.RawMessage(`[{"frame":0,"mode":"fixed"},{"frame":1,"mode":"paged","omitIfEmpty":true}]`),
 	}
 }
 
@@ -65,11 +79,12 @@ func TestOpenCreatesTables(t *testing.T) {
 	}
 }
 
-// TestOpen_SelfHealLegacySchema 旧版库(dataset 内嵌模板形态)启动自愈:重建
-// templates/renders,demo 运行数据由播种补回
+// TestOpen_SelfHealLegacySchema 旧版库(页序列翻转前的 canvases+flow_chain 双列
+// 形态,ADR 0025)启动自愈:整库重建 templates/template_versions/renders,demo
+// 运行数据由播种补回(editor_state 存量随重建清零属预期)
 func TestOpen_SelfHealLegacySchema(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	// 手工造旧版形态:templates 带 dataset/datasetSchema 列、无 data_source_id
+	// 手工造旧版形态:templates 带 canvases/flow_chain 双列、无 pages 列
 	st, err := Open(dbPath) // 先经新版 Open 建出基线库再降级改列
 	if err != nil {
 		t.Fatal(err)
@@ -80,8 +95,8 @@ func TestOpen_SelfHealLegacySchema(t *testing.T) {
 			name           TEXT NOT NULL,
 			canvases       TEXT NOT NULL,
 			flow_chain     TEXT,
-			dataset_schema TEXT,
-			dataset        TEXT,
+			data_source_id INTEGER,
+			editor_state   TEXT,
 			created_at     TEXT NOT NULL,
 			updated_at     TEXT NOT NULL
 		);`); err != nil {
@@ -96,11 +111,15 @@ func TestOpen_SelfHealLegacySchema(t *testing.T) {
 		t.Fatalf("旧库自愈打开: %v", err)
 	}
 	defer st2.Close()
-	var hasRef int
+	var hasPages int
 	if err := st2.db.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('templates') WHERE name = 'data_source_id'`,
-	).Scan(&hasRef); err != nil || hasRef != 1 {
-		t.Fatalf("templates 应重建为带 data_source_id 引用列: count=%d err=%v", hasRef, err)
+		`SELECT COUNT(*) FROM pragma_table_info('templates') WHERE name = 'pages'`,
+	).Scan(&hasPages); err != nil || hasPages != 1 {
+		t.Fatalf("templates 应重建为单列 pages 形态: count=%d err=%v", hasPages, err)
+	}
+	// 重建后的三表齐备(可正常读写)
+	if _, err := st2.CreateTemplate(context.Background(), seedContent()); err != nil {
+		t.Fatalf("重建后应可正常写入: %v", err)
 	}
 }
 
@@ -212,15 +231,25 @@ func TestGetTemplate_Roundtrip(t *testing.T) {
 	if rec.DataSourceID == nil || *rec.DataSourceID != dsID {
 		t.Fatalf("dataSourceId 应为播种绑定的引用: %v", rec.DataSourceID)
 	}
-	if len(rec.Canvases) != 2 || rec.Canvases[0].Name != "主页" || rec.Canvases[1].Name != "续页" {
-		t.Fatalf("canvases 形状不符: %+v", rec.Canvases)
+	// pages 往返:页 id/name/graph/flow 原样(页序 = 存储序)
+	if len(rec.Pages) != 2 {
+		t.Fatalf("pages 应两页: %+v", rec.Pages)
 	}
-	if !strings.Contains(string(rec.Canvases[0].Graph), `"width":794`) {
-		t.Fatalf("graph 内容不符: %s", rec.Canvases[0].Graph)
+	var id0, name0 string
+	if err := json.Unmarshal(rec.Pages[0].ID, &id0); err != nil || id0 != "pg_main" {
+		t.Fatalf("页 0 id 应为 pg_main: %s (%v)", rec.Pages[0].ID, err)
 	}
-	var chain []map[string]any
-	if err := json.Unmarshal(rec.FlowChain, &chain); err != nil || len(chain) != 2 {
-		t.Fatalf("flowChain 应为两节点数组: %s (%v)", rec.FlowChain, err)
+	if err := json.Unmarshal(rec.Pages[0].Name, &name0); err != nil || name0 != "主页" {
+		t.Fatalf("页 0 name 应为主页: %s (%v)", rec.Pages[0].Name, err)
+	}
+	if !strings.Contains(string(rec.Pages[0].Graph), `"width":794`) {
+		t.Fatalf("页 0 graph 内容不符: %s", rec.Pages[0].Graph)
+	}
+	if string(rec.Pages[0].Flow) != `{"mode":"fixed"}` {
+		t.Fatalf("页 0 flow 应为 fixed: %s", rec.Pages[0].Flow)
+	}
+	if string(rec.Pages[1].Flow) != `{"mode":"paged","omitIfEmpty":true}` {
+		t.Fatalf("页 1 flow 应为 paged+omitIfEmpty: %s", rec.Pages[1].Flow)
 	}
 	if rec.CreatedAt == "" || rec.CreatedAt != rec.UpdatedAt {
 		t.Fatalf("播种记录 createdAt = updatedAt,实得 %q / %q", rec.CreatedAt, rec.UpdatedAt)
@@ -231,11 +260,13 @@ func TestGetTemplate_Roundtrip(t *testing.T) {
 	}
 }
 
-func TestGetTemplate_NullColumnsMarshalJSONNull(t *testing.T) {
+// TestGetTemplate_EmptyPagesMarshalEmptyArray nil 页序列归一为 "[]" 入库,响应
+// 序列化为 "pages":[](响应数组恒 [] 非 null);未绑引用列照旧 JSON null
+func TestGetTemplate_EmptyPagesMarshalEmptyArray(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 	content := seedContent()
-	content.FlowChain = nil
+	content.Pages = nil
 	if _, err := st.insertTemplate(ctx, content, "2026-10-04T12:00:00Z", "2026-10-04T12:00:00Z"); err != nil {
 		t.Fatalf("插模板: %v", err)
 	}
@@ -247,9 +278,9 @@ func TestGetTemplate_NullColumnsMarshalJSONNull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("序列化: %v", err)
 	}
-	for _, key := range []string{`"flowChain":null`, `"dataSourceId":null`} {
+	for _, key := range []string{`"pages":[]`, `"dataSourceId":null`} {
 		if !strings.Contains(string(b), key) {
-			t.Fatalf("NULL 列应序列化为 JSON null(%s 缺失): %s", key, b)
+			t.Fatalf("列形状应序列化为 %s(缺失): %s", key, b)
 		}
 	}
 }
@@ -294,7 +325,7 @@ func TestCreateTemplate_AutoIncrementAndTimestamps(t *testing.T) {
 	}
 }
 
-// TestUpdateTemplateContent_PreservesBinding 整存替换只动 name/canvases/flow_chain,
+// TestUpdateTemplateContent_PreservesBinding 整存替换只动 name/pages,
 // 不触碰 data_source_id(绑定只经数据源绑定通道变更,spec §2.4 #5)
 func TestUpdateTemplateContent_PreservesBinding(t *testing.T) {
 	st := openTestStore(t)
@@ -311,10 +342,9 @@ func TestUpdateTemplateContent_PreservesBinding(t *testing.T) {
 
 	updated := TemplateContent{
 		Name: "改名后的模板",
-		Canvases: []CanvasEntry{
-			{Name: "新帧", Graph: json.RawMessage(`{"canvas":{"width":100,"height":100},"layers":[]}`)},
+		Pages: []pages.Page{
+			seedPage("pg_new", "新页", `{"canvas":{"width":100,"height":100},"layers":[]}`, ""),
 		},
-		FlowChain: nil, // 缺省 = null = 空链
 	}
 	if err := st.UpdateTemplateContent(ctx, 1, updated); err != nil {
 		t.Fatalf("更新模板: %v", err)
@@ -324,11 +354,11 @@ func TestUpdateTemplateContent_PreservesBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("回读: %v", err)
 	}
-	if rec.Name != "改名后的模板" || len(rec.Canvases) != 1 || rec.Canvases[0].Name != "新帧" {
-		t.Fatalf("name/canvases 应整存替换: %+v", rec)
+	if rec.Name != "改名后的模板" || len(rec.Pages) != 1 || string(rec.Pages[0].Name) != `"新页"` {
+		t.Fatalf("name/pages 应整存替换: %+v", rec)
 	}
-	if rec.FlowChain != nil {
-		t.Fatalf("flowChain 应替换为 NULL: %s", rec.FlowChain)
+	if rec.Pages[0].Flow != nil {
+		t.Fatalf("无 flow 页应存储为键缺席: %s", rec.Pages[0].Flow)
 	}
 	if rec.DataSourceID == nil || *rec.DataSourceID != dsID {
 		t.Fatalf("data_source_id 不得被触碰: %v", rec.DataSourceID)
@@ -364,7 +394,7 @@ func TestUpdateTemplateDataSource_BindUnbind(t *testing.T) {
 	if rec.DataSourceID == nil || *rec.DataSourceID != dsID {
 		t.Fatalf("绑定后 dataSourceId = %v, 期望 %d", rec.DataSourceID, dsID)
 	}
-	if rec.Name != seedContent().Name || len(rec.Canvases) != 2 {
+	if rec.Name != seedContent().Name || len(rec.Pages) != 2 {
 		t.Fatalf("绑定不得触碰模板内容: %+v", rec)
 	}
 
@@ -389,69 +419,6 @@ func TestUpdateTemplateDataSource_NotFound(t *testing.T) {
 }
 
 // --- 工程数据通道(editor_state 列,工程 spec §2/§4/§8) ---
-
-// TestOpen_EnsureEditorStateColumn 幂等补列迁移:上一版形态库(带 data_source_id、
-// 缺 editor_state)启动自动补列,既有数据无损、旧行 NULL = 空快照;重复启动
-// 不重复迁移
-func TestOpen_EnsureEditorStateColumn(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "migrate.db")
-	// 手工造上一版形态:templates 缺 editor_state,含一行既有数据
-	st, err := Open(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.db.Exec(`DROP TABLE templates;
-		CREATE TABLE templates (
-			id             INTEGER PRIMARY KEY AUTOINCREMENT,
-			name           TEXT NOT NULL,
-			canvases       TEXT NOT NULL,
-			flow_chain     TEXT,
-			data_source_id INTEGER,
-			created_at     TEXT NOT NULL,
-			updated_at     TEXT NOT NULL
-		);
-		INSERT INTO templates (name, canvases, flow_chain, created_at, updated_at)
-			VALUES ('既有模板', '[]', NULL, '2026-10-04T12:00:00Z', '2026-10-04T12:00:00Z');`); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	st2, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("补列迁移打开: %v", err)
-	}
-	var n int
-	if err := st2.db.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('templates') WHERE name = 'editor_state'`,
-	).Scan(&n); err != nil || n != 1 {
-		st2.Close()
-		t.Fatalf("templates 应补出 editor_state 列: count=%d err=%v", n, err)
-	}
-	rec, err := st2.GetTemplate(context.Background(), 1)
-	if err != nil {
-		st2.Close()
-		t.Fatalf("既有行应无损: %v", err)
-	}
-	if rec.Name != "既有模板" || rec.EditorState != nil {
-		st2.Close()
-		t.Fatalf("既有行应保留且 editor_state 为 NULL(空快照): %+v", rec)
-	}
-	if err := st2.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	// 重复启动:迁移幂等,不报错不重复补列
-	st3, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("重复启动: %v", err)
-	}
-	defer st3.Close()
-	if rec, err := st3.GetTemplate(context.Background(), 1); err != nil || rec.Name != "既有模板" {
-		t.Fatalf("重复启动后既有行应原样在: %+v %v", rec, err)
-	}
-}
 
 // TestGetTemplate_EditorStateNullDefault 从未保存工程数据的模板 editor_state 为
 // NULL,响应序列化为 "editorState":null(全默认态,spec §4)
@@ -478,7 +445,7 @@ func TestGetTemplate_EditorStateNullDefault(t *testing.T) {
 }
 
 // TestUpdateTemplateEditorState_LWW 写分道整列替换:载荷原样字节存取,后写覆盖
-// 先写;name/canvases/flow_chain/data_source_id/created_at/updated_at 一概不动
+// 先写;name/pages/data_source_id/created_at/updated_at 一概不动
 // (拖参考线不污染「最近编辑」排序,spec §4)
 func TestUpdateTemplateEditorState_LWW(t *testing.T) {
 	st := openTestStore(t)
@@ -511,8 +478,8 @@ func TestUpdateTemplateEditorState_LWW(t *testing.T) {
 	if afterA.Name != before.Name || afterA.CreatedAt != before.CreatedAt || afterA.UpdatedAt != before.UpdatedAt {
 		t.Fatalf("状态写入不得触碰 name/时间戳: %+v vs %+v", afterA, before)
 	}
-	if len(afterA.Canvases) != len(before.Canvases) || string(afterA.FlowChain) != string(before.FlowChain) || afterA.DataSourceID == nil || *afterA.DataSourceID != dsID {
-		t.Fatalf("状态写入不得触碰 canvases/flowChain/dataSourceId: %+v vs %+v", afterA, before)
+	if len(afterA.Pages) != len(before.Pages) || string(afterA.Pages[0].Graph) != string(before.Pages[0].Graph) || afterA.DataSourceID == nil || *afterA.DataSourceID != dsID {
+		t.Fatalf("状态写入不得触碰 pages/dataSourceId: %+v vs %+v", afterA, before)
 	}
 
 	// LWW:后写整列覆盖先写
@@ -533,8 +500,7 @@ func TestUpdateTemplateEditorState_LWW(t *testing.T) {
 }
 
 // TestUpdateTemplateEditorState_EmptyIsNULL 空 RawMessage 归 SQL NULL(nil =
-// 从未保存 = 全默认态);null 字面量的归一在 handler 层(normalizeNullJSON,
-// 与 flowChain 同款)
+// 从未保存 = 全默认态);null 字面量的归一在 handler 层(normalizeNullJSON)
 func TestUpdateTemplateEditorState_EmptyIsNULL(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -564,8 +530,8 @@ func TestUpdateTemplateEditorState_NotFound(t *testing.T) {
 	}
 }
 
-// TestUpdateTemplateContent_PreservesEditorState 内容保存只动 name/canvases/
-// flow_chain 与 updatedAt,不冲掉 editor_state(写分道互不越界,spec §4)
+// TestUpdateTemplateContent_PreservesEditorState 内容保存只动 name/pages 与
+// updatedAt,不冲掉 editor_state(写分道互不越界,spec §4)
 func TestUpdateTemplateContent_PreservesEditorState(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
@@ -578,8 +544,8 @@ func TestUpdateTemplateContent_PreservesEditorState(t *testing.T) {
 	}
 
 	if err := st.UpdateTemplateContent(ctx, 1, TemplateContent{
-		Name:     "改名后的模板",
-		Canvases: []CanvasEntry{{Name: "新帧", Graph: json.RawMessage(`{"canvas":{"width":100,"height":100},"layers":[]}`)}},
+		Name:  "改名后的模板",
+		Pages: []pages.Page{seedPage("pg_new", "新页", `{"canvas":{"width":100,"height":100},"layers":[]}`, "")},
 	}); err != nil {
 		t.Fatalf("更新内容: %v", err)
 	}
@@ -587,7 +553,7 @@ func TestUpdateTemplateContent_PreservesEditorState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("回读: %v", err)
 	}
-	if rec.Name != "改名后的模板" || len(rec.Canvases) != 1 {
+	if rec.Name != "改名后的模板" || len(rec.Pages) != 1 {
 		t.Fatalf("内容应整存替换: %+v", rec)
 	}
 	if string(rec.EditorState) != string(snapshot) {
@@ -893,7 +859,7 @@ func TestListRenderRecords_OrderLimitIsolation(t *testing.T) {
 		t.Fatalf("造 v2 渲染记录: %v", err)
 	}
 	// draft 行回填 images(其余 stub 空数组),断言 images 原样透出
-	draftImages := []RenderImage{{Frame: 0, Name: "主页", Path: "renders/" + fmt.Sprintf("%d", rDraft.ID) + "/1.png"}}
+	draftImages := []RenderImage{{Frame: 0, Name: "主页", Path: "renders/" + strconv.FormatInt(rDraft.ID, 10) + "/1.png"}}
 	if err := st.UpdateRenderImages(ctx, rDraft.ID, draftImages); err != nil {
 		t.Fatalf("回填 draft images: %v", err)
 	}

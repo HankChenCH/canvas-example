@@ -32,8 +32,8 @@ type Page struct {
 }
 
 // Error 编译失败:Code 为稳定错误码(程序判定依据,单源 internal/codes),
-// Message 中文可读(不参与判定)。形状与 preflight.Error 同形,调用点按既有
-// 预检分流写回(writeError(w, status, verr.Code, verr.Message))。
+// Message 中文可读(不参与判定)。调用点(HTTP 写端点/发布守门/渲染管线)
+// 按 Code 上信封分流,Message 仅承载定位上下文。
 type Error struct {
 	Code    string
 	Message string
@@ -141,7 +141,50 @@ func Compile(pages []Page) ([]json.RawMessage, json.RawMessage, *Error) {
 	return graphs, chainRaw, nil
 }
 
-// toCodeError go-canvas sentinel → 稳定 code(镜像 preflight.toCodeError,
+// DecodeProducts 编译产物 → 引擎管线输入(帧序列 + 流链节点):渲染管线消费
+// Compile 产物续跑时的机械解码段(页 id/name 已弃,不再回传)。frames 逐帧
+// json.Unmarshal + canvas.FromGraph;chainRaw 为 Compile 的空链缺省形态(nil)
+// 即回空链。同批 pages 已被 Compile 裁决过形状与语义,此处失败属防御性路径
+// (存储态被绕过写端点直改),code 分流与 Compile 同一实现(单一 toCodeError)。
+func DecodeProducts(graphs []json.RawMessage, chainRaw json.RawMessage) ([]*canvas.Canvas, []paginate.FlowChainNode, *Error) {
+	frames := make([]*canvas.Canvas, 0, len(graphs))
+	for i, raw := range graphs {
+		var wire canvas.Graph
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return nil, nil, &Error{codes.InvalidJSON, fmt.Sprintf("第 %d 帧的 graph 不是合法 wire 形态: %v", i, err)}
+		}
+		c, err := canvas.FromGraph(wire)
+		if err != nil {
+			return nil, nil, toCodeError(err, fmt.Sprintf("第 %d 帧解码失败", i))
+		}
+		frames = append(frames, c)
+	}
+	if len(bytes.TrimSpace(chainRaw)) == 0 {
+		return frames, nil, nil // 空链缺省形态(nil) = 纯文档管线
+	}
+	var chain []paginate.FlowChainNode
+	if err := json.Unmarshal(chainRaw, &chain); err != nil {
+		return nil, nil, &Error{codes.InvalidJSON, fmt.Sprintf("流链须为节点对象数组: %v", err)}
+	}
+	return frames, chain, nil
+}
+
+// PageName 页显示名解码:缺席/null/非字符串归空串——编译期已把非字符串 name
+// 打回(page_invalid),此处只兜底防御性路径;缺省名「第 N 页」由前端渲染,
+// 服务端不补。渲染产物 images[].name 消费。
+func PageName(p Page) string {
+	trim := bytes.TrimSpace(p.Name)
+	if len(trim) == 0 || string(trim) == "null" {
+		return ""
+	}
+	var name string
+	if err := json.Unmarshal(trim, &name); err != nil {
+		return ""
+	}
+	return name
+}
+
+// toCodeError go-canvas sentinel → 稳定 code(沿用既有预检管线的 sentinel 对号表,
 // 保证 graph 解码与流链校验的 code 分流与既有管线逐一相同;无稳定码的解码错
 // 兜底 invalid_json——graph wire 形态错的兜底位)。
 func toCodeError(err error, context string) *Error {

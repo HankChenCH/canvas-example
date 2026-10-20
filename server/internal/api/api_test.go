@@ -118,20 +118,34 @@ func TestGetTemplate_Seeded(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d, 期望 200", code)
 	}
-	canvases, ok := body["canvases"].([]any)
-	if !ok || len(canvases) != 2 {
-		t.Fatalf("canvases 应长 2(spec §5.1 两帧文档): %v", body["canvases"])
+	// 旧形状无残留:canvases/flowChain 键不得再现(spec:API 无双轨)
+	for _, legacy := range []string{"canvases", "flowChain"} {
+		if _, has := body[legacy]; has {
+			t.Fatalf("记录不得再携带旧形状键 %q: %v", legacy, body)
+		}
 	}
-	names := []string{}
-	for _, c := range canvases {
-		names = append(names, c.(map[string]any)["name"].(string))
+	pages, ok := body["pages"].([]any)
+	if !ok || len(pages) != 2 {
+		t.Fatalf("pages 应长 2(两页文档): %v", body["pages"])
 	}
-	if names[0] != "主页" || names[1] != "续页" {
-		t.Fatalf("帧名应为主页/续页: %v", names)
-	}
-	chain, ok := body["flowChain"].([]any)
-	if !ok || len(chain) != 2 {
-		t.Fatalf("flowChain 应为两节点: %v", body["flowChain"])
+	for i, want := range []struct{ name, flowMode string }{{"主页", "fixed"}, {"续页", "paged"}} {
+		p, ok := pages[i].(map[string]any)
+		if !ok {
+			t.Fatalf("pages[%d] 应为页对象: %v", i, pages[i])
+		}
+		if p["name"] != want.name {
+			t.Fatalf("页 %d 名应为 %q: %v", i, want.name, p["name"])
+		}
+		if id, _ := p["id"].(string); id == "" {
+			t.Fatalf("页 %d id 应为非空字符串(页 id 落 fixture): %v", i, p["id"])
+		}
+		if p["graph"] == nil {
+			t.Fatalf("页 %d 应携带 graph: %v", i, p)
+		}
+		flow, ok := p["flow"].(map[string]any)
+		if !ok || flow["mode"] != want.flowMode {
+			t.Fatalf("页 %d flow 应为 %s: %v", i, want.flowMode, p["flow"])
+		}
 	}
 	// 种子模板绑定种子数据源实体(spec §5.2)
 	dsID, ok := body["dataSourceId"].(float64)

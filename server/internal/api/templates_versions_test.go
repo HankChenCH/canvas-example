@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"example/server/internal/pages"
 	"example/server/internal/seed"
 	"example/server/internal/store"
 )
@@ -112,10 +113,10 @@ func TestPublishAndListVersions_ListShape(t *testing.T) {
 	if code, body := publish(t, h, fmt.Sprintf("%d", seedID)); code != http.StatusCreated {
 		t.Fatalf("首发 = %d (%v)", code, body)
 	}
-	// 改 canvases 后再发 v2(快照 = canvases+flow_chain,只改 name 会被 duplicate 吸收)
+	// 改 pages 后再发 v2(快照 = pages 列文本,只改 name 会被 duplicate 吸收)
 	changed := mustJSONFile(t, map[string]any{
-		"name":     "结业证书 · 批量打印页",
-		"canvases": []any{map[string]any{"name": "主页改", "graph": minimalGraph()}},
+		"name":  "结业证书 · 批量打印页",
+		"pages": []any{minimalPage("pg_changed", "主页改")},
 	})
 	if code, body := doRequest(t, h, http.MethodPut, base, "application/json", changed); code != http.StatusOK {
 		t.Fatalf("改草稿 = %d (%v)", code, body)
@@ -150,16 +151,18 @@ func TestPublishAndListVersions_ListShape(t *testing.T) {
 	}
 }
 
-// TestPublishTemplate_Preflight422 发布守门:草稿过不了 preflight → 422
+// TestPublishTemplate_Preflight422 发布守门:草稿过不了编译预检 → 422
 // invalid_graph 且不产生版本行(spec §3:渲染默认踩最新已发布,必渲染失败的
-// 版本不得入榜)。草稿坏法经 store 直写绕过保存预检(保存仍零额外校验面)
+// 版本不得入榜;守门码维持 422 invalid_graph 不透传 verr.Code——防御性路径,
+// pages 形状错正常到不了守门,02 票 Comments 记决策)。草稿坏法经 store 直写
+// 绕过保存预检(保存仍零额外校验面)
 func TestPublishTemplate_Preflight422(t *testing.T) {
 	h, st, seedID := newVersioningServer(t)
 
 	broken := store.TemplateContent{
 		Name: "结业证书 · 批量打印页",
-		Canvases: []store.CanvasEntry{
-			{Name: "坏帧", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}`)},
+		Pages: []pages.Page{
+			{ID: json.RawMessage(`"pg_bad"`), Name: json.RawMessage(`"坏页"`), Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}`)},
 		},
 	}
 	if err := st.UpdateTemplateContent(t.Context(), seedID, broken); err != nil {
@@ -174,7 +177,7 @@ func TestPublishTemplate_Preflight422(t *testing.T) {
 		t.Fatalf("code = %s, 期望 invalid_graph", got)
 	}
 	if msg, _ := body["error"].(map[string]any)["message"].(string); msg == "" {
-		t.Fatalf("422 应携带 preflight 中文消息: %v", body)
+		t.Fatalf("422 应携带编译预检中文消息: %v", body)
 	}
 
 	// 不产生版本行:GET versions 仍为空数组
@@ -188,7 +191,7 @@ func TestPublishTemplate_Preflight422(t *testing.T) {
 // TestPublishTemplate_GateBeforeDuplicate 守门先于 duplicate 判定(评审修复 F6
 // 钉死):回填 v1 零校验——坏图草稿经 BackfillTemplateVersionsV1 原样固化为 v1 后,
 // 重发同内容字节面必命中 duplicate 判定(草稿列与最新版本行文本相等),但
-// preflight 守门在前 → 422 invalid_graph,不产版本行、不 duplicate。发布是主动
+// 编译守门在前 → 422 invalid_graph,不产版本行、不 duplicate。发布是主动
 // 确认,坏内容不得借幂等通道蒙混(修复路径 = 编辑草稿后再发布)
 func TestPublishTemplate_GateBeforeDuplicate(t *testing.T) {
 	h, st, seedID := newVersioningServer(t)
@@ -197,8 +200,8 @@ func TestPublishTemplate_GateBeforeDuplicate(t *testing.T) {
 	// 回填把同一坏内容零校验固化为 v1
 	broken := store.TemplateContent{
 		Name: "结业证书 · 批量打印页",
-		Canvases: []store.CanvasEntry{
-			{Name: "坏帧", Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}`)},
+		Pages: []pages.Page{
+			{ID: json.RawMessage(`"pg_bad"`), Name: json.RawMessage(`"坏页"`), Graph: json.RawMessage(`{"canvas":{"width":794,"height":1123},"layers":[{"type":"GhostLayer","priority":0}]}`)},
 		},
 	}
 	if err := st.UpdateTemplateContent(t.Context(), seedID, broken); err != nil {
@@ -240,7 +243,7 @@ func TestPublishTemplate_NotFound404(t *testing.T) {
 	}
 }
 
-// TestGetTemplateVersion_Endpoint 单版本全量 {version,canvases,flowChain,createdAt};
+// TestGetTemplateVersion_Endpoint 单版本全量 {version,pages,createdAt};
 // 版本不存在/路径非整数/对无版本模板指定 → 404 version_not_found;列表寻址失败
 // (模板不存在)→ 404 template_not_found
 func TestGetTemplateVersion_Endpoint(t *testing.T) {
@@ -258,23 +261,20 @@ func TestGetTemplateVersion_Endpoint(t *testing.T) {
 	if body["version"].(float64) != 1 {
 		t.Fatalf("version 不符: %v", body["version"])
 	}
-	canvases, ok := body["canvases"].([]any)
-	if !ok || len(canvases) != 2 {
-		t.Fatalf("canvases 应与 TemplateRecord.Canvases 同形(两帧): %v", body["canvases"])
+	pages, ok := body["pages"].([]any)
+	if !ok || len(pages) != 2 {
+		t.Fatalf("pages 应与 TemplateRecord.Pages 同形(两页): %v", body["pages"])
 	}
-	first := canvases[0].(map[string]any)
-	if first["name"] != "主页" || first["graph"] == nil {
-		t.Fatalf("canvases[0] 应为 {name,graph}: %v", first)
-	}
-	if _, ok := body["flowChain"].([]any); !ok {
-		t.Fatalf("flowChain 应原样透传: %v", body["flowChain"])
+	first := pages[0].(map[string]any)
+	if first["name"] != "主页" || first["id"] == "" || first["graph"] == nil {
+		t.Fatalf("pages[0] 应为 {id,name,graph,...}(页 id 随 pages 进快照): %v", first)
 	}
 	if _, ok := body["createdAt"].(string); !ok {
 		t.Fatalf("createdAt 应为字符串: %v", body["createdAt"])
 	}
 	for key := range body {
 		switch key {
-		case "version", "canvases", "flowChain", "createdAt":
+		case "version", "pages", "createdAt":
 		default:
 			t.Fatalf("单版本全量不应含多余键 %q: %v", key, body)
 		}
@@ -292,8 +292,8 @@ func TestGetTemplateVersion_Endpoint(t *testing.T) {
 	}
 	// 对无版本模板指定 → 404 version_not_found(spec §4 同精神)
 	payload := mustJSONFile(t, map[string]any{
-		"name":     "未发布模板",
-		"canvases": []any{map[string]any{"name": "单页", "graph": minimalGraph()}},
+		"name":  "未发布模板",
+		"pages": []any{minimalPage("pg_unpub", "单页")},
 	})
 	code, body = doRequest(t, h, http.MethodPost, "/api/templates", "application/json", payload)
 	if code != http.StatusCreated {
@@ -312,8 +312,8 @@ func TestGetTemplateVersion_Endpoint(t *testing.T) {
 	}
 }
 
-// TestRevertTemplate_Endpoint 回滚:200 回全量模板记录(与 GET 同形),canvases/
-// flowChain 回到目标版本;updated_at 刷新;404 映射与坏 body 400
+// TestRevertTemplate_Endpoint 回滚:200 回全量模板记录(与 GET 同形),pages
+// 回到目标版本;updated_at 刷新;404 映射与坏 body 400
 func TestRevertTemplate_Endpoint(t *testing.T) {
 	h, _, seedID := newVersioningServer(t)
 	base := fmt.Sprintf("/api/templates/%d", seedID)
@@ -326,8 +326,8 @@ func TestRevertTemplate_Endpoint(t *testing.T) {
 
 	// 草稿重写 + 发 v2(版本史留痕)
 	rewritten := mustJSONFile(t, map[string]any{
-		"name":     "结业证书 · 批量打印页",
-		"canvases": []any{map[string]any{"name": "重写帧", "graph": minimalGraph()}},
+		"name":  "结业证书 · 批量打印页",
+		"pages": []any{minimalPage("pg_rw", "重写页")},
 	})
 	if code, body := doRequest(t, h, http.MethodPut, base, "application/json", rewritten); code != http.StatusOK {
 		t.Fatalf("重写草稿 = %d (%v)", code, body)
@@ -344,13 +344,10 @@ func TestRevertTemplate_Endpoint(t *testing.T) {
 	if body["id"].(float64) != float64(seedID) || body["name"] == nil || body["createdAt"] == nil {
 		t.Fatalf("revert 应回全量模板记录(与 GET 同形): %v", body)
 	}
-	reverted, _ := json.Marshal(body["canvases"])
-	v1Canvases, _ := json.Marshal(v1["canvases"])
-	if string(reverted) != string(v1Canvases) {
-		t.Fatalf("revert 后 canvases 应回到 v1:\n%s\nvs\n%s", reverted, v1Canvases)
-	}
-	if fmt.Sprint(body["flowChain"]) != fmt.Sprint(v1["flowChain"]) {
-		t.Fatalf("revert 后 flowChain 应回到 v1: %v vs %v", body["flowChain"], v1["flowChain"])
+	reverted, _ := json.Marshal(body["pages"])
+	v1Pages, _ := json.Marshal(v1["pages"])
+	if string(reverted) != string(v1Pages) {
+		t.Fatalf("revert 后 pages 应回到 v1:\n%s\nvs\n%s", reverted, v1Pages)
 	}
 	// (updated_at 刷新的确定性断言在 store 层:insertTemplate 固定旧时间戳,
 	// RFC3339 秒级解析度下 API 层无法免撞车)
@@ -360,9 +357,9 @@ func TestRevertTemplate_Endpoint(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET = %d", code)
 	}
-	rec2Canvases, _ := json.Marshal(rec2["canvases"])
-	if string(rec2Canvases) != string(v1Canvases) {
-		t.Fatalf("revert 后 GET 的 canvases 应与目标版本一致: %s", rec2Canvases)
+	rec2Pages, _ := json.Marshal(rec2["pages"])
+	if string(rec2Pages) != string(v1Pages) {
+		t.Fatalf("revert 后 GET 的 pages 应与目标版本一致: %s", rec2Pages)
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, base+"/versions", nil))
