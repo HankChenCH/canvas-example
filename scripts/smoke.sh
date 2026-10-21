@@ -3,10 +3,14 @@
 # --build)或 dev 轨(cd example/server && go run .)任一起服务后运行。
 # 用法: scripts/smoke.sh [BASE],默认 http://localhost:8080(compose 轨验收口径)。
 # 断言 1–3(11 票)读路径(组 3 另含图片层适配断言:contain(image-layer-fit 06 票,
-# ADR 0023)+ fill/tile 四档同画布对照(image-fit-fill-tile 06 票,ADR 0024));
+# ADR 0023)+ fill/tile 四档同画布对照(image-fit-fill-tile 06 票,ADR 0024)
+# + 圆形照片框 wire 腿:照片格 spec.clip=circle 条件写键殿后 fit + 四边 3px 环带
+# 声明(image-clip-shape 06 票,ADR 0026));
 # 4–7、10、11(12 票)写端点/上传/上限;6 段含数据源
 # 实体 CRUD + 绑定通道(23 票);8–9(13 票)渲染管线 + keep-all + .cache 生效 + PDF 产物轨
-# (PDF 集成共识:format=pdf 单文档轨轻断言);
+# (PDF 集成共识:format=pdf 单文档轨轻断言;模板自带圆形照片框后,PDF 渲染隐式
+# 走矢量 ClipEllipse 圆框路径,点位级 parity 归 go-canvas 包 CI)+ 批量产物像素
+# 采样腿(主页产物圆框 10 点采样,双轨圆形腿之批量产物侧);
 # 12(卡片操作修订 + 版本化)DELETE /api/templates/{id}:渲染前先 publish(缺省
 # 渲染语义 = 最新已发布,未发布 409,spec §4);204 + 渲染记录级联清 + 版本行
 # 级联清 + 产物文件保留;
@@ -83,6 +87,61 @@ assert (w, h) == (int(sys.argv[2]), int(sys.argv[3])), \
 PYEOF
 }
 
+# assert_png_pixels <file> <label> <points-json>:渲染产物逐点像素采样断言——
+# 点 = [x, y, "#rrggbb"](期望色 ±2/通道)。纯 stdlib 解码(zlib + 四种行滤波
+# 逆变换),服务端产物为 Go png.Encode(NRGBA 全不透明 → 8bit RGB)。期望色口
+# 径:采样点须落在无抗锯齿的实色区(渲染端圆掩码/描边为二值覆盖无抗锯齿)与
+# 水印 tile 透明区(锚点由组 3 wire 断言钉死),期望色即基色、无混色无水印叠色
+assert_png_pixels() {
+	python3 - "$1" "$2" "$3" <<'PYEOF'
+import json, struct, sys, zlib
+path, label, points = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+data = open(path, "rb").read()
+assert data[:8] == b"\x89PNG\r\n\x1a\n", f"{label}: 不是 PNG"
+pos, idat, w, h, ct = 8, b"", 0, 0, 0
+while pos < len(data):
+    ln = struct.unpack(">I", data[pos:pos+4])[0]
+    typ = data[pos+4:pos+8]
+    if typ == b"IHDR":
+        w, h, depth, ct, _, _, il = struct.unpack(">IIBBBBB", data[pos+8:pos+8+ln])
+        assert depth == 8 and il == 0 and ct in (2, 6), \
+            f"{label}: 不支持的 PNG 形态 depth={depth} ct={ct} interlace={il}"
+    elif typ == b"IDAT":
+        idat += data[pos+8:pos+8+ln]
+    pos += 12 + ln
+nch = 3 if ct == 2 else 4
+raw = zlib.decompress(idat)
+stride = w * nch
+rows = []
+prev = bytearray(stride)
+p = 0
+for _ in range(h):
+    f = raw[p]; p += 1
+    line = bytearray(raw[p:p+stride]); p += stride
+    for i in range(stride):
+        a = line[i-nch] if i >= nch else 0
+        b = prev[i]
+        c = prev[i-nch] if i >= nch else 0
+        if f == 1: line[i] = (line[i] + a) & 255
+        elif f == 2: line[i] = (line[i] + b) & 255
+        elif f == 3: line[i] = (line[i] + (a + b) // 2) & 255
+        elif f == 4:
+            pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+            pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+            line[i] = (line[i] + pr) & 255
+    rows.append(line)
+    prev = line
+for x, y, want in points:
+    want_rgb = tuple(int(want[i:i+2], 16) for i in (1, 3, 5))
+    row = rows[y]
+    got = tuple(row[x*nch:x*nch+3])
+    assert len(got) == 3, f"{label}: 像素({x},{y}) 取样越界(解码器缺陷)"
+    assert all(abs(g - e) <= 2 for g, e in zip(got, want_rgb)), \
+        f"{label}: 像素({x},{y}) 期望 {want}±2, 实得 rgb{got}"
+print(f"   {label}: {len(points)} 点像素采样断言通过")
+PYEOF
+}
+
 echo "==1/16 GET /api/health =="
 get /api/health "$TMP/health.json"
 assert_json "$TMP/health.json" 'd.get("status") == "ok"'
@@ -128,7 +187,7 @@ assert_json "$TMP/ds.json" 'd["data"]["certificates"] and len(d["data"]["certifi
 # 图片层适配 contain(ADR 0023,本期 06 票):照片格(表格行内 160×400 表达式图片
 # {{row.photo}})spec.fit=contain,两页同构;徽标位(72×72)保持 cover 缺省不落键,
 # 作现行裁切对照;dataset 行 1 照片换 320×160 横幅比例——错形进盒不再裁切、
-# 空隙露盒背景灰(渲染目验属人工轨,wire 契约面在此钉死)
+# 圆内 letterbox 空隙露层背景灰(渲染像素面由组 8 采样腿钉,此处 wire 契约面)
 assert_json "$TMP/template.json" 'all(
 	(cells := next(l for l in p["graph"]["layers"] if l["name"] == "证书卡片区")["template"]["cells"])
 	and cells[0]["content"]["data"]["expression"] == "{{row.photo}}"
@@ -137,6 +196,25 @@ assert_json "$TMP/template.json" 'all(
 )'
 assert_json "$TMP/template.json" '"fit" not in next(l for l in d["pages"][0]["graph"]["layers"] if l["name"] == "机构徽标")["spec"]'
 assert_json "$TMP/ds.json" 'd["data"]["certificates"][0]["photo"] == "assets/u/banner-photo.png"'
+# 圆形照片框 wire 腿(编辑器消费的模板面,image-clip-shape 06 票,ADR 0026):
+# 两页照片格 content 图片层 spec.clip=circle(真圆形学员头像位,fixture 假圆
+# 退役)+ 四边 3px 同色环带声明(渲染端按 min 宽/top 首色解析描边参数);clip
+# 条件写键、键序殿后 spec 末位 fit 之后(json.load 保序,钉响应 marshal 键序);
+# 徽标层不落 clip 键(矩形缺省对照——徽标层 wire 零变化,适用域仅此一层)
+assert_json "$TMP/template.json" 'all(
+	(cells := next(l for l in p["graph"]["layers"] if l["name"] == "证书卡片区")["template"]["cells"])
+	and cells[0]["content"]["spec"].get("clip") == "circle"
+	and cells[0]["content"]["spec"]["shape"]["border"] == {
+		"top": {"width": 3, "color": "#1f4e79"}, "right": {"width": 3, "color": "#1f4e79"},
+		"bottom": {"width": 3, "color": "#1f4e79"}, "left": {"width": 3, "color": "#1f4e79"}}
+	for p in d["pages"]
+)'
+assert_json "$TMP/template.json" 'all(
+	(spec := next(l for l in p["graph"]["layers"] if l["name"] == "证书卡片区")["template"]["cells"][0]["content"]["spec"])
+	and list(spec)[-2:] == ["fit", "clip"]
+	for p in d["pages"]
+)'
+assert_json "$TMP/template.json" '"clip" not in next(l for l in d["pages"][0]["graph"]["layers"] if l["name"] == "机构徽标")["spec"]'
 get /assets/u/banner-photo.png "$TMP/banner.png"
 assert_png_size "$TMP/banner.png" 320 160 "横幅照片(与照片格 160x400 错形)"
 # 图片层适配四档同画布对照(ADR 0024,本期 06 票):主页 cover(徽标缺省不落
@@ -309,6 +387,22 @@ for u in $RENDER1_URLS; do
 	[ "$_ct" = "image/png" ] || die "GET $u Content-Type = $_ct, 期望 image/png"
 	[ -s "$TMP/render-png.bin" ] || die "GET $u 响应体为空"
 done
+
+# 圆形照片框像素采样腿(双轨圆形腿之批量产物侧,image-clip-shape 06 票,ADR
+# 0026):主页产物上照片格圆框 10 点采样。几何:照片格 160×400 非方盒 @ (40,190),
+# 内切正圆心 (120,390) 半径 80——环带 = 外缘内缩 3px 描边带(半径 77..80,基点
+# 处像素中心全覆盖为纯描边色);行 1 横幅 contain 缩 160×80 进圆,圆心露太阳色;
+# 行 2 方形人像 contain 恰满内切圆外接方,圆心露头部色;圆内 letterbox(照片带
+# 上方)露层背景 #e8ecef;圆外盒内三点露格子背景 #f3f5f7——圆外不落墨 + 正圆
+# 判别(若误画满盒椭圆,(120,220) 必为层背景非格子背景)。fixture 假圆退役,
+# 圆由渲染端原生绘出
+get "/renders/$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["id"])' "$TMP/render1.json")/1.png" "$TMP/render-page1.png"
+assert_png_pixels "$TMP/render-page1.png" "圆形照片框(主页批量产物)" '[
+	[120, 311, "#1f4e79"], [120, 468, "#1f4e79"],
+	[41, 390, "#1f4e79"], [198, 390, "#1f4e79"],
+	[120, 390, "#e8a33d"], [120, 790, "#2e6f6c"], [120, 340, "#e8ecef"],
+	[50, 205, "#f3f5f7"], [120, 220, "#f3f5f7"], [190, 575, "#f3f5f7"]
+]'
 
 # keep-all 不清理(spec §2.4 #7):PUT 触碰模板(pages 原样回写——写侧 marshal
 # 归一,字节不变,版本化轨 duplicate 判定依赖此性质)后再渲染,

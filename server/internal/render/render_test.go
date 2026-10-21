@@ -211,7 +211,9 @@ func TestRun_LeadingSlashStaticAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 80, 200)
+	// cover 取景换算(源窗居中裁):320×320 进 160×400 盒 scale=1.25,源窗
+	// 128×320、x0=(320-128)/2=96 → render(80,200) → src(96+64, 200/1.25)=(160,160)
+	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 160, 160)
 }
 
 // TestRun_LeadingSlashExpressionAsset 表达式形态:dataset 行内上传 url(前导
@@ -242,7 +244,9 @@ func TestRun_LeadingSlashExpressionAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 80, 200)
+	// cover 取景换算(源窗居中裁):320×320 进 160×400 盒 scale=1.25,源窗
+	// 128×320、x0=(320-128)/2=96 → render(80,200) → src(96+64, 200/1.25)=(160,160)
+	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 160, 160)
 }
 
 // TestRun_LeadingSlashBackgroundAsset 画布背景图前导斜杠引用归一(ADR 0022 迁移,
@@ -267,7 +271,9 @@ func TestRun_LeadingSlashBackgroundAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 80, 200)
+	// cover 取景换算(源窗居中裁):320×320 进 160×400 盒 scale=1.25,源窗
+	// 128×320、x0=(320-128)/2=96 → render(80,200) → src(96+64, 200/1.25)=(160,160)
+	assertPixelMatches(t, pages[0].PNG, 80, 200, ref, 160, 160)
 }
 
 // TestRun_LeadingSlashFontPath 字体路径同归一(spec §2.2 双吃,ToLocalPath
@@ -377,7 +383,8 @@ func TestNormalizePages_BackgroundRemoteUntouched(t *testing.T) {
 
 // assertPixelMatches 渲染产物 (x, y) 像素与参考图 (rx, ry) 像素一致——渲染
 // 成功之外的实质断言(终图包含该图,§6.3 第 4 项后半句);两图同为不透明
-// 8bit 色,cover 同尺寸恒等,像素应精确相等
+// 8bit 色。采样点钉在实色区内部(插值核全域同色)时像素精确相等——cover
+// 非 1:1 时由调用方按取景几何换算参考坐标(前导斜杠三测试的注释含换算式)
 func assertPixelMatches(t *testing.T, png []byte, x, y int, ref []byte, rx, ry int) {
 	t.Helper()
 	got, _, err := image.Decode(bytes.NewReader(png))
