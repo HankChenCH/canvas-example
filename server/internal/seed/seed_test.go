@@ -182,6 +182,108 @@ func TestLoadRealSeed_FourFitShowcase(t *testing.T) {
 	}
 }
 
+// TestLoadRealSeed_CirclePhotoFrame 圆形照片框 showcase(image-clip-shape 06 票,
+// ADR 0026):两页照片格 content 图片层 clip=circle——真实圆形学员头像位,非方盒
+// (160×400)内切正圆 + 环带描边(四边 3px 同色,渲染端按 min 宽/top 首色取参);
+// clip 条件写键殿后 spec 末位 fit 之后。徽标层不落 clip 键(矩形缺省对照)。
+// fixture 假圆随之退役:学员照换 320×320 方形人像,行 1 横幅 320×160 保留错形
+// 对照(contain 进圆内 letterbox 露层背景)
+func TestLoadRealSeed_CirclePhotoFrame(t *testing.T) {
+	content, err := Load("../../seed")
+	if err != nil {
+		t.Fatalf("Load 真实 seed: %v", err)
+	}
+	for i, page := range content.Template.Pages {
+		var graph struct {
+			Layers []map[string]any `json:"layers"`
+		}
+		if err := json.Unmarshal(page.Graph, &graph); err != nil {
+			t.Fatal(err)
+		}
+		var table map[string]any
+		for _, l := range graph.Layers {
+			if l["name"] == "证书卡片区" {
+				table = l
+				break
+			}
+		}
+		if table == nil {
+			t.Fatalf("页 %d 缺证书卡片区", i)
+		}
+		cell := table["template"].(map[string]any)["cells"].([]any)[0].(map[string]any)
+		spec := cell["content"].(map[string]any)["spec"].(map[string]any)
+
+		// clip 条件写键:圆形档落键值 circle
+		if got := spec["clip"]; got != "circle" {
+			t.Fatalf("页 %d 照片格 clip = %v, 期望 circle", i, got)
+		}
+		if got := spec["fit"]; got != "contain" {
+			t.Fatalf("页 %d 照片格 fit = %v, 期望 contain(先绘后裁,两声明正交)", i, got)
+		}
+		// 键序殿后:compact 后 fit 与 clip 相邻(shape/align/position/fit/clip)
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, page.Graph); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(compact.String(), `"fit":"contain","clip":"circle"`) {
+			t.Fatalf("页 %d 照片格 clip 键未殿后 fit 之后: %s", i, compact.String()[:min(200, compact.Len())])
+		}
+		// 环带描边:四边 3px 同色(渲染端解析 min 宽/top 首色)
+		border := spec["shape"].(map[string]any)["border"].(map[string]any)
+		for _, side := range []string{"top", "right", "bottom", "left"} {
+			b := border[side].(map[string]any)
+			if b["width"] != float64(3) || b["color"] != "#1f4e79" {
+				t.Fatalf("页 %d 照片格 border.%s = %v, 期望 {3,#1f4e79}(圆周环带)", i, side, b)
+			}
+		}
+		// 完整圆形框其余两步的声明:层背景填圆、对齐 center/center 定内切圆心
+		if got := spec["shape"].(map[string]any)["backgroundColor"]; got != "#e8ecef" {
+			t.Fatalf("页 %d 照片格层背景 = %v, 期望 #e8ecef(圆内 letterbox 底色)", i, got)
+		}
+		align := spec["align"].(map[string]any)
+		if align["horizontal"] != "center" || align["vertical"] != "center" {
+			t.Fatalf("页 %d 照片格对齐 = %v, 期望 center/center(内切圆落位)", i, align)
+		}
+	}
+
+	// 徽标层不落 clip 键:矩形缺省对照(clip 条件写键;适用域 = 徽标本层)
+	var main struct {
+		Layers []map[string]any `json:"layers"`
+	}
+	if err := json.Unmarshal(content.Template.Pages[0].Graph, &main); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range main.Layers {
+		if l["name"] == "机构徽标" {
+			if _, has := l["spec"].(map[string]any)["clip"]; has {
+				t.Fatal("徽标层不落 clip 键(矩形缺省,条件写键)")
+			}
+		}
+	}
+
+	// fixture 假圆退役:学员照方形人像 320×320(×5),行 1 横幅 320×160
+	for name, want := range map[string][2]int{
+		"student-1.png":    {320, 320},
+		"student-2.png":    {320, 320},
+		"student-3.png":    {320, 320},
+		"student-4.png":    {320, 320},
+		"student-5.png":    {320, 320},
+		"banner-photo.png": {320, 160},
+	} {
+		b, err := os.ReadFile(filepath.Join("../../seed/assets/u", name))
+		if err != nil {
+			t.Fatalf("照片 fixture 缺失 %s: %v", name, err)
+		}
+		cfg, err := png.DecodeConfig(bytes.NewReader(b))
+		if err != nil {
+			t.Fatalf("%s 不是合法 PNG: %v", name, err)
+		}
+		if cfg.Width != want[0] || cfg.Height != want[1] {
+			t.Fatalf("%s 内在尺寸 = %dx%d, 期望 %dx%d", name, cfg.Width, cfg.Height, want[0], want[1])
+		}
+	}
+}
+
 func TestLoad_MissingFileFails(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Load(dir); err == nil {

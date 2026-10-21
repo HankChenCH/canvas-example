@@ -12,10 +12,10 @@
         "typecheck": "vue-tsc --noEmit -p tsconfig.json"
     },
     "dependencies": {
-        "@hankchen/canvas": "^2.0.0",
-        "@hankchen/canvas-browser-renderer": "^2.0.0",
-        "@hankchen/canvas-editor": "^2.0.0",
-        "@hankchen/canvas-editor-vue": "^2.0.0",
+        "@hankchen/canvas": "^2.1.0",
+        "@hankchen/canvas-browser-renderer": "^2.1.0",
+        "@hankchen/canvas-editor": "^2.1.0",
+        "@hankchen/canvas-editor-vue": "^2.1.0",
         "driver.js": "^1.10.2",
         "vue": "^3.5.44",
         "vue-router": "^5.4.0"
@@ -32,7 +32,7 @@
     },
     "pnpm": {
         "overrides": {
-            "@hankchen/canvas-editor": "^2.0.0"
+            "@hankchen/canvas-editor": "^2.1.0"
         }
     }
 }

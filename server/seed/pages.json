@@ -413,10 +413,22 @@
                         "right": 0
                       },
                       "border": {
-                        "top": null,
-                        "bottom": null,
-                        "left": null,
-                        "right": null
+                        "top": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        },
+                        "bottom": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        },
+                        "left": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        },
+                        "right": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        }
                       },
                       "backgroundColor": "#e8ecef"
                     },
@@ -429,7 +441,8 @@
                       "y": 0,
                       "position": "top-left"
                     },
-                    "fit": "contain"
+                    "fit": "contain",
+                    "clip": "circle"
                   },
                   "data": {
                     "valueType": "ExpressionValue",
@@ -953,10 +966,22 @@
                         "right": 0
                       },
                       "border": {
-                        "top": null,
-                        "bottom": null,
-                        "left": null,
-                        "right": null
+                        "top": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        },
+                        "bottom": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        },
+                        "left": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        },
+                        "right": {
+                          "width": 3,
+                          "color": "#1f4e79"
+                        }
                       },
                       "backgroundColor": "#e8ecef"
                     },
@@ -969,7 +994,8 @@
                       "y": 0,
                       "position": "top-left"
                     },
-                    "fit": "contain"
+                    "fit": "contain",
+                    "clip": "circle"
                   },
                   "data": {
                     "valueType": "ExpressionValue",

@@ -1,9 +1,9 @@
-github.com/HankChenCH/go-canvas v1.6.0 h1:4vv6lxx76t/u1DG1MULI+zqgkhzgK5jCeKAcCV9Z3yI=
-github.com/HankChenCH/go-canvas v1.6.0/go.mod h1:mGvhfKWEgjm6cF6UMtRuBpFQpRLEVDMCUt0vrQwEIQ0=
-github.com/HankChenCH/go-canvas/image-renderer v1.1.0 h1:WA2JQeVrO6Sr7C/bNGXHUBjVUmyLvAkYGCuf5B/hkt8=
-github.com/HankChenCH/go-canvas/image-renderer v1.1.0/go.mod h1:E3gymZov5r/ri2iPcOem+9MiwlvKDykK+rgeuhYDxtA=
-github.com/HankChenCH/go-canvas/pdf-renderer v1.0.0 h1:NUJi4QvieR0ubgKdo7jXcIT6j11yWSPGryUtKvMosjE=
-github.com/HankChenCH/go-canvas/pdf-renderer v1.0.0/go.mod h1:O8PplrJeTUqN7VWGPEbx48oj/s396NLxIpbTjC3x9ZA=
+github.com/HankChenCH/go-canvas v1.7.0 h1:USH5WZBq6xvfOKdCscnK5/3PbPxWz43o6WjvGa/bPXw=
+github.com/HankChenCH/go-canvas v1.7.0/go.mod h1:mGvhfKWEgjm6cF6UMtRuBpFQpRLEVDMCUt0vrQwEIQ0=
+github.com/HankChenCH/go-canvas/image-renderer v1.2.0 h1:PcW1k0y2ZrKc2H2bVKZSY7OuLvtRwMT69rradTuMM8s=
+github.com/HankChenCH/go-canvas/image-renderer v1.2.0/go.mod h1:qecR9ZIM6NhukZ4P9jQYgkWfLbJIfNWwkrlg63U/pgU=
+github.com/HankChenCH/go-canvas/pdf-renderer v1.1.0 h1:GhvdnEb0qQzZSPA099w2Tv17jvMyjApNtVL3SN8pZlg=
+github.com/HankChenCH/go-canvas/pdf-renderer v1.1.0/go.mod h1:TLeucudBd+U+yIAg8bnOFmyuUoRnvPinchtSRgD47E0=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=

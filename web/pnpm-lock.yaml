@@ -5,24 +5,24 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@hankchen/canvas-editor': ^2.0.0
+  '@hankchen/canvas-editor': ^2.1.0
 
 importers:
 
   .:
     dependencies:
       '@hankchen/canvas':
-        specifier: ^2.0.0
-        version: 2.0.0
+        specifier: ^2.1.0
+        version: 2.1.0
       '@hankchen/canvas-browser-renderer':
-        specifier: ^2.0.0
-        version: 2.0.0
+        specifier: ^2.1.0
+        version: 2.1.0
       '@hankchen/canvas-editor':
-        specifier: ^2.0.0
-        version: 2.0.0
+        specifier: ^2.1.0
+        version: 2.1.0
       '@hankchen/canvas-editor-vue':
-        specifier: ^2.0.0
-        version: 2.0.0(vue@3.5.44(typescript@5.9.3))
+        specifier: ^2.1.0
+        version: 2.1.0(vue@3.5.44(typescript@5.9.3))
       driver.js:
         specifier: ^1.10.2
         version: 1.10.2
@@ -94,19 +94,19 @@ packages:
     resolution: {integrity: sha512-c+xgSWboV2pdwXP67BUWDVRHi2BO5Q3KwxyFVs7taVTY+fsK47/L51ZXQoV9rozHJDNHvJ4v4WEsI/IlxV2l2A==}
     engines: {node: ^22.18.0 || >=24.11.0}
 
-  '@hankchen/canvas-browser-renderer@2.0.0':
-    resolution: {integrity: sha512-NOBHkS1RaKg+K+2J4Oemn/NHT1U3ffXQUftAMDj3RVgl4MKtzZAuPjgMKC9MLf2g1KiriqfO7dAqUOOMg1GDzQ==}
+  '@hankchen/canvas-browser-renderer@2.1.0':
+    resolution: {integrity: sha512-i/zDkeZtvKbu96HcN54jgdgbA1bXi+n/EkVAUY3JDJ8JTzejWT2QtEruk48MxuETxPHgFyhZTL7mzjdAwpeIbw==}
 
-  '@hankchen/canvas-editor-vue@2.0.0':
-    resolution: {integrity: sha512-GvzHEbT46zUldFQxfyKoQns46Db9QghE+NzFy37vBRxcu5Fh/44vb1aCWJsmojESWTPh1qccysUTsyBJo2H/2Q==}
+  '@hankchen/canvas-editor-vue@2.1.0':
+    resolution: {integrity: sha512-V9Nd6gT2L7IalZwZvgFUzbiuQJvBGb25S78JU9WbE415pY0fRTcKV2T68KnA2HJT/pliljpdVVOeUA3w7e+ZeA==}
     peerDependencies:
       vue: ^3.5.0
 
-  '@hankchen/canvas-editor@2.0.0':
-    resolution: {integrity: sha512-k9RAzGska8SrUcNF0GX1Fz1hEkvs58jHXVjeKmL4pbE1xtcsoOaYUjLQSFl/aH4EM8WL353+9xN1odtb57s0sA==}
+  '@hankchen/canvas-editor@2.1.0':
+    resolution: {integrity: sha512-IoZmsSJPg03B4kyATTdK+MlQAQgXycF8bdvhLSCNvZuj/lFVOrTqAL2BX+9aZp2SJHfzIAkmYWjWf+KbwWnM6g==}
 
-  '@hankchen/canvas@2.0.0':
-    resolution: {integrity: sha512-Vgjjc7n78akiEaOVoPevDntT6zD5cMuFwgKsIKBW3j6usqvvJlOgyw1CVpZNoX41M1sGOTJEfmGzdX2VQm3a4g==}
+  '@hankchen/canvas@2.1.0':
+    resolution: {integrity: sha512-piA63g8NBl1MLPxoY9yZITTd8pIhWuDUqyQ3uTVdLuc/DRBmLRxqltWuWF1d4HAvuNW/VCo80OGShIL1DdZVqA==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -369,11 +369,6 @@ packages:
 
   '@volar/typescript@2.4.28':
     resolution: {integrity: sha512-Ja6yvWrbis2QtN4ClAKreeUZPVYMARDYZl9LMEv1iQ1QdepB6wn0jTRxA9MftYmYa4DQ4k/DaSZpFPUfxl8giw==}
-    peerDependencies:
-      typescript: '*'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
 
   '@vue-macros/common@3.1.4':
     resolution: {integrity: sha512-/5Fv+6DgIcM9ajY05ZmKBv+LMX1M9A0X+IUwDRVdt67ciw8OV9bvG2r34p3RiEadlsQybjhKPRKNXDC8Bp23cw==}
@@ -1087,24 +1082,24 @@ snapshots:
       '@babel/helper-string-parser': 8.0.6
       '@babel/helper-validator-identifier': 8.0.6
 
-  '@hankchen/canvas-browser-renderer@2.0.0':
+  '@hankchen/canvas-browser-renderer@2.1.0':
     dependencies:
-      '@hankchen/canvas': 2.0.0
+      '@hankchen/canvas': 2.1.0
       qrcode: 1.5.4
 
-  '@hankchen/canvas-editor-vue@2.0.0(vue@3.5.44(typescript@5.9.3))':
+  '@hankchen/canvas-editor-vue@2.1.0(vue@3.5.44(typescript@5.9.3))':
     dependencies:
-      '@hankchen/canvas-editor': 2.0.0
+      '@hankchen/canvas-editor': 2.1.0
       '@lucide/vue': 1.59.0(vue@3.5.44(typescript@5.9.3))
       vue: 3.5.44(typescript@5.9.3)
 
-  '@hankchen/canvas-editor@2.0.0':
+  '@hankchen/canvas-editor@2.1.0':
     dependencies:
-      '@hankchen/canvas': 2.0.0
-      '@hankchen/canvas-browser-renderer': 2.0.0
+      '@hankchen/canvas': 2.1.0
+      '@hankchen/canvas-browser-renderer': 2.1.0
       immer: 11.1.21
 
-  '@hankchen/canvas@2.0.0': {}
+  '@hankchen/canvas@2.1.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -1286,13 +1281,11 @@ snapshots:
 
   '@volar/source-map@2.4.28': {}
 
-  '@volar/typescript@2.4.28(typescript@5.9.3)':
+  '@volar/typescript@2.4.28':
     dependencies:
       '@volar/language-core': 2.4.28
       path-browserify: 1.0.1
       vscode-uri: 3.2.0
-    optionalDependencies:
-      typescript: 5.9.3
 
   '@vue-macros/common@3.1.4(vue@3.5.44(typescript@5.9.3))':
     dependencies:
@@ -1824,7 +1817,7 @@ snapshots:
 
   vue-tsc@3.3.13(typescript@5.9.3):
     dependencies:
-      '@volar/typescript': 2.4.28(typescript@5.9.3)
+      '@volar/typescript': 2.4.28
       '@vue/language-core': 3.3.13
       typescript: 5.9.3
 
