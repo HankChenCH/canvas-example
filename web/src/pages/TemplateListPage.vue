@@ -24,6 +24,8 @@ import { useRouter } from 'vue-router'
 import { api, formatApiError, type DataSourceSummary, type TemplateSummary, type TemplateVersionSummary } from '../api'
 import { formatTimestamp } from '../editor/format'
 import { createBlankTemplate, createImageTemplate } from '../editor/newtemplate'
+// 全应用日/夜主题单例（canvas-web 2.2.0 集成）：页头切换钮共用，信号经 useDark 写 html
+import { isDark, toggleDark } from '../theme'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import ImageTemplateDialog from '../components/ImageTemplateDialog.vue'
 import NamePromptDialog from '../components/NamePromptDialog.vue'
@@ -323,23 +325,35 @@ function riseDelay(index: number): string {
 </script>
 
 <template>
-    <main class="pc-atelier relative min-h-screen text-zinc-200">
+    <main class="pc-atelier relative min-h-screen text-pc-fg">
         <div class="relative z-10 mx-auto max-w-5xl px-6 pb-16 pt-14">
-            <!-- 页头：金杠 kicker + 衬线大标题 + 动作组（数据源管理为次、两个新建为主） -->
+            <!-- 页头：金杠 kicker + 衬线大标题 + 动作组（主题切换、数据源管理为次、两个新建为主） -->
             <header class="pc-rise">
                 <p class="pc-kicker mb-4">Canvas Press · 证书批量生成</p>
                 <div class="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
                     <div class="min-w-0">
-                        <h1 class="pc-display mb-2 text-4xl leading-tight text-zinc-50">模板列表</h1>
-                        <p class="max-w-xl text-sm leading-6 text-zinc-500">
+                        <h1 class="pc-display mb-2 text-4xl leading-tight text-pc-fg">模板列表</h1>
+                        <p class="max-w-xl text-sm leading-6 text-pc-muted">
                             选择一张印张进入编辑器，或从零新建；卡片直渲染最新已发布版本（v▾ 可选历史版本），编辑器内预览渲草稿
                         </p>
                     </div>
                     <div class="flex flex-none flex-wrap items-center gap-2.5">
+                        <!-- 日/夜主题切换（canvas-web 2.2.0 editor-theme-light-dark）：整站
+                             换肤（印坊管理面 + 编辑器外观 + Teleport 弹层），持久化见 src/theme.ts -->
+                        <button
+                            type="button"
+                            data-theme-toggle
+                            class="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-pc-line-strong text-base text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright"
+                            :title="isDark ? '切换到日间主题：整站换为日间配色' : '切换到夜间主题：整站换为夜间配色'"
+                            :aria-label="isDark ? '切换到日间主题' : '切换到夜间主题'"
+                            @click="toggleDark()"
+                        >
+                            {{ isDark ? '☀' : '☾' }}
+                        </button>
                         <RouterLink
                             to="/datasources"
                             data-datasource-manage-link
-                            class="inline-flex items-center gap-2 rounded-lg border border-[#223252] px-3.5 py-2 text-sm text-zinc-400 transition-colors hover:border-sky-700 hover:text-sky-300"
+                            class="inline-flex items-center gap-2 rounded-lg border border-pc-line-strong px-3.5 py-2 text-sm text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright"
                             title="数据源管理：独立数据源实体的浏览/新建/编辑（模板经引用绑定，编辑共享实体影响所有引用模板）"
                         >
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
@@ -355,7 +369,7 @@ function riseDelay(index: number): string {
                             <button
                                 type="button"
                                 data-new-template-toggle
-                                class="flex items-center gap-2 rounded-lg bg-gradient-to-b from-sky-400 to-sky-500 px-3.5 py-2 text-sm font-semibold text-[#06202b] shadow-[0_0_0_1px_rgba(56,189,248,0.35),0_8px_24px_rgba(56,189,248,0.18)] transition hover:brightness-110 active:translate-y-px"
+                                class="flex items-center gap-2 rounded-lg bg-gradient-to-b from-pc-accent to-pc-accent-2 px-3.5 py-2 text-sm font-semibold text-pc-on-accent shadow-[0_0_0_1px_var(--pc-accent-glow),0_8px_24px_var(--pc-accent-shadow)] transition hover:brightness-110 active:translate-y-px"
                                 :aria-expanded="newMenuOpen"
                                 aria-haspopup="menu"
                                 title="新建模板：选择空白 A4 画布，或以图片设为画布背景"
@@ -435,40 +449,40 @@ function riseDelay(index: number): string {
                         </div>
                     </div>
                 </div>
-                <div class="mt-8 h-px bg-gradient-to-r from-sky-400/50 via-sky-400/10 to-transparent" aria-hidden="true"></div>
+                <div class="mt-8 h-px bg-gradient-to-r from-pc-accent/50 via-pc-accent/10 to-transparent" aria-hidden="true"></div>
             </header>
 
             <!-- 卡片操作失败态（渲染失败等非弹窗通道；稳定码在前） -->
             <div
                 v-if="actionError"
                 data-action-error
-                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm leading-6 text-red-300"
+                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-pc-danger-line bg-pc-danger-bg px-4 py-3 text-sm leading-6 text-pc-danger"
             >
-                <span class="mt-0.5 font-mono text-xs text-red-400/90" aria-hidden="true">✕</span>
+                <span class="mt-0.5 font-mono text-xs text-pc-danger" aria-hidden="true">✕</span>
                 <span>{{ actionError }}</span>
             </div>
 
             <!-- 读取失败态（服务端未起等） -->
             <div
                 v-if="errorText"
-                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm leading-6 text-red-300"
+                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-pc-danger-line bg-pc-danger-bg px-4 py-3 text-sm leading-6 text-pc-danger"
             >
-                <span class="mt-0.5 font-mono text-xs text-red-400/90" aria-hidden="true">✕</span>
+                <span class="mt-0.5 font-mono text-xs text-pc-danger" aria-hidden="true">✕</span>
                 <span>模板列表读取失败：{{ errorText }}</span>
             </div>
 
             <!-- 空态（合法初始态：可从零新建；seed 未生效时也在此提示） -->
             <div
                 v-else-if="templates && templates.length === 0"
-                class="pc-rise mt-6 rounded-xl border border-dashed border-[#24345a] bg-[#0a1322]/60 px-6 py-16 text-center"
+                class="pc-rise mt-6 rounded-xl border border-dashed border-pc-line-strong bg-pc-field/60 px-6 py-16 text-center"
             >
-                <svg class="mx-auto mb-5 opacity-70" width="44" height="54" viewBox="0 0 24 30" fill="none" stroke="rgba(125,211,252,0.55)" stroke-width="1.1" aria-hidden="true">
+                <svg class="mx-auto mb-5 text-pc-accent-bright opacity-70" width="44" height="54" viewBox="0 0 24 30" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true">
                     <path d="M3 1h12l6 6v22H3z" />
                     <path d="M15 1v6h6" />
                     <path d="M7 14h10M7 18h10M7 22h6" stroke-opacity="0.55" />
                 </svg>
-                <h2 class="pc-display mb-2 text-lg text-zinc-300">印架尚空</h2>
-                <p class="mx-auto max-w-md text-sm leading-6 text-zinc-500">
+                <h2 class="pc-display mb-2 text-lg text-pc-fg-2">印架尚空</h2>
+                <p class="mx-auto max-w-md text-sm leading-6 text-pc-muted">
                     暂无模板——点击右上角「＋ 新建模板」，选空白 A4 或以图片新建开始；若列表本应有 seed 模板，请确认服务端启动播种已执行。
                 </p>
             </div>
@@ -482,7 +496,7 @@ function riseDelay(index: number): string {
                     class="pc-card pc-rise overflow-hidden rounded-xl"
                     :style="{ animationDelay: riseDelay(i) }"
                 >
-                    <RouterLink :to="`/editor/${t.id}`" class="block outline-none focus-visible:ring-2 focus-visible:ring-sky-500/70" :aria-label="`打开模板：${t.name}`">
+                    <RouterLink :to="`/editor/${t.id}`" class="block outline-none focus-visible:ring-2 focus-visible:ring-pc-accent/70" :aria-label="`打开模板：${t.name}`">
                         <div class="pc-sheet" aria-hidden="true">
                             <i class="pc-crop pc-crop--tl"></i>
                             <i class="pc-crop pc-crop--tr"></i>
@@ -497,10 +511,10 @@ function riseDelay(index: number): string {
                             <span class="pc-stamp">{{ serialOf(t.id) }}</span>
                         </div>
                     </RouterLink>
-                    <div class="border-t border-[#1b2740] px-4 pb-3 pt-3.5">
+                    <div class="border-t border-pc-line px-4 pb-3 pt-3.5">
                         <RouterLink :to="`/editor/${t.id}`" class="group block">
-                            <div class="truncate text-[15px] font-medium text-zinc-100 transition-colors group-hover:text-sky-300">{{ t.name }}</div>
-                            <div class="mt-0.5 font-mono text-[11px] text-zinc-500">
+                            <div class="truncate text-[15px] font-medium text-pc-fg transition-colors group-hover:text-pc-accent-bright">{{ t.name }}</div>
+                            <div class="mt-0.5 font-mono text-[11px] text-pc-muted">
                                 更新于 {{ formatTimestamp(t.updatedAt) }}
                             </div>
                         </RouterLink>
@@ -514,7 +528,7 @@ function riseDelay(index: number): string {
                                 <button
                                     type="button"
                                     data-card-render
-                                    class="rounded-md border border-sky-800/70 px-2.5 py-1 text-xs text-sky-300 transition-colors hover:border-sky-500 hover:bg-sky-950/40 disabled:cursor-not-allowed disabled:opacity-50"
+                                    class="rounded-md border border-pc-accent/35 px-2.5 py-1 text-xs text-pc-accent-bright transition-colors hover:border-pc-accent/70 hover:bg-pc-accent-soft disabled:cursor-not-allowed disabled:opacity-50"
                                     :disabled="renderingId !== null"
                                     :title="renderingId === t.id ? '渲染中…（最新已发布版本）' : '渲染终图：渲染最新已发布版本，成功后打开结果抽屉'"
                                     @click="runCardRender(t)"
@@ -524,7 +538,7 @@ function riseDelay(index: number): string {
                                 <button
                                     type="button"
                                     data-card-versions
-                                    class="rounded-md border border-[#223252] px-1.5 py-1 text-xs text-zinc-400 transition-colors hover:border-sky-700 hover:text-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                    class="rounded-md border border-pc-line-strong px-1.5 py-1 text-xs text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright disabled:cursor-not-allowed disabled:opacity-50"
                                     :aria-expanded="versionsMenuFor === t.id"
                                     aria-haspopup="menu"
                                     title="按版本渲染：选择历史发布版本（缺省渲染 = 最新已发布；版本列表打开时惰性拉取）"
@@ -604,7 +618,7 @@ function riseDelay(index: number): string {
                             <button
                                 type="button"
                                 data-card-delete
-                                class="rounded-md border border-red-900/60 px-2.5 py-1 text-xs text-red-300 transition-colors hover:border-red-600 hover:bg-red-950/40"
+                                class="rounded-md border border-pc-danger-line px-2.5 py-1 text-xs text-pc-danger transition-colors hover:border-pc-danger-strong hover:bg-pc-danger-bg"
                                 title="删除模板：级联清渲染记录，不可恢复（已落盘的渲染图片保留）"
                                 @click="openDelete(t)"
                             >
@@ -619,16 +633,16 @@ function riseDelay(index: number): string {
             <div v-else class="mt-8 grid gap-5 sm:grid-cols-2" aria-busy="true">
                 <div v-for="n in 2" :key="n" class="pc-card overflow-hidden rounded-xl">
                     <div class="pc-sheet animate-pulse opacity-50"></div>
-                    <div class="border-t border-[#1b2740] px-4 py-3.5">
-                        <div class="h-3.5 w-1/3 rounded bg-zinc-800/80"></div>
-                        <div class="mt-2 h-2.5 w-1/4 rounded bg-zinc-800/60"></div>
+                    <div class="border-t border-pc-line px-4 py-3.5">
+                        <div class="h-3.5 w-1/3 rounded bg-pc-skeleton"></div>
+                        <div class="mt-2 h-2.5 w-1/4 rounded bg-pc-skeleton/60"></div>
                     </div>
                 </div>
             </div>
 
             <!-- 页脚铭线 -->
-            <footer class="mt-16 border-t border-[#16233c] pt-5">
-                <p class="font-mono text-[11px] tracking-[0.25em] text-zinc-600">CANVAS NEXT · 证书批量生成示例</p>
+            <footer class="mt-16 border-t border-pc-line pt-5">
+                <p class="font-mono text-[11px] tracking-[0.25em] text-pc-muted">CANVAS NEXT · 证书批量生成示例</p>
             </footer>
 
             <!-- 新建空白模板弹窗（spec §4.1，22 票）：名字草稿/错误/在途态本页持有；
@@ -700,15 +714,16 @@ function riseDelay(index: number): string {
 
 <style scoped>
 /* 新建入口折叠菜单：与弹窗同语言——金→青 hairline 顶线 + pop 进场，
-   原点在触发钮方向（右上），展开像从钮后抽出 */
+   原点在触发钮方向（右上），展开像从钮后抽出。色值走 --pc-* 令牌
+   （日/夜两组见 style.css），仅品牌装饰线保留硬编码。 */
 .pc-menu {
     overflow: hidden;
-    border: 1px solid #1e2a40;
+    border: 1px solid var(--pc-line);
     border-radius: 12px;
-    background: linear-gradient(180deg, #101a2e 0%, #0c1526 100%);
+    background: linear-gradient(180deg, var(--pc-menu-bg-from) 0%, var(--pc-menu-bg-to) 100%);
     box-shadow:
-        inset 0 1px 0 rgba(148, 197, 255, 0.06),
-        0 18px 44px rgba(2, 6, 23, 0.6);
+        inset 0 1px 0 var(--pc-card-sheen),
+        0 18px 44px var(--pc-card-shadow-hover);
     transform-origin: top right;
     animation: pc-menu-pop 0.24s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
 }
@@ -744,12 +759,12 @@ function riseDelay(index: number): string {
 }
 
 .pc-menu__item + .pc-menu__item {
-    border-top: 1px solid #16233c;
+    border-top: 1px solid var(--pc-line);
 }
 
 .pc-menu__item:hover,
 .pc-menu__item:focus-visible {
-    background: rgba(56, 189, 248, 0.07);
+    background: var(--pc-accent-soft);
     outline: none;
 }
 
@@ -759,10 +774,10 @@ function riseDelay(index: number): string {
     place-items: center;
     width: 34px;
     height: 34px;
-    border: 1px solid #223252;
+    border: 1px solid var(--pc-line-strong);
     border-radius: 8px;
-    background: #0a1322;
-    color: #7dd3fc;
+    background: var(--pc-field);
+    color: var(--pc-accent-bright);
 }
 
 .pc-menu__title {
@@ -770,7 +785,7 @@ function riseDelay(index: number): string {
     font-size: 13px;
     font-weight: 600;
     line-height: 1.4;
-    color: #e6edf7;
+    color: var(--pc-fg);
 }
 
 .pc-menu__desc {
@@ -778,7 +793,7 @@ function riseDelay(index: number): string {
     margin-top: 2px;
     font-size: 11px;
     line-height: 1.5;
-    color: #7c8ca5;
+    color: var(--pc-muted);
 }
 
 /* 版本菜单（批 B ④）：向上弹（卡片操作条贴底）+ 高度内滚——防版本过多越出卡片
@@ -791,14 +806,14 @@ function riseDelay(index: number): string {
 .pc-menu__hint {
     margin: 0;
     padding: 10px 14px;
-    border-top: 1px solid #16233c;
-    color: #7c8ca5;
+    border-top: 1px solid var(--pc-line);
+    color: var(--pc-muted);
     font-size: 11px;
     line-height: 1.5;
 }
 
 .pc-menu__hint--error {
-    color: #fca5a5;
+    color: var(--pc-danger);
 }
 
 .pc-menu__item:disabled {
@@ -817,17 +832,18 @@ function riseDelay(index: number): string {
 }
 
 /* 印张预览位：蓝图细网格 + 顶部微辉，A4 纸张自底部探出（下缘被裁）——
-   hover 时纸张再探出一点，像从抽屉里抽出印张 */
+   hover 时纸张再探出一点，像从抽屉里抽出印张。底/网格/辉光/裁切标记走
+   --pc-* 令牌；纸面（.pc-paper 系）是内容色，不随主题。 */
 .pc-sheet {
     position: relative;
     aspect-ratio: 16 / 9;
     overflow: hidden;
     container-type: inline-size;
     background:
-        radial-gradient(140% 100% at 50% 0%, rgba(56, 189, 248, 0.08), transparent 55%),
-        repeating-linear-gradient(0deg, rgba(125, 211, 252, 0.04) 0 1px, transparent 1px 22px),
-        repeating-linear-gradient(90deg, rgba(125, 211, 252, 0.04) 0 1px, transparent 1px 22px),
-        #0a1220;
+        radial-gradient(140% 100% at 50% 0%, var(--pc-sheet-glow), transparent 55%),
+        repeating-linear-gradient(0deg, var(--pc-sheet-grid) 0 1px, transparent 1px 22px),
+        repeating-linear-gradient(90deg, var(--pc-sheet-grid) 0 1px, transparent 1px 22px),
+        var(--pc-sheet-bg);
 }
 
 /* 四角裁切标记：印厂的 registration marks 词汇 */
@@ -840,29 +856,29 @@ function riseDelay(index: number): string {
 .pc-crop--tl {
     top: 9px;
     left: 9px;
-    border-top: 1px solid rgba(125, 211, 252, 0.45);
-    border-left: 1px solid rgba(125, 211, 252, 0.45);
+    border-top: 1px solid var(--pc-sheet-mark);
+    border-left: 1px solid var(--pc-sheet-mark);
 }
 
 .pc-crop--tr {
     top: 9px;
     right: 9px;
-    border-top: 1px solid rgba(125, 211, 252, 0.45);
-    border-right: 1px solid rgba(125, 211, 252, 0.45);
+    border-top: 1px solid var(--pc-sheet-mark);
+    border-right: 1px solid var(--pc-sheet-mark);
 }
 
 .pc-crop--bl {
     bottom: 9px;
     left: 9px;
-    border-bottom: 1px solid rgba(125, 211, 252, 0.45);
-    border-left: 1px solid rgba(125, 211, 252, 0.45);
+    border-bottom: 1px solid var(--pc-sheet-mark);
+    border-left: 1px solid var(--pc-sheet-mark);
 }
 
 .pc-crop--br {
     bottom: 9px;
     right: 9px;
-    border-bottom: 1px solid rgba(125, 211, 252, 0.45);
-    border-right: 1px solid rgba(125, 211, 252, 0.45);
+    border-bottom: 1px solid var(--pc-sheet-mark);
+    border-right: 1px solid var(--pc-sheet-mark);
 }
 
 /* A4 印张：暖白纸面 + 首字水印 + 铭文细线 + 烫金钤印 */
@@ -934,7 +950,7 @@ function riseDelay(index: number): string {
     opacity: 0.92;
 }
 
-/* 序号章：金框 mono（印张编号） */
+/* 序号章：金框 mono（印张编号）；衬底随主题，金框金字是品牌静态色 */
 .pc-stamp {
     position: absolute;
     top: 10px;
@@ -942,7 +958,7 @@ function riseDelay(index: number): string {
     padding: 3px 8px;
     border: 1px solid rgba(227, 195, 127, 0.45);
     border-radius: 4px;
-    background: rgba(7, 13, 24, 0.55);
+    background: var(--pc-stamp-bg);
     color: var(--pc-gold);
     font-family: var(--pc-font-mono);
     font-size: 10px;

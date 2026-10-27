@@ -170,8 +170,11 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
     --cn-muted: #7c8ca5;
     --cn-line: #1e2a40;
     --cn-line-strong: #2a3a58;
+    --cn-field: rgba(148, 163, 184, 0.07);
     --cn-accent: #38bdf8;
     --cn-on-accent: #06202b;
+    --cn-danger: #fca5a5;
+    --cn-shadow-lg: 0 24px 64px rgba(2, 6, 23, 0.6);
 
     position: fixed;
     top: 92px; /* 顶栏 48 + 工具栏 44 之下 */
@@ -186,7 +189,7 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
     background: var(--cn-bg-elevated);
     border: 1px solid var(--cn-line);
     border-radius: 12px;
-    box-shadow: 0 24px 64px rgba(2, 6, 23, 0.6);
+    box-shadow: var(--cn-shadow-lg);
 }
 
 .cn-fcd__header {
@@ -218,7 +221,7 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
 }
 
 .cn-fcd__close:hover {
-    background: rgba(148, 163, 184, 0.07);
+    background: var(--cn-field);
     color: var(--cn-fg);
 }
 
@@ -289,7 +292,7 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
 }
 
 .cn-fcd__role:hover:not(.is-active) {
-    background: rgba(148, 163, 184, 0.07);
+    background: var(--cn-field);
     color: var(--cn-fg);
 }
 
@@ -353,7 +356,7 @@ function onQuotaInput(emitFn: (q: number | null) => void, event: Event): void {
 .cn-fcd__errors p,
 .cn-fcd__error {
     margin: 0;
-    color: #fca5a5;
+    color: var(--cn-danger);
     font-size: 12px;
     line-height: 1.5;
     overflow-wrap: anywhere;

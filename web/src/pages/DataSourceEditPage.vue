@@ -23,6 +23,8 @@ import {
     isSegmentDirty,
     sourceDraftBaseline,
 } from '../editor/datasource'
+// 全应用日/夜主题单例（canvas-web 2.2.0 集成）：页头切换钮共用，信号经 useDark 写 html
+import { isDark, toggleDark } from '../theme'
 
 const route = useRoute()
 const router = useRouter()
@@ -181,22 +183,36 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <main class="pc-atelier relative min-h-screen text-zinc-200">
+    <main class="pc-atelier relative min-h-screen text-pc-fg">
         <div class="relative z-10 mx-auto max-w-3xl px-6 pb-16 pt-14">
-            <RouterLink
-                to="/datasources"
-                class="pc-rise mb-8 inline-flex items-center gap-1.5 rounded-lg border border-[#223252] px-3 py-1.5 font-mono text-xs text-zinc-400 transition-colors hover:border-sky-700 hover:text-sky-300"
-            >
-                ← 返回数据源列表
-            </RouterLink>
+            <div class="pc-rise mb-8 flex items-center justify-between">
+                <RouterLink
+                    to="/datasources"
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-pc-line-strong px-3 py-1.5 font-mono text-xs text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright"
+                >
+                    ← 返回数据源列表
+                </RouterLink>
+                <!-- 日/夜主题切换（canvas-web 2.2.0 editor-theme-light-dark）：整站换肤
+                     （印坊管理面 + 编辑器外观 + Teleport 弹层），持久化见 src/theme.ts -->
+                <button
+                    type="button"
+                    data-theme-toggle
+                    class="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-pc-line-strong text-base text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright"
+                    :title="isDark ? '切换到日间主题：整站换为日间配色' : '切换到夜间主题：整站换为夜间配色'"
+                    :aria-label="isDark ? '切换到日间主题' : '切换到夜间主题'"
+                    @click="toggleDark()"
+                >
+                    {{ isDark ? '☀' : '☾' }}
+                </button>
+            </div>
 
             <!-- 页头：金杠 kicker + 衬线大标题 + 实体注记 -->
             <header class="pc-rise" style="animation-delay: 60ms">
                 <p class="pc-kicker mb-4">Data Source · {{ isNew ? 'NEW' : 'EDIT' }}</p>
-                <h1 class="pc-display mb-2 text-3xl leading-tight text-zinc-50">
+                <h1 class="pc-display mb-2 text-3xl leading-tight text-pc-fg">
                     {{ isNew ? '新建数据源' : '编辑数据源' }}
                 </h1>
-                <p class="text-sm leading-6 text-zinc-500" data-source-meta>
+                <p class="text-sm leading-6 text-pc-muted" data-source-meta>
                     <template v-if="isNew">
                         创建为独立数据源实体；创建后可在模板编辑器的数据源抽屉绑定使用。
                     </template>
@@ -204,28 +220,28 @@ onBeforeUnmount(() => {
                         ID {{ source.id }}<template v-if="templateCount !== null"> · 当前 {{ templateCount }} 个模板引用</template>。保存写入实体本身——所有引用它的模板同享（渲染始终读取已保存版本）。
                     </template>
                 </p>
-                <div class="mt-7 h-px bg-gradient-to-r from-sky-400/50 via-sky-400/10 to-transparent" aria-hidden="true"></div>
+                <div class="mt-7 h-px bg-gradient-to-r from-pc-accent/50 via-pc-accent/10 to-transparent" aria-hidden="true"></div>
             </header>
 
             <!-- 404（data_source_not_found：id 不存在或非整数，spec §2.4 通用寻址） -->
             <div
                 v-if="notFound"
                 data-datasource-not-found
-                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm leading-6 text-red-300"
+                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-pc-danger-line bg-pc-danger-bg px-4 py-3 text-sm leading-6 text-pc-danger"
             >
-                <span class="mt-0.5 font-mono text-xs text-red-400/90" aria-hidden="true">✕</span>
+                <span class="mt-0.5 font-mono text-xs text-pc-danger" aria-hidden="true">✕</span>
                 <span>
                     数据源不存在或已被删除（data_source_not_found）。
-                    <RouterLink to="/datasources" class="text-sky-400 hover:text-sky-300">返回数据源列表</RouterLink>
+                    <RouterLink to="/datasources" class="text-pc-accent hover:text-pc-accent-bright">返回数据源列表</RouterLink>
                 </span>
             </div>
 
             <!-- 读取失败态（服务端未起等） -->
             <div
                 v-else-if="errorText"
-                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm leading-6 text-red-300"
+                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-pc-danger-line bg-pc-danger-bg px-4 py-3 text-sm leading-6 text-pc-danger"
             >
-                <span class="mt-0.5 font-mono text-xs text-red-400/90" aria-hidden="true">✕</span>
+                <span class="mt-0.5 font-mono text-xs text-pc-danger" aria-hidden="true">✕</span>
                 <span>数据源读取失败：{{ errorText }}</span>
             </div>
 
@@ -236,7 +252,7 @@ onBeforeUnmount(() => {
                     <section>
                         <div class="mb-3 flex items-baseline gap-3">
                             <span class="font-mono text-[11px] tracking-[0.2em] text-[#e3c37f]/85" aria-hidden="true">01</span>
-                            <label class="text-sm font-semibold text-zinc-200" for="ds-name">数据源名</label>
+                            <label class="text-sm font-semibold text-pc-fg" for="ds-name">数据源名</label>
                         </div>
                         <input
                             id="ds-name"
@@ -245,16 +261,16 @@ onBeforeUnmount(() => {
                             class="pc-field pc-field--code"
                             spellcheck="false"
                         />
-                        <p class="mt-2 text-xs leading-5 text-zinc-600">独立实体的显示名；模板按引用绑定，改名不影响既有绑定关系。</p>
+                        <p class="mt-2 text-xs leading-5 text-pc-muted">独立实体的显示名；模板按引用绑定，改名不影响既有绑定关系。</p>
                     </section>
 
-                    <div class="my-7 h-px bg-[#16233c]" aria-hidden="true"></div>
+                    <div class="my-7 h-px bg-pc-line" aria-hidden="true"></div>
 
                     <section>
                         <div class="mb-3 flex items-center gap-3">
                             <span class="font-mono text-[11px] tracking-[0.2em] text-[#e3c37f]/85" aria-hidden="true">02</span>
-                            <label class="text-sm font-semibold text-zinc-200" for="ds-schema">schema（draft-07 JSON）</label>
-                            <span class="rounded border border-[#223252] px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-zinc-500">JSON</span>
+                            <label class="text-sm font-semibold text-pc-fg" for="ds-schema">schema（draft-07 JSON）</label>
+                            <span class="rounded border border-pc-line-strong px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-pc-muted">JSON</span>
                         </div>
                         <textarea
                             id="ds-schema"
@@ -264,16 +280,16 @@ onBeforeUnmount(() => {
                             rows="7"
                             spellcheck="false"
                         ></textarea>
-                        <p class="mt-2 text-xs leading-5 text-zinc-600">draft-07 权威校验在服务端；前端只做「文本能否解析为 JSON」的机械检查。</p>
+                        <p class="mt-2 text-xs leading-5 text-pc-muted">draft-07 权威校验在服务端；前端只做「文本能否解析为 JSON」的机械检查。</p>
                     </section>
 
-                    <div class="my-7 h-px bg-[#16233c]" aria-hidden="true"></div>
+                    <div class="my-7 h-px bg-pc-line" aria-hidden="true"></div>
 
                     <section>
                         <div class="mb-3 flex items-center gap-3">
                             <span class="font-mono text-[11px] tracking-[0.2em] text-[#e3c37f]/85" aria-hidden="true">03</span>
-                            <label class="text-sm font-semibold text-zinc-200" for="ds-data">data（JSON）</label>
-                            <span class="rounded border border-[#223252] px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-zinc-500">JSON</span>
+                            <label class="text-sm font-semibold text-pc-fg" for="ds-data">data（JSON）</label>
+                            <span class="rounded border border-pc-line-strong px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-pc-muted">JSON</span>
                         </div>
                         <textarea
                             id="ds-data"
@@ -283,20 +299,20 @@ onBeforeUnmount(() => {
                             rows="10"
                             spellcheck="false"
                         ></textarea>
-                        <p class="mt-2 text-xs leading-5 text-zinc-600">渲染时注入画布的数据集；保存写入实体本身，渲染始终读取已保存版本。</p>
+                        <p class="mt-2 text-xs leading-5 text-pc-muted">渲染时注入画布的数据集；保存写入实体本身，渲染始终读取已保存版本。</p>
                     </section>
 
-                    <p v-if="saveError" data-dataset-error class="mt-5 flex items-start gap-2.5 rounded-lg border border-red-900/60 bg-red-950/40 px-3.5 py-2.5 text-sm leading-6 text-red-300">
-                        <span class="mt-0.5 font-mono text-xs text-red-400/90" aria-hidden="true">✕</span>
+                    <p v-if="saveError" data-dataset-error class="mt-5 flex items-start gap-2.5 rounded-lg border border-pc-danger-line bg-pc-danger-bg px-3.5 py-2.5 text-sm leading-6 text-pc-danger">
+                        <span class="mt-0.5 font-mono text-xs text-pc-danger" aria-hidden="true">✕</span>
                         <span>{{ saveError }}</span>
                     </p>
 
-                    <div class="mt-7 flex items-center justify-end gap-3 border-t border-[#16233c] pt-5">
-                        <span v-if="contentDirty" data-dataset-unsaved class="animate-pulse font-mono text-xs text-amber-400">● 未保存</span>
+                    <div class="mt-7 flex items-center justify-end gap-3 border-t border-pc-line pt-5">
+                        <span v-if="contentDirty" data-dataset-unsaved class="animate-pulse font-mono text-xs text-pc-warn">● 未保存</span>
                         <button
                             type="button"
                             data-save-datasource
-                            class="rounded-lg bg-gradient-to-b from-sky-400 to-sky-500 px-4 py-2 text-sm font-semibold text-[#06202b] shadow-[0_0_0_1px_rgba(56,189,248,0.35),0_8px_24px_rgba(56,189,248,0.18)] transition hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+                            class="rounded-lg bg-gradient-to-b from-pc-accent to-pc-accent-2 px-4 py-2 text-sm font-semibold text-pc-on-accent shadow-[0_0_0_1px_var(--pc-accent-glow),0_8px_24px_var(--pc-accent-shadow)] transition hover:brightness-110 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
                             :disabled="saving"
                             @click="runSave"
                         >
@@ -307,24 +323,25 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 页脚铭线 -->
-            <footer class="mt-16 border-t border-[#16233c] pt-5">
-                <p class="font-mono text-[11px] tracking-[0.25em] text-zinc-600">CANVAS NEXT · 证书批量生成示例</p>
+            <footer class="mt-16 border-t border-pc-line pt-5">
+                <p class="font-mono text-[11px] tracking-[0.25em] text-pc-muted">CANVAS NEXT · 证书批量生成示例</p>
             </footer>
         </div>
     </main>
 </template>
 
 <style scoped>
-/* 三输入的统一字段面：深底 + 青辉 focus（编辑器令牌同族的青色） */
+/* 三输入的统一字段面：衬底 + 青辉 focus（色值走 --pc-* 令牌，日/夜两组见
+   style.css；编辑器令牌同族的青色） */
 .pc-field {
     box-sizing: border-box;
     display: block;
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid #223252;
+    border: 1px solid var(--pc-line-strong);
     border-radius: 10px;
-    background: #0a1322;
-    color: #e6edf7;
+    background: var(--pc-field);
+    color: var(--pc-fg);
     resize: vertical;
     transition:
         border-color 0.2s,
@@ -332,8 +349,8 @@ onBeforeUnmount(() => {
 }
 
 .pc-field:focus {
-    border-color: rgba(56, 189, 248, 0.65);
-    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
+    border-color: var(--pc-accent-line);
+    box-shadow: 0 0 0 3px var(--pc-accent-ring);
     outline: none;
 }
 
