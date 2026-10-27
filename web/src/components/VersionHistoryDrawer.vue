@@ -121,8 +121,11 @@ const rows = computed(() => props.versions ?? [])
     --cn-muted: #7c8ca5;
     --cn-line: #1e2a40;
     --cn-line-strong: #2a3a58;
+    --cn-field: rgba(148, 163, 184, 0.07);
     --cn-accent: #38bdf8;
     --cn-on-accent: #06202b;
+    --cn-danger: #fca5a5;
+    --cn-shadow-lg: 0 24px 64px rgba(2, 6, 23, 0.6);
 
     position: fixed;
     top: 92px; /* 顶栏 48 + 工具栏 44 之下 */
@@ -137,7 +140,7 @@ const rows = computed(() => props.versions ?? [])
     background: var(--cn-bg-elevated);
     border: 1px solid var(--cn-line);
     border-radius: 12px;
-    box-shadow: 0 24px 64px rgba(2, 6, 23, 0.6);
+    box-shadow: var(--cn-shadow-lg);
 }
 
 .cn-vhd__header {
@@ -169,7 +172,7 @@ const rows = computed(() => props.versions ?? [])
 }
 
 .cn-vhd__close:hover {
-    background: rgba(148, 163, 184, 0.07);
+    background: var(--cn-field);
     color: var(--cn-fg);
 }
 
@@ -256,8 +259,8 @@ const rows = computed(() => props.versions ?? [])
 }
 
 .cn-vhd__revert:hover:not(:disabled) {
-    border-color: #f87171;
-    color: #fca5a5;
+    border-color: var(--cn-danger);
+    color: var(--cn-danger);
 }
 
 .cn-vhd__render:disabled,

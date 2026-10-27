@@ -151,6 +151,8 @@ import {
     type TemplateRecord,
     type TemplateVersionSummary,
 } from '../api'
+// 全应用日/夜主题单例（canvas-web 2.2.0 集成）：顶栏切换钮共用，信号经 useDark 写 html
+import { isDark, toggleDark } from '../theme'
 import {
     buildEditorStateSnapshot,
     parseTemplateEditorStateSnapshot,
@@ -1765,22 +1767,22 @@ onBeforeUnmount(() => {
 <template>
     <!-- 载入中 / 404 / 读取失败（spec §4.1：404 template_not_found → 错误提示 +
          返回列表链接；编辑器台面在模板载入成功后才挂载） -->
-    <main v-if="!template" class="min-h-screen bg-[#070d18] px-6 py-12 text-zinc-200">
-        <RouterLink to="/" class="text-sm text-sky-400 hover:text-sky-300">← 返回列表</RouterLink>
+    <main v-if="!template" class="min-h-screen bg-(--shell-bg) px-6 py-12 text-(--shell-fg)">
+        <RouterLink to="/" class="text-sm text-(--shell-accent)">← 返回列表</RouterLink>
         <div
             v-if="notFound"
-            class="mt-8 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+            class="mt-8 rounded-lg border border-(--pc-danger-line) bg-(--pc-danger-bg) px-4 py-3 text-sm text-(--pc-danger)"
         >
             模板不存在（template_not_found）。
-            <RouterLink to="/" class="text-sky-400 hover:text-sky-300">返回列表</RouterLink>
+            <RouterLink to="/" class="text-(--shell-accent)">返回列表</RouterLink>
         </div>
         <div
             v-else-if="errorText"
-            class="mt-8 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-300"
+            class="mt-8 rounded-lg border border-(--pc-danger-line) bg-(--pc-danger-bg) px-4 py-3 text-sm text-(--pc-danger)"
         >
             模板读取失败：{{ errorText }}
         </div>
-        <p v-else class="mt-8 text-sm text-zinc-500">模板载入中…</p>
+        <p v-else class="mt-8 text-sm text-(--shell-muted)">模板载入中…</p>
     </main>
 
     <!-- 编辑器台面：全视口暗色工作台壳（playground 同款四行网格：顶栏 / 工具栏 /
@@ -1911,6 +1913,19 @@ onBeforeUnmount(() => {
                     @click="replayTour"
                 >
                     ?
+                </button>
+                <!-- 日/夜主题切换（canvas-web 2.2.0 editor-theme-light-dark）：写 html
+                     信号，编辑器外观 + 壳层 + 管理页整站跟随；图标示目标侧（日间态显示
+                     ☀ = 点击去日间）。持久化与初始化见 src/theme.ts -->
+                <button
+                    type="button"
+                    class="ghost theme-toggle"
+                    data-theme-toggle
+                    :title="isDark ? '切换到日间主题：编辑器外观与整站壳层换为日间配色' : '切换到夜间主题：编辑器外观与整站壳层换为夜间配色'"
+                    :aria-label="isDark ? '切换到日间主题' : '切换到夜间主题'"
+                    @click="toggleDark()"
+                >
+                    {{ isDark ? '☀' : '☾' }}
                 </button>
             </div>
         </header>
@@ -2230,11 +2245,20 @@ onBeforeUnmount(() => {
     </main>
 </template>
 
-<style scoped>
-/* 全视口暗色工作台壳（playground 同款令牌）：100vh 四行网格——顶栏 48 / 工具栏
-   44 / 工作台 1fr / 状态栏 auto（≈30），页面零滚动；小视口降级：工作台行压缩 +
-   面板自内滚 + 工具栏横向内滚。editor-vue 面板/状态栏令牌零改动。 */
-.stage {
+<style>
+/* 壳层令牌单源（canvas-web 2.2.0 editor-theme-light-dark 集成，playground
+   editor-theme 工票 05 同款）：--shell-* 定义从 .stage 上移 html——①令牌与主题
+   信号同在 html 一处；②Teleport 到 body 的抽屉/弹窗（--cn-* 自带块族）经 html
+   级联继承取 --shell-*；③日间整组挂在 html[data-cn-theme='light'] 下（src/theme.ts
+   useDark attribute 模式落点），夜间 = 缺省（无信号即现网值，零回归）。
+   此块不能写进 scoped：scoped 编译给选择器追加 [data-v-x]，html 级规则永远匹配
+   不上；同理 .stage 上的同名定义会压过 html 级覆盖（元素自有声明胜过继承），故
+   必须整体上移。--shell-font-mono 静态不随主题；纸面（文档内容）颜色不进本组。
+   日间值取 playground editor-theme 工票 05 提案（与 theme.css --cn-* 日间值同族
+   的板岩灰系）。--shell-warn/--shell-danger 为本页两处状态色收口（未保存琥珀/
+   删除红），日间加深保白底对比。 */
+html {
+    color-scheme: dark; /* 壳层滚动条/原生控件随主题（.cn-* 根自设 color-scheme，不受影响） */
     --shell-bg: #070d18;
     --shell-panel: #0b1220;
     --shell-panel-92: rgb(11 18 32 / 0.92);
@@ -2248,9 +2272,39 @@ onBeforeUnmount(() => {
     --shell-accent: #38bdf8;
     --shell-on-accent: #06202b;
     --shell-insert: #7dd3fc;
+    --shell-warn: #f59e0b;
+    --shell-danger: #f87171;
     --shell-font-mono: 'SF Mono', Menlo, Consolas, monospace;
     --shell-desktop: radial-gradient(1100px 600px at 50% 40%, #101b30 0%, #0a1120 70%);
+}
 
+html[data-cn-theme='light'] {
+    color-scheme: light;
+    --shell-bg: #f1f5f9;
+    --shell-panel: #ffffff;
+    --shell-panel-92: rgb(255 255 255 / 0.92);
+    --shell-line: #e2e8f0;
+    --shell-line-strong: #cbd5e1;
+    --shell-hover: #eef2f7;
+    --shell-fg: #0f172a;
+    --shell-fg-2: #334155;
+    --shell-fg-3: #475569;
+    --shell-muted: #64748b;
+    --shell-accent: #0284c7;
+    --shell-on-accent: #ffffff;
+    --shell-insert: #0284c7;
+    --shell-warn: #b45309;
+    --shell-danger: #dc2626;
+    --shell-desktop: radial-gradient(1100px 600px at 50% 40%, #e2e8f0 0%, #cbd5e1 70%);
+}
+</style>
+
+<style scoped>
+/* 全视口工作台壳（playground 同款令牌）：100vh 四行网格——顶栏 48 / 工具栏
+   44 / 工作台 1fr / 状态栏 auto（≈30），页面零滚动；小视口降级：工作台行压缩 +
+   面板自内滚 + 工具栏横向内滚。壳层 --shell-* 令牌已上移 html（日/夜两组见上方
+   全局样式块，本元素经级联继承）；editor-vue 面板/状态栏令牌零改动。 */
+.stage {
     display: grid;
     grid-template-rows: 48px 44px minmax(0, 1fr) auto;
     height: 100vh;
@@ -2324,7 +2378,7 @@ onBeforeUnmount(() => {
 }
 
 .save-state.is-dirty {
-    color: #f59e0b;
+    color: var(--shell-warn);
 }
 
 .topbar-actions {
@@ -2375,6 +2429,15 @@ onBeforeUnmount(() => {
    紧凑形态区别于文字 ghost 钮；常驻语义（无 seen 门、无 v-if，锁「常驻 + 点击
    重播」） */
 .topbar .tour-replay {
+    width: 28px;
+    padding: 5px 0;
+    font-weight: 600;
+    text-align: center;
+}
+
+/* 日/夜主题切换钮（canvas-web 2.2.0 集成）：仿 tour-replay 的正方形紧凑形态；
+   图标示目标侧（日间态显示 ☀），信号写入与持久化在 src/theme.ts */
+.topbar .theme-toggle {
     width: 28px;
     padding: 5px 0;
     font-weight: 600;
@@ -2553,7 +2616,7 @@ onBeforeUnmount(() => {
 
 .page-tab-delete:hover {
     background: var(--shell-hover);
-    color: #f87171;
+    color: var(--shell-danger);
 }
 
 .page-tab-input {

@@ -1,13 +1,19 @@
 /*
  * 宿主全局样式：Tailwind v4 入口 + 面板令牌的 Tailwind 映射（playground
- * style.css 同款，spec §1.3 宿主三步之二）。
+ * style.css 同款，spec §1.3 宿主三步之二）+ 印坊管理面令牌（--pc-*）+
+ * Teleport 弹层的日间令牌覆盖。
  *
  * - @source 把 editor-vue 发布包 dist 纳入扫描：属性面板组件里的工具类（shadcn
  *   anatomy 配方）由宿主编译——包本身零构建、零 tailwind 依赖（源码直引约定）。
  *   发布包切换后扫描 node_modules 内 editor-vue dist（类名字符串在编译产物中仍可被 tailwind 提取）。
- * - @theme inline 把 panel-theme.css 的 --cn-* 令牌映射为 --color-cn-* 颜色族，
+ * - @theme inline 把 theme.css 的 --cn-* 令牌映射为 --color-cn-* 颜色族，
  *   工具类（bg-cn-bg、text-cn-muted、border-cn-line…）在元素上解析回运行时
- *   变量——令牌作用域在 .cn-props 根，面板自带主题、可整面换肤。
+ *   变量——令牌作用域在 .cn-props 等主题根类，面板自带主题、可整面换肤。
+ * - --pc-*（canvas-web 2.2.0 editor-theme-light-dark 集成）：印坊管理面的语义
+ *   令牌，与壳层 --shell-* 同构——定义上移 html（useDark 信号落点），夜间 =
+ *   缺省（值 = 收口前现网值，近似色合并到同族），日间整组挂 html[data-cn-theme='light']。
+ *   工具类（text-pc-fg、border-pc-line…）经下方 @theme inline 的 --color-pc-* 族解析。
+ *   静态品牌色（--pc-gold）与印张纸面（.pc-paper，内容色）不随主题。
  */
 @import 'tailwindcss';
 @source '../node_modules/@hankchen/canvas-editor-vue/dist';
@@ -24,7 +30,157 @@
     --color-cn-accent-soft: var(--cn-accent-soft);
     --color-cn-on-accent: var(--cn-on-accent);
     --color-cn-danger: var(--cn-danger);
+    --color-pc-fg: var(--pc-fg);
+    --color-pc-fg-2: var(--pc-fg-2);
+    --color-pc-fg-3: var(--pc-fg-3);
+    --color-pc-muted: var(--pc-muted);
+    --color-pc-line: var(--pc-line);
+    --color-pc-line-strong: var(--pc-line-strong);
+    --color-pc-field: var(--pc-field);
+    --color-pc-accent: var(--pc-accent);
+    --color-pc-accent-2: var(--pc-accent-2);
+    --color-pc-accent-bright: var(--pc-accent-bright);
+    --color-pc-on-accent: var(--pc-on-accent);
+    --color-pc-accent-soft: var(--pc-accent-soft);
+    --color-pc-danger: var(--pc-danger);
+    --color-pc-warn: var(--pc-warn);
+    --color-pc-skeleton: var(--pc-skeleton);
     --font-mono: var(--cn-font-mono);
+}
+
+/* ------------------------------------------------------------------ */
+/* --pc-* 印坊令牌：html 单源（夜间缺省）+ 日间整组覆盖。值取向：夜间 =
+   收口前现网值（多处近色合并到同族：zinc 系并入手写蓝灰族），日间 = 板岩
+   灰系（与 --shell-* 日间、theme.css --cn-* 日间同族）。静态不随主题的
+   --pc-font-* / --pc-gold 留 :root。                                       */
+/* ------------------------------------------------------------------ */
+:root {
+    --pc-font-display: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
+    --pc-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --pc-gold: #e3c37f;
+}
+
+html {
+    /* 表面与文字（近色合并：zinc-50/100/200→fg、300→fg-2、400→fg-3、500/600→muted） */
+    --pc-fg: #e6edf7;
+    --pc-fg-2: #c3cddd;
+    --pc-fg-3: #aab6c8;
+    --pc-muted: #7c8ca5;
+
+    /* 边界：发丝线（#1b2740/#16233c/#1e2a40 合并）/ 交互描边（#223252/#24345a 合并） */
+    --pc-line: #1b2740;
+    --pc-line-strong: #223252;
+
+    /* 输入/衬底（#0a1322 族合并） */
+    --pc-field: #0a1322;
+
+    /* 卡片（渐变卡面 + 内发丝高光 + 描边 + 双档投影） */
+    --pc-card-from: #0d1728;
+    --pc-card-to: #0a1220;
+    --pc-card-line: rgba(56, 84, 132, 0.55);
+    --pc-card-line-hover: rgba(56, 189, 248, 0.55);
+    --pc-card-sheen: rgba(148, 197, 255, 0.05);
+    --pc-card-shadow: rgba(2, 6, 23, 0.45);
+    --pc-card-shadow-hover: rgba(2, 6, 23, 0.6);
+
+    /* 下拉菜单（弹层 = 卡面再抬一档） */
+    --pc-menu-bg-from: #101a2e;
+    --pc-menu-bg-to: #0c1526;
+
+    /* 印坊底：深海军 + 双径向辉光（顶青、右下深蓝）+ 蓝图网格 */
+    --pc-atelier-base: #070d18;
+    --pc-atelier-glow-1: rgba(56, 189, 248, 0.11);
+    --pc-atelier-glow-2: rgba(30, 64, 120, 0.32);
+    --pc-grid-line: rgba(125, 211, 252, 0.05);
+    --pc-kicker: rgba(125, 211, 252, 0.72);
+
+    /* 印张预览位：蓝图细网格底 + 四角裁切标记 + 序号章衬底
+       （.pc-paper 纸面是内容色，不进本组） */
+    --pc-sheet-bg: #0a1220;
+    --pc-sheet-grid: rgba(125, 211, 252, 0.04);
+    --pc-sheet-glow: rgba(56, 189, 248, 0.08);
+    --pc-sheet-mark: rgba(125, 211, 252, 0.45);
+    --pc-stamp-bg: rgba(7, 13, 24, 0.55);
+
+    /* accent（天蓝族）及其派生：渐变深档 / hover 亮字 / 按钮辉光 / 淡底 / 输入 focus */
+    --pc-accent: #38bdf8;
+    --pc-accent-2: #0ea5e9;
+    --pc-accent-bright: #7dd3fc;
+    --pc-on-accent: #06202b;
+    --pc-accent-glow: rgba(56, 189, 248, 0.35);
+    --pc-accent-shadow: rgba(56, 189, 248, 0.18);
+    --pc-accent-soft: rgba(56, 189, 248, 0.07);
+    --pc-accent-line: rgba(56, 189, 248, 0.65);
+    --pc-accent-ring: rgba(56, 189, 248, 0.14);
+
+    /* 危险/告警（错误条三件套 + 骨架屏） */
+    --pc-danger: #fca5a5;
+    --pc-danger-line: rgba(127, 29, 29, 0.6);
+    --pc-danger-bg: rgba(69, 10, 10, 0.4);
+    --pc-danger-strong: #dc2626;
+    --pc-warn: #fbbf24;
+    --pc-skeleton: rgb(39 39 42 / 0.8);
+}
+
+html[data-cn-theme='light'] {
+    /* 表面与文字（板岩灰系） */
+    --pc-fg: #0f172a;
+    --pc-fg-2: #334155;
+    --pc-fg-3: #475569;
+    --pc-muted: #64748b;
+
+    /* 边界 */
+    --pc-line: #e2e8f0;
+    --pc-line-strong: #cbd5e1;
+
+    /* 输入/衬底 */
+    --pc-field: #ffffff;
+
+    /* 卡片 */
+    --pc-card-from: #ffffff;
+    --pc-card-to: #f8fafc;
+    --pc-card-line: rgba(2, 132, 199, 0.28);
+    --pc-card-line-hover: rgba(2, 132, 199, 0.55);
+    --pc-card-sheen: rgba(15, 23, 42, 0.04);
+    --pc-card-shadow: rgba(15, 23, 42, 0.12);
+    --pc-card-shadow-hover: rgba(15, 23, 42, 0.18);
+
+    /* 下拉菜单 */
+    --pc-menu-bg-from: #ffffff;
+    --pc-menu-bg-to: #f8fafc;
+
+    /* 印坊底：昼间绘图台——浅板岩 + 双侧青辉转淡 + 淡墨网格 */
+    --pc-atelier-base: #f1f5f9;
+    --pc-atelier-glow-1: rgba(2, 132, 199, 0.07);
+    --pc-atelier-glow-2: rgba(2, 132, 199, 0.1);
+    --pc-grid-line: rgba(15, 23, 42, 0.05);
+    --pc-kicker: rgba(2, 132, 199, 0.8);
+
+    /* 印张预览位 */
+    --pc-sheet-bg: #eef2f7;
+    --pc-sheet-grid: rgba(2, 132, 199, 0.08);
+    --pc-sheet-glow: rgba(2, 132, 199, 0.06);
+    --pc-sheet-mark: rgba(2, 132, 199, 0.5);
+    --pc-stamp-bg: rgba(255, 255, 255, 0.65);
+
+    /* accent（加深保白底对比） */
+    --pc-accent: #0284c7;
+    --pc-accent-2: #0369a1;
+    --pc-accent-bright: #0369a1;
+    --pc-on-accent: #ffffff;
+    --pc-accent-glow: rgba(2, 132, 199, 0.35);
+    --pc-accent-shadow: rgba(2, 132, 199, 0.2);
+    --pc-accent-soft: rgba(2, 132, 199, 0.08);
+    --pc-accent-line: rgba(2, 132, 199, 0.55);
+    --pc-accent-ring: rgba(2, 132, 199, 0.15);
+
+    /* 危险/告警 */
+    --pc-danger: #b91c1c;
+    --pc-danger-line: rgba(220, 38, 38, 0.35);
+    --pc-danger-bg: rgba(220, 38, 38, 0.06);
+    --pc-danger-strong: #b91c1c;
+    --pc-warn: #b45309;
+    --pc-skeleton: rgb(15 23 42 / 0.1);
 }
 
 /*
@@ -33,20 +189,16 @@
  * 噪点的氛围底（pc-atelier）、衬线展示标题（pc-display，Noto Serif SC——证书
  * 雕版气质）、mono kicker（pc-kicker）、卡片升格（pc-card）与进场 stagger
  * （pc-rise）。只新增类，不触碰上方 Tailwind/面板令牌映射，编辑器零感知。
+ * 色值一律 var(--pc-*) 消费（两组整值见上），本层零硬编码色。
  */
-:root {
-    --pc-font-display: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
-    --pc-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    --pc-gold: #e3c37f;
-}
 
 /* 印坊底：深海军 + 双径向辉光（顶青、右下深蓝），边缘沉入底色 */
 .pc-atelier {
     position: relative;
     background:
-        radial-gradient(1100px 460px at 50% -100px, rgba(56, 189, 248, 0.11), transparent 65%),
-        radial-gradient(900px 520px at 88% 112%, rgba(30, 64, 120, 0.32), transparent 62%),
-        #070d18;
+        radial-gradient(1100px 460px at 50% -100px, var(--pc-atelier-glow-1), transparent 65%),
+        radial-gradient(900px 520px at 88% 112%, var(--pc-atelier-glow-2), transparent 62%),
+        var(--pc-atelier-base);
 }
 
 /* 蓝图网格：细青线，径向 mask 让网格在页头清晰、向下渐隐 */
@@ -55,8 +207,8 @@
     position: absolute;
     inset: 0;
     background-image:
-        linear-gradient(rgba(125, 211, 252, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(125, 211, 252, 0.05) 1px, transparent 1px);
+        linear-gradient(var(--pc-grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--pc-grid-line) 1px, transparent 1px);
     background-size: 36px 36px;
     -webkit-mask-image: radial-gradient(1300px 640px at 50% 0%, #000 26%, transparent 76%);
     mask-image: radial-gradient(1300px 640px at 50% 0%, #000 26%, transparent 76%);
@@ -85,7 +237,7 @@
     font-size: 11px;
     letter-spacing: 0.32em;
     text-transform: uppercase;
-    color: rgba(125, 211, 252, 0.72);
+    color: var(--pc-kicker);
 }
 
 .pc-kicker::before {
@@ -101,11 +253,11 @@
 /* 卡片升格：渐变卡面 + 内发丝高光，hover 上浮转青辉 */
 .pc-card {
     position: relative;
-    border: 1px solid rgba(56, 84, 132, 0.55);
-    background: linear-gradient(180deg, #0d1728 0%, #0a1220 100%);
+    border: 1px solid var(--pc-card-line);
+    background: linear-gradient(180deg, var(--pc-card-from) 0%, var(--pc-card-to) 100%);
     box-shadow:
-        inset 0 1px 0 rgba(148, 197, 255, 0.05),
-        0 12px 32px rgba(2, 6, 23, 0.45);
+        inset 0 1px 0 var(--pc-card-sheen),
+        0 12px 32px var(--pc-card-shadow);
     transition:
         transform 0.28s cubic-bezier(0.2, 0.7, 0.3, 1),
         border-color 0.28s,
@@ -114,12 +266,12 @@
 
 .pc-card:hover {
     transform: translateY(-3px);
-    border-color: rgba(56, 189, 248, 0.55);
+    border-color: var(--pc-card-line-hover);
     box-shadow:
-        inset 0 1px 0 rgba(148, 197, 255, 0.07),
-        0 18px 44px rgba(2, 6, 23, 0.6),
-        0 0 0 1px rgba(56, 189, 248, 0.16),
-        0 14px 48px rgba(56, 189, 248, 0.08);
+        inset 0 1px 0 var(--pc-card-sheen),
+        0 18px 44px var(--pc-card-shadow-hover),
+        0 0 0 1px var(--pc-card-line-hover),
+        0 14px 48px var(--pc-accent-soft);
 }
 
 /* 进场 stagger：backwards 填充——动画结束后交还 transform 给 hover 用 */
@@ -144,4 +296,29 @@
     .pc-card * {
         transition: none !important;
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* ── Teleport 弹层的日间令牌覆盖（canvas-web 2.2.0 架构对齐）─────────────
+   七个 Teleport 到 body 的抽屉/对话框自带 --cn-* 暗色块（scoped，特异度
+   (0,2,0)；对话框族挂 __panel、抽屉族挂根类）；theme.css 的日间覆盖只认
+   包内根类（.cn-props 等），够不到这些宿主自有类。此处按信号补日间整组——
+   html[data-cn-theme] 前缀使特异度 (0,2,1)，胜过组件 scoped 暗色块；值取
+   theme.css §2 日间列。令牌集 = 各组件自带块（颜色令牌）+ 本次收口进组件
+   的 field/backdrop/shadow-lg/danger/accent-soft。                          */
+/* ------------------------------------------------------------------ */
+html[data-cn-theme='light'] :is(.cn-cfd, .cn-cfd__panel, .cn-dsw, .cn-itd, .cn-itd__panel, .cn-npd, .cn-npd__panel, .cn-rrd, .cn-fcd, .cn-vhd) {
+    --cn-bg: #ffffff;
+    --cn-bg-elevated: #f8fafc;
+    --cn-fg: #0f172a;
+    --cn-muted: #64748b;
+    --cn-line: #e2e8f0;
+    --cn-line-strong: #cbd5e1;
+    --cn-field: rgba(15, 23, 42, 0.04);
+    --cn-accent: #0284c7;
+    --cn-accent-soft: rgba(2, 132, 199, 0.1);
+    --cn-on-accent: #ffffff;
+    --cn-danger: #dc2626;
+    --cn-backdrop: rgba(15, 23, 42, 0.35);
+    --cn-shadow-lg: 0 24px 64px rgba(15, 23, 42, 0.22);
 }

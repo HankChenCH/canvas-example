@@ -12,6 +12,8 @@ import { onMounted, ref } from 'vue'
 
 import { api, formatApiError, type DataSourceSummary } from '../api'
 import { formatTimestamp } from '../editor/format'
+// 全应用日/夜主题单例（canvas-web 2.2.0 集成）：页头切换钮共用，信号经 useDark 写 html
+import { isDark, toggleDark } from '../theme'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const sources = ref<DataSourceSummary[] | null>(null)
@@ -75,58 +77,72 @@ function riseDelay(index: number): string {
 </script>
 
 <template>
-    <main class="pc-atelier relative min-h-screen text-zinc-200">
+    <main class="pc-atelier relative min-h-screen text-pc-fg">
         <div class="relative z-10 mx-auto max-w-5xl px-6 pb-16 pt-14">
             <RouterLink
                 to="/"
-                class="pc-rise mb-8 inline-flex items-center gap-1.5 rounded-lg border border-[#223252] px-3 py-1.5 font-mono text-xs text-zinc-400 transition-colors hover:border-sky-700 hover:text-sky-300"
+                class="pc-rise mb-8 inline-flex items-center gap-1.5 rounded-lg border border-pc-line-strong px-3 py-1.5 font-mono text-xs text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright"
             >
                 ← 返回模板列表
             </RouterLink>
 
-            <!-- 页头：金杠 kicker + 衬线大标题 + 新建动作 -->
+            <!-- 页头：金杠 kicker + 衬线大标题 + 新建动作（主题切换为次） -->
             <header class="pc-rise" style="animation-delay: 60ms">
                 <p class="pc-kicker mb-4">Data Source Registry · 数据源登记处</p>
                 <div class="flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
                     <div class="min-w-0">
-                        <h1 class="pc-display mb-2 text-4xl leading-tight text-zinc-50">数据源管理</h1>
-                        <p class="max-w-xl text-sm leading-6 text-zinc-500">
+                        <h1 class="pc-display mb-2 text-4xl leading-tight text-pc-fg">数据源管理</h1>
+                        <p class="max-w-xl text-sm leading-6 text-pc-muted">
                             数据源是独立资源：模板经引用绑定，编辑共享实体影响所有引用它的模板
                         </p>
                     </div>
-                    <RouterLink
-                        to="/datasources/new"
-                        data-new-datasource
-                        class="flex-none rounded-lg bg-gradient-to-b from-sky-400 to-sky-500 px-3.5 py-2 text-sm font-semibold text-[#06202b] shadow-[0_0_0_1px_rgba(56,189,248,0.35),0_8px_24px_rgba(56,189,248,0.18)] transition hover:brightness-110 active:translate-y-px"
-                        title="新建数据源：录入名字 + schema（draft-07）+ data（JSON），创建为独立实体；之后可在模板编辑器的数据源抽屉绑定使用"
-                    >
-                        ＋ 新建数据源
-                    </RouterLink>
+                    <div class="flex flex-none items-center gap-2.5">
+                        <!-- 日/夜主题切换（canvas-web 2.2.0 editor-theme-light-dark）：整站
+                             换肤（印坊管理面 + 编辑器外观 + Teleport 弹层），持久化见 src/theme.ts -->
+                        <button
+                            type="button"
+                            data-theme-toggle
+                            class="inline-flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-pc-line-strong text-base text-pc-fg-3 transition-colors hover:border-pc-accent/70 hover:text-pc-accent-bright"
+                            :title="isDark ? '切换到日间主题：整站换为日间配色' : '切换到夜间主题：整站换为夜间配色'"
+                            :aria-label="isDark ? '切换到日间主题' : '切换到夜间主题'"
+                            @click="toggleDark()"
+                        >
+                            {{ isDark ? '☀' : '☾' }}
+                        </button>
+                        <RouterLink
+                            to="/datasources/new"
+                            data-new-datasource
+                            class="rounded-lg bg-gradient-to-b from-pc-accent to-pc-accent-2 px-3.5 py-2 text-sm font-semibold text-pc-on-accent shadow-[0_0_0_1px_var(--pc-accent-glow),0_8px_24px_var(--pc-accent-shadow)] transition hover:brightness-110 active:translate-y-px"
+                            title="新建数据源：录入名字 + schema（draft-07）+ data（JSON），创建为独立实体；之后可在模板编辑器的数据源抽屉绑定使用"
+                        >
+                            ＋ 新建数据源
+                        </RouterLink>
+                    </div>
                 </div>
-                <div class="mt-8 h-px bg-gradient-to-r from-sky-400/50 via-sky-400/10 to-transparent" aria-hidden="true"></div>
+                <div class="mt-8 h-px bg-gradient-to-r from-pc-accent/50 via-pc-accent/10 to-transparent" aria-hidden="true"></div>
             </header>
 
             <!-- 读取失败态（服务端未起等） -->
             <div
                 v-if="errorText"
-                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm leading-6 text-red-300"
+                class="pc-rise mt-6 flex items-start gap-2.5 rounded-xl border border-pc-danger-line bg-pc-danger-bg px-4 py-3 text-sm leading-6 text-pc-danger"
             >
-                <span class="mt-0.5 font-mono text-xs text-red-400/90" aria-hidden="true">✕</span>
+                <span class="mt-0.5 font-mono text-xs text-pc-danger" aria-hidden="true">✕</span>
                 <span>数据源列表读取失败：{{ errorText }}</span>
             </div>
 
             <!-- 空态（合法初始态：引导新建） -->
             <div
                 v-else-if="sources && sources.length === 0"
-                class="pc-rise mt-6 rounded-xl border border-dashed border-[#24345a] bg-[#0a1322]/60 px-6 py-16 text-center"
+                class="pc-rise mt-6 rounded-xl border border-dashed border-pc-line-strong bg-pc-field/60 px-6 py-16 text-center"
             >
-                <svg class="mx-auto mb-5 opacity-70" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="rgba(125,211,252,0.55)" stroke-width="1.1" aria-hidden="true">
+                <svg class="mx-auto mb-5 text-pc-accent-bright opacity-70" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true">
                     <ellipse cx="12" cy="5" rx="8" ry="3" />
                     <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
                     <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
                 </svg>
-                <h2 class="pc-display mb-2 text-lg text-zinc-300">登记处尚空</h2>
-                <p class="mx-auto max-w-md text-sm leading-6 text-zinc-500">
+                <h2 class="pc-display mb-2 text-lg text-pc-fg-2">登记处尚空</h2>
+                <p class="mx-auto max-w-md text-sm leading-6 text-pc-muted">
                     暂无数据源——点击右上角「＋ 新建数据源」创建；创建后可在模板编辑器的数据源抽屉绑定使用。
                 </p>
             </div>
@@ -140,30 +156,30 @@ function riseDelay(index: number): string {
                     class="pc-card pc-card--file pc-rise overflow-hidden rounded-xl"
                     :style="{ animationDelay: riseDelay(i) }"
                 >
-                    <RouterLink :to="`/datasources/${s.id}`" class="group block px-5 pb-4 pt-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500/70">
+                    <RouterLink :to="`/datasources/${s.id}`" class="group block px-5 pb-4 pt-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-pc-accent/70">
                         <div class="flex items-center justify-between gap-3">
                             <span class="font-mono text-[11px] tracking-[0.2em] text-[#e3c37f]/85">{{ indexOf(i) }}</span>
                             <span
                                 class="rounded-full border px-2 py-0.5 text-[11px] leading-4 transition-colors"
                                 :class="
                                     s.templateCount > 0
-                                        ? 'border-sky-800/70 bg-sky-950/40 text-sky-300'
-                                        : 'border-zinc-800 bg-zinc-900/60 text-zinc-500'
+                                        ? 'border-pc-accent/35 bg-pc-accent-soft text-pc-accent-bright'
+                                        : 'border-pc-line bg-pc-field/60 text-pc-muted'
                                 "
                             >
                                 {{ s.templateCount }} 个模板引用
                             </span>
                         </div>
-                        <div class="mt-2 truncate text-[15px] font-medium text-zinc-100 transition-colors group-hover:text-sky-300">{{ s.name }}</div>
-                        <div class="mt-1 font-mono text-[11px] text-zinc-500">
+                        <div class="mt-2 truncate text-[15px] font-medium text-pc-fg transition-colors group-hover:text-pc-accent-bright">{{ s.name }}</div>
+                        <div class="mt-1 font-mono text-[11px] text-pc-muted">
                             更新于 {{ formatTimestamp(s.updatedAt) }}
                         </div>
                     </RouterLink>
-                    <div class="flex items-center justify-end border-t border-[#1b2740] px-4 py-2.5">
+                    <div class="flex items-center justify-end border-t border-pc-line px-4 py-2.5">
                         <button
                             type="button"
                             data-card-delete
-                            class="rounded-md border border-red-900/60 px-2.5 py-1 text-xs text-red-300 transition-colors hover:border-red-600 hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-red-900/60 disabled:hover:bg-transparent"
+                            class="rounded-md border border-pc-danger-line px-2.5 py-1 text-xs text-pc-danger transition-colors hover:border-pc-danger-strong hover:bg-pc-danger-bg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-pc-danger-line disabled:hover:bg-transparent"
                             :disabled="s.templateCount > 0"
                             :title="
                                 s.templateCount > 0
@@ -183,18 +199,18 @@ function riseDelay(index: number): string {
                 <div v-for="n in 4" :key="n" class="pc-card overflow-hidden rounded-xl">
                     <div class="animate-pulse px-5 py-4">
                         <div class="flex items-center justify-between">
-                            <div class="h-2.5 w-8 rounded bg-zinc-800/80"></div>
-                            <div class="h-4 w-20 rounded-full bg-zinc-800/60"></div>
+                            <div class="h-2.5 w-8 rounded bg-pc-skeleton"></div>
+                            <div class="h-4 w-20 rounded-full bg-pc-skeleton/60"></div>
                         </div>
-                        <div class="mt-3 h-3.5 w-1/2 rounded bg-zinc-800/80"></div>
-                        <div class="mt-2 h-2.5 w-1/3 rounded bg-zinc-800/60"></div>
+                        <div class="mt-3 h-3.5 w-1/2 rounded bg-pc-skeleton"></div>
+                        <div class="mt-2 h-2.5 w-1/3 rounded bg-pc-skeleton/60"></div>
                     </div>
                 </div>
             </div>
 
             <!-- 页脚铭线 -->
-            <footer class="mt-16 border-t border-[#16233c] pt-5">
-                <p class="font-mono text-[11px] tracking-[0.25em] text-zinc-600">CANVAS NEXT · 证书批量生成示例</p>
+            <footer class="mt-16 border-t border-pc-line pt-5">
+                <p class="font-mono text-[11px] tracking-[0.25em] text-pc-muted">CANVAS NEXT · 证书批量生成示例</p>
             </footer>
 
             <!-- 删除确认框（spec §2.4 #6e，28 票）：错误留在框内可重试，开启聚焦取消钮；

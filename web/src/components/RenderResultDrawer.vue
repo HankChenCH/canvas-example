@@ -209,8 +209,11 @@ watch(
     --cn-muted: #7c8ca5;
     --cn-line: #1e2a40;
     --cn-line-strong: #2a3a58;
+    --cn-field: rgba(148, 163, 184, 0.07);
     --cn-accent: #38bdf8;
+    --cn-accent-soft: rgba(56, 189, 248, 0.12);
     --cn-on-accent: #06202b;
+    --cn-shadow-lg: 0 24px 64px rgba(2, 6, 23, 0.6);
     --cn-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
     position: fixed;
@@ -226,7 +229,7 @@ watch(
     background: var(--cn-bg-elevated);
     border: 1px solid var(--cn-line);
     border-radius: 12px;
-    box-shadow: 0 24px 64px rgba(2, 6, 23, 0.6);
+    box-shadow: var(--cn-shadow-lg);
 }
 
 .cn-rrd__header {
@@ -258,7 +261,7 @@ watch(
 }
 
 .cn-rrd__close:hover {
-    background: rgba(148, 163, 184, 0.07);
+    background: var(--cn-field);
     color: var(--cn-fg);
 }
 
@@ -295,7 +298,7 @@ watch(
 
 .cn-rrd__chip--active {
     border-color: var(--cn-accent);
-    background: rgba(56, 189, 248, 0.12);
+    background: var(--cn-accent-soft);
     color: var(--cn-accent);
 }
 

@@ -208,7 +208,9 @@ function onDataSourceChange(event: Event): void {
     align-items: center;
     justify-content: center;
     padding: 16px;
-    background: rgba(2, 6, 23, 0.6);
+    /* 遮罩色随主题：自带块存夜间值，日间覆盖见 style.css「Teleport 弹层」节 */
+    --cn-backdrop: rgba(2, 6, 23, 0.6);
+    background: var(--cn-backdrop);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     animation: cn-itd-fade 0.22s ease-out backwards;
@@ -237,6 +239,8 @@ function onDataSourceChange(event: Event): void {
     --cn-line-strong: #2a3a58;
     --cn-accent: #38bdf8;
     --cn-on-accent: #06202b;
+    --cn-danger: #fca5a5;
+    --cn-shadow-lg: 0 24px 64px rgba(2, 6, 23, 0.65);
     --cn-font-display: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', serif;
 
     position: relative;
@@ -244,12 +248,12 @@ function onDataSourceChange(event: Event): void {
     max-width: 100%;
     padding: 20px;
     overflow: hidden;
-    background: linear-gradient(180deg, #101a2e 0%, #0c1526 100%);
+    background: linear-gradient(180deg, var(--cn-bg-elevated) 0%, var(--cn-bg) 100%);
     border: 1px solid var(--cn-line);
     border-radius: 14px;
     box-shadow:
         inset 0 1px 0 rgba(148, 197, 255, 0.06),
-        0 24px 64px rgba(2, 6, 23, 0.65);
+        var(--cn-shadow-lg);
     animation: cn-itd-pop 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
 }
 
@@ -414,7 +418,7 @@ function onDataSourceChange(event: Event): void {
 
 .cn-itd__error {
     margin: 10px 0 0;
-    color: #fca5a5;
+    color: var(--cn-danger);
     font-size: 12px;
     line-height: 1.5;
     overflow-wrap: anywhere;
